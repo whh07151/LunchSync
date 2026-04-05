@@ -1,0 +1,57 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+
+    <!-- 인터넷 권한: 카카오 API 통신에 필요 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+
+    <application
+        android:label="capstone"
+        android:name="${applicationName}"
+        android:icon="@mipmap/ic_launcher">
+        <activity
+            android:name=".MainActivity"
+            android:exported="true"
+            android:launchMode="singleTop"
+            android:taskAffinity=""
+            android:theme="@style/LaunchTheme"
+            android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|locale|layoutDirection|fontScale|screenLayout|density|uiMode"
+            android:hardwareAccelerated="true"
+            android:windowSoftInputMode="adjustResize">
+            <meta-data
+              android:name="io.flutter.embedding.android.NormalTheme"
+              android:resource="@style/NormalTheme"
+              />
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN"/>
+                <category android:name="android.intent.category.LAUNCHER"/>
+            </intent-filter>
+        </activity>
+
+        <!-- 카카오 로그인: 웹 브라우저(커스텀 탭) 로그인 후 앱으로 돌아오는 리다이렉트 처리 -->
+        <!-- 카카오톡 앱이 없거나 웹 로그인을 선택했을 때 이 Activity가 리다이렉트를 받음 -->
+        <activity
+            android:name="com.kakao.sdk.auth.AuthCodeHandlerActivity"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <!-- kakao{앱키}://oauth 형태의 딥링크를 이 Activity가 처리 -->
+                <data android:scheme="kakao1a8f618f7a89644f824c091c4c9c085a"
+                      android:host="oauth"/>
+            </intent-filter>
+        </activity>
+
+        <meta-data
+            android:name="flutterEmbedding"
+            android:value="2" />
+    </application>
+
+    <queries>
+        <intent>
+            <action android:name="android.intent.action.PROCESS_TEXT"/>
+            <data android:mimeType="text/plain"/>
+        </intent>
+        <!-- 카카오톡 앱 설치 여부 확인 (카카오톡으로 로그인 기능에 필요) -->
+        <package android:name="com.kakao.talk" />
+    </queries>
+</manifest>
