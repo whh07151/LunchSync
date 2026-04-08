@@ -16,24 +16,23 @@ import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 
 /// 카카오 로그인 결과를 담는 데이터 클래스
 ///
-/// 성공 시: kakaoUser에 사용자 정보, errorMessage는 null
-/// 실패 시: kakaoUser는 null, errorMessage에 오류 내용
+/// 성공 시: kakaoAccessToken에 토큰 문자열, errorMessage는 null
+/// 실패 시: kakaoAccessToken는 null, errorMessage에 오류 내용
 class KakaoLoginResult {
   const KakaoLoginResult({
-    this.kakaoUser,
+    this.kakaoAccessToken,
     this.errorMessage,
   });
 
-  /// 로그인 성공 시 카카오에서 받아온 사용자 정보
-  /// TODO: 안태환 씨 API 완성 후 → 이 정보를 POST /auth/kakao로 전송하고
-  ///       서버에서 받은 LunchSync 유저 객체 + JWT로 교체
-  final User? kakaoUser;
+  /// 카카오 SDK 로그인 성공 후 발급된 access token
+  /// → POST /auth/kakao 요청 바디에 포함해서 LunchSync 서버로 전달
+  final String? kakaoAccessToken;
 
   /// 로그인 실패 시 오류 메시지 (사용자에게 표시용)
   final String? errorMessage;
 
   /// 로그인 성공 여부
-  bool get isSuccess => kakaoUser != null;
+  bool get isSuccess => kakaoAccessToken != null;
 }
 
 
@@ -66,11 +65,20 @@ class KakaoAuthService {
         await UserApi.instance.loginWithKakaoAccount();
       }
 
-      // ── 로그인 성공 후: 카카오 사용자 정보 조회 ──────────────
-      // UserApi.instance.me(): 현재 로그인된 카카오 계정의 프로필 정보 반환
-      // 반환되는 정보: kakaoId, nickname, profileImageUrl, email(선택동의)
-      final user = await UserApi.instance.me();
-      return KakaoLoginResult(kakaoUser: user);
+      // ── 로그인 성공 후: 카카오 access token 추출 ──────────────
+      // TokenManagerProvider: 카카오 SDK가 내부적으로 관리하는 토큰 저장소
+      // getToken()으로 현재 발급된 access token을 가져옴
+      // 이 토큰을 NestJS POST /auth/kakao에 전달해서 LunchSync JWT로 교환
+      final token = await TokenManagerProvider.instance.manager.getToken();
+      final accessToken = token?.accessToken;
+
+      if (accessToken == null) {
+        return const KakaoLoginResult(
+          errorMessage: '카카오 토큰을 가져오지 못했어요.',
+        );
+      }
+
+      return KakaoLoginResult(kakaoAccessToken: accessToken);
     } catch (e) {
       // 로그인 전체 실패 (네트워크 오류, 사용자 취소 등)
       return KakaoLoginResult(

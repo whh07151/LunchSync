@@ -14,7 +14,6 @@ import '../../core/debug/debug_toast.dart';
 //   - 소속 입력 필드
 //   - 기본 반경 칩 선택 (300m / 500m / 1km / 2km)
 //   - 하단 "다음" 버튼
-//
 // 동작 흐름:
 //   이전 화면(로그인 또는 스플래시) → 이 화면
 //   → 이름/소속 입력 + 반경 선택 완료
@@ -32,12 +31,13 @@ import '../../core/debug/debug_toast.dart';
 class ProfileSetupScreen extends StatefulWidget {
   const ProfileSetupScreen({
     super.key,
-    required this.onNext, // "다음" 버튼 탭 시 실행: 다음 온보딩 화면으로 이동
+    required this.onNext, // "다음" 버튼 탭 시 실행: 입력한 name/org를 전달
   });
 
   /// "다음" 버튼을 눌렀을 때 실행되는 함수
+  /// [name]: 입력된 이름, [org]: 입력된 소속
   /// → 다음 온보딩 화면(기본 조건 설정, CU-05)으로 이동
-  final VoidCallback onNext;
+  final void Function({required String name, required String org}) onNext;
 
   @override
   State<ProfileSetupScreen> createState() => _ProfileSetupScreenState();
@@ -394,7 +394,12 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         label: '다음',
         // _canProceed가 true(이름+소속 입력됨)일 때만 버튼 활성화
         isEnabled: _canProceed,
-        onPressed: _canProceed ? widget.onNext : null,
+        onPressed: _canProceed
+            ? () => widget.onNext(
+                  name: _nameController.text.trim(),
+                  org: _orgController.text.trim(),
+                )
+            : null,
       ),
     );
   }

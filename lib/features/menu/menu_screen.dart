@@ -67,11 +67,12 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
   // ── Mock 메뉴 데이터 ─────────────────────────────────────
   // TODO: API 연동 시 (안태환 씨) — GET /restaurants/{id}/menus 응답으로 교체
-  // id는 API 연동 후 서버 ID로 교체될 예정
+  // restaurantId: 실제 연동 시 상위 화면(CU-13)에서 전달받은 식당 UUID로 교체
   static const List<MenuItem> _mockMenuItems = [
     // ── 추천 메뉴 ─────────────────────────────────────────
     MenuItem(
       id: 'm01',
+      restaurantId: 'mock_restaurant_01',
       name: '불고기 덮밥',
       description: '달콤한 불고기 소스와 부드러운 소고기가 밥 위에 올려진 메뉴',
       price: 8900,
@@ -79,6 +80,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     ),
     MenuItem(
       id: 'm02',
+      restaurantId: 'mock_restaurant_01',
       name: '치즈 돈까스',
       description: '두툼한 돼지고기 커틀릿에 진한 치즈 소스',
       price: 9500,
@@ -88,6 +90,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     // ── 밥류 ────────────────────────────────────────────
     MenuItem(
       id: 'm03',
+      restaurantId: 'mock_restaurant_01',
       name: '제육볶음 정식',
       description: '매콤한 제육볶음 + 공깃밥 + 국 + 반찬 3종',
       price: 9000,
@@ -95,6 +98,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     ),
     MenuItem(
       id: 'm04',
+      restaurantId: 'mock_restaurant_01',
       name: '김치찌개 정식',
       description: '묵은지로 끓인 진한 김치찌개 + 밥 + 반찬',
       price: 8500,
@@ -102,6 +106,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     ),
     MenuItem(
       id: 'm05',
+      restaurantId: 'mock_restaurant_01',
       name: '비빔밥',
       description: '신선한 야채와 고추장으로 비벼 먹는 건강 한 끼',
       price: 8000,
@@ -111,6 +116,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     // ── 면류 ────────────────────────────────────────────
     MenuItem(
       id: 'm06',
+      restaurantId: 'mock_restaurant_01',
       name: '잔치국수',
       description: '멸치 육수에 소면을 넣은 담백한 국수',
       price: 7000,
@@ -118,6 +124,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     ),
     MenuItem(
       id: 'm07',
+      restaurantId: 'mock_restaurant_01',
       name: '비빔국수',
       description: '새콤달콤한 양념장에 비벼 먹는 여름 별미',
       price: 7500,
@@ -127,6 +134,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     // ── 분식 ────────────────────────────────────────────
     MenuItem(
       id: 'm08',
+      restaurantId: 'mock_restaurant_01',
       name: '떡볶이',
       description: '쫄깃한 가래떡에 매콤달콤한 소스. 순한맛/매운맛 선택',
       price: 6000,
@@ -134,6 +142,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     ),
     MenuItem(
       id: 'm09',
+      restaurantId: 'mock_restaurant_01',
       name: '김밥 (1줄)',
       description: '참기름 향 가득한 참치김밥. 야채·참치·계란 구성',
       price: 4000,
@@ -141,6 +150,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     ),
     MenuItem(
       id: 'm10',
+      restaurantId: 'mock_restaurant_01',
       name: '순대볶음',
       description: '당면이 가득한 순대를 매콤하게 볶은 메뉴',
       price: 8000,
@@ -151,6 +161,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     // ── 음료 ────────────────────────────────────────────
     MenuItem(
       id: 'm11',
+      restaurantId: 'mock_restaurant_01',
       name: '아이스 아메리카노',
       description: '깔끔한 에스프레소에 얼음을 가득 넣은 아이스 커피',
       price: 2500,
@@ -158,6 +169,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     ),
     MenuItem(
       id: 'm12',
+      restaurantId: 'mock_restaurant_01',
       name: '식혜',
       description: '전통 발효 음료. 달달하고 시원한 맛',
       price: 2000,

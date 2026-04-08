@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../session/member_select_screen.dart';
 import '../menu/menu_screen.dart';
+import '../notifications/notification_screen.dart';
+import '../my_info/my_info_screen.dart';
+import '../auth/login_screen.dart';
 import '../../core/debug/debug_toast.dart';
+import '../../providers/user_provider.dart';
+import '../../services/users_api_service.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-06 홈 대시보드 화면
@@ -17,31 +23,28 @@ import '../../core/debug/debug_toast.dart';
 //   - AI 추천 식당 섹션: 조건 기반 추천 식당 카드 3개
 //   - 하단 탭바 5개: 홈 / 점심세션 / 주문현황 / 내역 / 내정보
 //
-// Mock 데이터 사용 이유:
-//   홈 화면의 실시간 데이터(세션 현황, 추천 식당 등)는
-//   안태환이 담당하는 NestJS 백엔드 API에서 받아와야 합니다.
-//   API가 완성되기 전까지 코드 안에 직접 적힌 가짜 데이터(Mock)를
-//   사용해 UI를 먼저 완성합니다.
-//   → API 연동 시: _mock으로 시작하는 변수들을 API 호출로 교체
+// 데이터 전략:
+//   - 사용자 이름/소속: GET /api/users/me 로 DB에서 직접 조회 → userProvider 갱신
+//   - 세션/추천 식당: 안태환 담당 API 완성 전까지 Mock 유지
+//     → API 완성 후 _mockSession, _mockRestaurants 교체
 //
 // 동작 흐름:
 //   이전 화면(기본 조건 설정, CU-05) → 이 화면 (온보딩 완료)
+//   → initState에서 GET /users/me 호출 → userProvider 최신화
 //   → 하단 탭으로 다른 섹션 이동 가능
 //   → CTA 버튼으로 주요 플로우 바로 진입 가능
-//
-// 상태 관리 라이브러리 무관:
-//   현재는 StatefulWidget으로 탭 인덱스만 관리.
-//   추후 전역 상태 관리 도입 시 탭 상태를 Provider/Riverpod 등으로 이전 가능.
 // ══════════════════════════════════════════════════════════
 
-class HomeScreen extends StatefulWidget {
+// ConsumerStatefulWidget: Riverpod의 userProvider를 읽기 위해 사용
+// StatefulWidget 대신 이걸 쓰면 ref.watch/read로 전역 상태에 접근 가능
+class HomeScreen extends ConsumerStatefulWidget {
   const HomeScreen({super.key});
 
   @override
-  State<HomeScreen> createState() => _HomeScreenState();
+  ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends ConsumerState<HomeScreen> {
   // ── 하단 탭바 상태 ─────────────────────────────────────
   // 현재 선택된 탭의 인덱스 (0: 홈, 1: 점심세션, 2: 주문현황, 3: 내역, 4: 내정보)
   // 기본값: 0 (홈 탭)
@@ -52,12 +55,46 @@ class _HomeScreenState extends State<HomeScreen> {
   void initState() {
     super.initState();
     DebugToast.show(context, 'CU-06');
+
+    // 화면 진입 시 DB에서 최신 프로필 조회 후 userProvider 갱신.
+    // addPostFrameCallback: initState 안에서 ref.read가 안전하게 실행되도록
+    // 첫 프레임 렌더링 완료 후 실행.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _loadUserProfile();
+    });
   }
 
-  // ── Mock 데이터: 사용자 정보 ────────────────────────────
-  // TODO: API 연동 시 — 로그인/프로필 정보에서 실제 이름/소속으로 교체
-  static const String _mockUserName = '지효';
-  static const String _mockUserOrg = '개발팀';
+  // ── 멤버 선택 화면(CU-08)으로 이동 ──────────────────────
+  // "점심 만들기"와 "친구 초대" CTA 둘 다 이 메서드를 통해 진입.
+  // CU-09(세션 생성, 우현호) 완성 후 onNext 콜백에서 CU-09로 이동하도록 교체.
+  void _goToMemberSelect() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MemberSelectScreen(
+          onNext: (selectedMembers) {
+            // TODO: 우현호 CU-09 완성 후 → sessionProvider에 저장된 멤버를
+            //       가지고 CU-09 세션 조건 설정 화면으로 이동
+            // 현재: 선택 완료 시 홈으로 복귀 (워킹 스켈레톤)
+            Navigator.of(context).pop();
+          },
+        ),
+      ),
+    );
+  }
+
+  // ── DB에서 프로필 조회 후 userProvider 갱신 ──────────────
+  // GET /api/users/me 호출 → 이름/소속 최신값을 userProvider에 반영
+  Future<void> _loadUserProfile() async {
+    // accessToken이 없으면 조회 불가 (로그아웃 상태)
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+
+    final profile = await const UsersApiService().getMe(token);
+    if (profile != null && mounted) {
+      // mounted: 비동기 완료 전에 화면이 사라졌을 경우 setState 방지
+      ref.read(userProvider.notifier).setFromProfile(profile);
+    }
+  }
 
   // ── Mock 데이터: 오늘의 세션 ────────────────────────────
   // TODO: API 연동 시 (안태환) — GET /sessions/today 응답으로 교체
@@ -141,9 +178,14 @@ class _HomeScreenState extends State<HomeScreen> {
       // ── 오른쪽: 알림 아이콘 버튼 ─────────────────────
       actions: [
         IconButton(
-          // TODO: CU-22 알림함 화면 완성 후 연결
-          // 현재는 탭해도 아무 동작 없음 (데모용)
-          onPressed: () {},
+          // CU-22 알림함 화면으로 이동 (push: 뒤로가기로 홈 복귀)
+          onPressed: () {
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const NotificationScreen(),
+              ),
+            );
+          },
           icon: Stack(
             // Stack: 알림 배지(빨간 점)를 아이콘 위에 겹쳐서 표시하기 위해 사용
             clipBehavior: Clip.none,
@@ -195,8 +237,31 @@ class _HomeScreenState extends State<HomeScreen> {
         // 3번 탭: 내역 — TODO: 주문 이력 화면 완성 후 교체
         _buildPlaceholderTab('내역', Icons.history_rounded),
 
-        // 4번 탭: 내정보 — TODO: CU-23 내정보/설정 완성 후 교체
-        _buildPlaceholderTab('내정보', Icons.person_rounded),
+        // 4번 탭: 내정보 — CU-23 내정보/설정
+        MyInfoScreen(
+          // 로그아웃 처리:
+          //   1. userProvider 초기화 (JWT + 유저 정보 삭제)
+          //   2. 내비게이션 스택 전체 제거 후 LoginScreen으로 이동
+          //      (온보딩은 완료 상태이므로 SplashScreen 건너뜀)
+          onLogout: () {
+            ref.read(userProvider.notifier).clear();
+            Navigator.of(context).pushAndRemoveUntil(
+              MaterialPageRoute(
+                builder: (ctx) => LoginScreen(
+                  onLoginSuccess: ({required bool isNewUser}) {
+                    // 로그아웃 후 재로그인: 기존 유저면 홈으로 바로
+                    // isNewUser=true는 다른 카카오 계정으로 로그인 시 발생 가능
+                    // (이 경우도 홈으로 이동 — 온보딩 완료 기기이므로)
+                    Navigator.of(ctx).pushReplacement(
+                      MaterialPageRoute(builder: (_) => const HomeScreen()),
+                    );
+                  },
+                ),
+              ),
+              (route) => false, // 이전 스택 전체 제거
+            );
+          },
+        ),
       ],
     );
   }
@@ -253,9 +318,16 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   // ── 인사말 헤더 위젯 ────────────────────────────────────
-  // 주황 그라디언트 배경 + 사용자 이름 + 오늘 날짜
+  // 주황 그라디언트 배경 + 사용자 이름 + 소속
+  // DB에서 조회한 실제 이름/소속을 userProvider를 통해 표시
   Widget _buildGreetingHeader() {
     final primary = Theme.of(context).colorScheme.primary;
+
+    // userProvider에서 실제 이름/소속 읽기
+    // _loadUserProfile()이 완료되면 자동으로 리빌드됨
+    final user = ref.watch(userProvider);
+    final userName = user.name ?? '...';       // 로딩 중이면 '...' 표시
+    final userOrg = user.org ?? '';            // 소속 미설정 시 빈 문자열
 
     return Container(
       width: double.infinity,
@@ -287,10 +359,9 @@ class _HomeScreenState extends State<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
 
-          // 인사말 문구
-          // TODO: 수정 필요 — 실제 사용자 이름을 상태에서 가져오도록 교체
+          // 인사말 문구: DB에서 조회한 실제 이름 표시
           Text(
-            '안녕하세요, $_mockUserName님! 👋',
+            '안녕하세요, $userName님! 👋',
             style: AppTextStyles.heading2.copyWith(
               color: Colors.white,
             ),
@@ -298,10 +369,10 @@ class _HomeScreenState extends State<HomeScreen> {
 
           const SizedBox(height: 4),
 
-          // 소속 + 날짜 정보
+          // 소속 + 문구
+          // userOrg가 비어 있으면 소속 부분 없이 문구만 표시
           Text(
-            // TODO: API 연동 시 — 실제 날짜 계산으로 교체 (DateTime.now())
-            '$_mockUserOrg · 오늘 점심은 어디로?',
+            userOrg.isNotEmpty ? '$userOrg · 오늘 점심은 어디로?' : '오늘 점심은 어디로?',
             style: AppTextStyles.bodyMedium.copyWith(
               color: Colors.white.withAlpha(200),
             ),
@@ -320,40 +391,33 @@ class _HomeScreenState extends State<HomeScreen> {
       _QuickAction(
         icon: Icons.add_circle_rounded,
         label: '점심 만들기',
-        // TODO: CU-09 세션 생성 화면 완성 후 실제 네비게이션으로 교체
-        onTap: () {},
+        // CU-08 멤버 선택 화면 진입 (세션 생성의 첫 단계)
+        // CU-09(세션 생성, 우현호) 완성 후 onNext에서 CU-09로 이동하도록 교체
+        onTap: () => _goToMemberSelect(),
       ),
       _QuickAction(
         icon: Icons.person_add_rounded,
         label: '친구 초대',
-        // CU-08 멤버 선택 화면으로 이동
-        // push: 뒤로가기로 홈으로 돌아올 수 있도록 pushReplacement가 아닌 push 사용
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => MemberSelectScreen(
-                onNext: (selectedMembers) {
-                  // TODO: CU-09 세션 조건 설정 화면 완성 후 (우현호 담당)
-                  //       selectedMembers를 넘겨주며 CU-09로 이동하도록 교체
-                  // 현재는 선택 완료 후 홈으로 돌아옴 (임시 동작)
-                  Navigator.of(context).pop();
-                },
-              ),
-            ),
-          );
-        },
+        // 점심 만들기와 동일 진입점 — 멤버 선택 화면으로
+        onTap: () => _goToMemberSelect(),
       ),
       _QuickAction(
         icon: Icons.history_rounded,
         label: '최근 이력',
-        // TODO: 내역 탭으로 이동
+        // 하단 탭 3번 (내역)으로 전환
         onTap: () => setState(() => _currentTabIndex = 3),
       ),
       _QuickAction(
         icon: Icons.notifications_rounded,
         label: '알림',
-        // TODO: CU-22 알림함 화면 완성 후 연결
-        onTap: () {},
+        // CU-22 알림함 화면으로 이동 (push: 뒤로가기로 홈 복귀)
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => const NotificationScreen(),
+            ),
+          );
+        },
       ),
     ];
 

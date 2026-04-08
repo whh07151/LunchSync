@@ -1,7 +1,11 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
+import '../../services/users_api_service.dart';
+import '../../providers/user_provider.dart';
+import '../splash/splash_screen.dart'; // markOnboardingDone() 사용
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-05 기본 조건 설정 화면 (온보딩 2단계)
@@ -30,21 +34,27 @@ import '../../core/debug/debug_toast.dart';
 //   어떤 상태 관리를 선택하더라도 이 파일은 수정 불필요.
 // ══════════════════════════════════════════════════════════
 
-class ConditionSetupScreen extends StatefulWidget {
+class ConditionSetupScreen extends ConsumerStatefulWidget {
   const ConditionSetupScreen({
     super.key,
-    required this.onComplete, // "홈으로 이동" 버튼 탭 시 실행: 홈 대시보드로 이동
+    required this.onComplete,
+    required this.profileName, // CU-03에서 입력한 이름
+    required this.profileOrg,  // CU-03에서 입력한 소속
   });
 
-  /// 조건 설정 완료 후 실행되는 함수
-  /// → 홈 대시보드(CU-06)로 이동
+  /// 온보딩 완료 후 홈으로 이동하는 콜백
   final VoidCallback onComplete;
 
+  /// CU-03 ProfileSetupScreen에서 전달받은 프로필 데이터
+  final String profileName;
+  final String profileOrg;
+
   @override
-  State<ConditionSetupScreen> createState() => _ConditionSetupScreenState();
+  ConsumerState<ConditionSetupScreen> createState() =>
+      _ConditionSetupScreenState();
 }
 
-class _ConditionSetupScreenState extends State<ConditionSetupScreen> {
+class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
   // ── 반경 슬라이더 상태 ─────────────────────────────────
   // 단위: 미터(m). 500m~3000m 범위에서 선택.
   // 기본값: 1000m(1km) — 일반적인 도보 점심 거리
@@ -70,25 +80,92 @@ class _ConditionSetupScreenState extends State<ConditionSetupScreen> {
   // 점심 시간 여유에 따라 선택 (단일 선택)
   // 기본값: '보통' — 30~40분 기준
   // TODO: 수치 확정 시 수정 — 속도 옵션 및 기본값
-  String _selectedSpeed = '보통';
+  // API 전송 값: 명세서 기준 영문 (FAST / NORMAL / SLOW)
+  String _selectedSpeed = 'NORMAL';
 
-  // 식사 속도 선택지 목록
-  // (각 옵션에 대한 부가 설명은 _speedDescription 맵 참고)
-  static const List<String> _speedOptions = ['빠르게', '보통', '여유롭게'];
+  // 속도 API 값 목록 (서버로 전송되는 실제 값)
+  static const List<String> _speedOptions = ['FAST', 'NORMAL', 'SLOW'];
 
-  // 각 속도 옵션의 부가 설명 (칩 아래 작은 글씨로 표시됨)
+  // API 값 → 화면 표시 한국어 레이블
+  static const Map<String, String> _speedLabel = {
+    'FAST': '빠르게',
+    'NORMAL': '보통',
+    'SLOW': '여유롭게',
+  };
+
+  // API 값 → 소요 시간 설명
   // TODO: 수치 확정 시 수정 — 실제 소요 시간 기준으로 수정
   static const Map<String, String> _speedDescription = {
-    '빠르게': '20분 내외',
-    '보통': '30~40분',
-    '여유롭게': '1시간 이상',
+    'FAST': '20분 내외',
+    'NORMAL': '30~40분',
+    'SLOW': '1시간 이상',
   };
+
+  // ── API 서비스 ────────────────────────────────────────
+  static const _usersApiService = UsersApiService();
+
+  // ── 저장 중 여부 ──────────────────────────────────────
+  bool _isSaving = false;
 
   // ── 생명주기: 화면이 처음 만들어질 때 ──────────────────
   @override
   void initState() {
     super.initState();
     DebugToast.show(context, 'CU-05');
+  }
+
+  // ── 슬라이더 미터값 → API 반경 문자열 변환 ─────────────
+  // 예: 1000 → '1km', 500 → '500m'
+  String _radiusToString(double meters) {
+    if (meters >= 1000) {
+      final km = meters / 1000;
+      return '${km == km.truncateToDouble() ? km.toInt() : km}km';
+    }
+    return '${meters.toInt()}m';
+  }
+
+  // ── 예산 문자열 → 정수 변환 ───────────────────────────
+  // DB budget 컬럼은 INTEGER
+  int? _budgetToInt(String budget) {
+    switch (budget) {
+      case '5천원 이하': return 5000;
+      case '8천원 이하': return 8000;
+      case '1만원 이하': return 10000;
+      case '1만5천원 이하': return 15000;
+      case '제한 없음': return null;
+      default: return null;
+    }
+  }
+
+  // ── 온보딩 완료: API 호출 → 온보딩 완료 플래그 저장 → 홈으로 이동 ───
+  // 처리 순서:
+  //   1. PATCH /users/me — CU-03(이름/소속) + CU-05(반경/예산/속도) 한 번에 저장
+  //   2. markOnboardingDone() — SharedPreferences에 'onboarding_done' = true 저장
+  //      → 앱 재실행 시 스플래시 건너뛰고 로그인 화면으로 바로 진입
+  //   3. onComplete() — 홈 화면으로 이동
+  Future<void> _handleComplete() async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+
+    final accessToken = ref.read(userProvider).accessToken;
+
+    if (accessToken != null) {
+      await _usersApiService.updateMe(
+        accessToken: accessToken,
+        name: widget.profileName,
+        org: widget.profileOrg,
+        radius: _radiusToString(_radiusMeters),
+        budget: _budgetToInt(_selectedBudget),
+        speed: _selectedSpeed,
+      );
+    }
+
+    // 온보딩 완료 기록: 다음 실행부터 스플래시 건너뜀
+    await markOnboardingDone();
+
+    if (!mounted) return;
+    setState(() => _isSaving = false);
+    widget.onComplete();
   }
 
   // ── UI 구성 ─────────────────────────────────────────────
@@ -414,9 +491,10 @@ class _ConditionSetupScreenState extends State<ConditionSetupScreen> {
                     ),
                     child: Column(
                       children: [
-                        // 속도 이름 (빠르게 / 보통 / 여유롭게)
+                        // 속도 표시 레이블 (빠르게 / 보통 / 여유롭게)
+                        // 내부 값은 FAST/NORMAL/SLOW, 화면엔 한국어로 표시
                         Text(
-                          speed,
+                          _speedLabel[speed] ?? speed,
                           style: AppTextStyles.bodyMedium.copyWith(
                             fontWeight: FontWeight.w600,
                             color: isSelected
@@ -465,8 +543,9 @@ class _ConditionSetupScreenState extends State<ConditionSetupScreen> {
       ),
       child: AppPrimaryButton(
         // 모든 조건에 기본값이 있으므로 항상 활성 상태
-        label: '홈으로 이동',
-        onPressed: widget.onComplete,
+        label: _isSaving ? '저장 중...' : '홈으로 이동',
+        isEnabled: !_isSaving,
+        onPressed: _isSaving ? null : _handleComplete,
       ),
     );
   }
