@@ -1,0 +1,197 @@
+// ══════════════════════════════════════════════════════════
+// 파일 역할: 식당 시드 데이터 (개발·테스트용)
+//
+// 연관 파일:
+//   - lib/models/restaurant.dart
+//   - lib/models/tag.dart
+//   - lib/data/seeds/menu_seeds.dart
+// ══════════════════════════════════════════════════════════
+
+/// 식당 시드 데이터 항목
+class RestaurantSeed {
+  const RestaurantSeed({
+    required this.id,
+    required this.name,
+    required this.category,
+    required this.priceRange,
+    required this.distanceLabel,
+    required this.soloFriendly,
+    required this.groupFriendly,
+    required this.tags,
+    required this.oneLineSummary,
+    required this.recommendedFor,
+    required this.avoidFor,
+  });
+
+  final String id;
+  final String name;
+  final String category;        // 한식, 중식, 일식, 양식 등
+  final String priceRange;      // "6,000~9,000원"
+  final String distanceLabel;   // "도보 3분"
+  final bool soloFriendly;      // 혼밥 가능 여부
+  final bool groupFriendly;     // 단체 가능 여부
+  final List<String> tags;      // 태그 id 목록
+  final String oneLineSummary;  // 한 줄 소개
+  final String recommendedFor;  // 추천 문구
+  final String avoidFor;        // 회피/제외 문구
+}
+
+/// 식당 시드 데이터 목록
+const List<RestaurantSeed> restaurantSeeds = [
+  RestaurantSeed(
+    id: 'rest_001',
+    name: '한솥도시락',
+    category: '한식',
+    priceRange: '4,500~7,000원',
+    distanceLabel: '도보 2분',
+    soloFriendly: true,
+    groupFriendly: false,
+    tags: ['cheap', 'fast', 'solo'],
+    oneLineSummary: '빠르고 저렴한 한식 도시락 전문점',
+    recommendedFor: '시간 없을 때 빠르게 한 끼 해결하고 싶다면',
+    avoidFor: '여럿이 앉아서 먹기엔 좌석이 부족할 수 있음',
+  ),
+  RestaurantSeed(
+    id: 'rest_002',
+    name: '김밥천국',
+    category: '분식',
+    priceRange: '3,500~6,500원',
+    distanceLabel: '도보 3분',
+    soloFriendly: true,
+    groupFriendly: true,
+    tags: ['cheap', 'variety', 'fast'],
+    oneLineSummary: '메뉴가 다양한 분식 맛집',
+    recommendedFor: '다양한 메뉴를 저렴하게 즐기고 싶을 때',
+    avoidFor: '점심 피크 시간에는 대기가 길 수 있음',
+  ),
+  RestaurantSeed(
+    id: 'rest_003',
+    name: '스시로',
+    category: '일식',
+    priceRange: '12,000~20,000원',
+    distanceLabel: '도보 7분',
+    soloFriendly: true,
+    groupFriendly: true,
+    tags: ['japanese', 'premium', 'quiet'],
+    oneLineSummary: '신선한 회전초밥을 합리적 가격에',
+    recommendedFor: '초밥이 먹고 싶거나 조용히 식사하고 싶을 때',
+    avoidFor: '예산이 빠듯하거나 매운 음식을 원할 때',
+  ),
+  RestaurantSeed(
+    id: 'rest_004',
+    name: '맘스터치',
+    category: '양식',
+    priceRange: '5,000~8,500원',
+    distanceLabel: '도보 4분',
+    soloFriendly: true,
+    groupFriendly: false,
+    tags: ['fast', 'burger', 'solo'],
+    oneLineSummary: '가성비 좋은 수제버거 프랜차이즈',
+    recommendedFor: '버거가 땡기는데 가볍게 먹고 싶을 때',
+    avoidFor: '한식이나 건강식을 원하는 분에게는 비추',
+  ),
+  RestaurantSeed(
+    id: 'rest_005',
+    name: '순남시래기',
+    category: '한식',
+    priceRange: '8,000~11,000원',
+    distanceLabel: '도보 5분',
+    soloFriendly: true,
+    groupFriendly: true,
+    tags: ['korean', 'healthy', 'hearty'],
+    oneLineSummary: '든든한 시래기 된장찌개 전문점',
+    recommendedFor: '속이 편한 집밥 느낌의 한식이 필요할 때',
+    avoidFor: '자극적인 맛을 원하거나 빠른 식사를 원할 때',
+  ),
+  RestaurantSeed(
+    id: 'rest_006',
+    name: '홍콩반점',
+    category: '중식',
+    priceRange: '6,000~9,000원',
+    distanceLabel: '도보 3분',
+    soloFriendly: true,
+    groupFriendly: true,
+    tags: ['chinese', 'jjambbong', 'group'],
+    oneLineSummary: '짬뽕과 짜장이 맛있는 동네 중국집',
+    recommendedFor: '중식이 땡기거나 단체로 식사할 때',
+    avoidFor: '기름진 음식을 피하고 싶을 때',
+  ),
+  RestaurantSeed(
+    id: 'rest_007',
+    name: '서브웨이',
+    category: '양식',
+    priceRange: '6,500~9,500원',
+    distanceLabel: '도보 4분',
+    soloFriendly: true,
+    groupFriendly: false,
+    tags: ['healthy', 'fast', 'custom'],
+    oneLineSummary: '원하는 재료를 골라 만드는 샌드위치',
+    recommendedFor: '가볍고 건강한 한 끼를 원할 때',
+    avoidFor: '든든하게 배부르게 먹고 싶은 분에게는 부족할 수 있음',
+  ),
+  RestaurantSeed(
+    id: 'rest_008',
+    name: '이디야커피',
+    category: '카페',
+    priceRange: '3,000~5,500원',
+    distanceLabel: '도보 2분',
+    soloFriendly: true,
+    groupFriendly: false,
+    tags: ['cafe', 'cheap', 'dessert'],
+    oneLineSummary: '가성비 좋은 커피와 간단한 디저트',
+    recommendedFor: '식후 커피나 가벼운 간식이 필요할 때',
+    avoidFor: '식사 대용으로는 부족함',
+  ),
+  RestaurantSeed(
+    id: 'rest_009',
+    name: '봉추찜닭',
+    category: '한식',
+    priceRange: '10,000~15,000원',
+    distanceLabel: '도보 6분',
+    soloFriendly: false,
+    groupFriendly: true,
+    tags: ['spicy', 'group', 'hearty'],
+    oneLineSummary: '매콤 달콤한 찜닭 전문점',
+    recommendedFor: '여럿이 함께 매콤한 찜닭을 나눠 먹고 싶을 때',
+    avoidFor: '혼밥하기엔 양이 많고, 매운 음식 못 드시는 분은 주의',
+  ),
+  RestaurantSeed(
+    id: 'rest_010',
+    name: '역전우동',
+    category: '일식',
+    priceRange: '5,500~8,000원',
+    distanceLabel: '도보 3분',
+    soloFriendly: true,
+    groupFriendly: false,
+    tags: ['japanese', 'fast', 'noodle'],
+    oneLineSummary: '따뜻한 우동을 빠르게 즐길 수 있는 곳',
+    recommendedFor: '추운 날 따뜻한 국물이 생각날 때',
+    avoidFor: '밥 종류를 원하거나 매운맛을 원할 때',
+  ),
+  RestaurantSeed(
+    id: 'rest_011',
+    name: '백소정',
+    category: '일식',
+    priceRange: '9,000~13,000원',
+    distanceLabel: '도보 8분',
+    soloFriendly: true,
+    groupFriendly: true,
+    tags: ['japanese', 'ramen', 'premium'],
+    oneLineSummary: '진한 돈코츠 라멘 전문점',
+    recommendedFor: '라멘 마니아이거나 깊은 국물이 끌릴 때',
+    avoidFor: '느끼한 음식을 피하고 싶을 때',
+  ),
+  RestaurantSeed(
+    id: 'rest_012',
+    name: '본죽',
+    category: '한식',
+    priceRange: '7,000~10,000원',
+    distanceLabel: '도보 5분',
+    soloFriendly: true,
+    groupFriendly: false,
+    tags: ['korean', 'healthy', 'light', 'solo'],
+    oneLineSummary: '속이 편한 정성 가득 죽 전문점',
+    recommendedFor: '속이 안 좋거나 가벼운 식사를 원할 때',
+    avoidFor: '든든한 한 끼를 원하는 분에게는 부족할 수 있음',
+  ),
+];

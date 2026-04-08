@@ -9,6 +9,12 @@ import '../../providers/cart_provider.dart';
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-16 메뉴 목록 / 장바구니 화면
 //
+// [연결 예정 데이터]
+//   - lib/data/seeds/menu_seeds.dart → _mockMenuItems 교체
+//   - lib/data/seeds/restaurant_seeds.dart → restaurantId로 해당 식당 메뉴 필터링
+//   - lib/core/constants/ui_texts.dart (DetailTexts) → 섹션 제목, 품절 문구 등
+//   - lib/models/restaurant.dart → restaurantName을 Restaurant 모델로 교체
+//
 // 와이어프레임 기준 구성 요소 (브레이크다운 v3 CU-16):
 //   - 상단 앱바: 식당 이름 + 뒤로가기
 //   - 카테고리 탭바: 전체 / 추천 / 밥류 / 면류 / 분식 / 음료
@@ -68,6 +74,10 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
   // ── Mock 메뉴 데이터 ─────────────────────────────────────
   // TODO: API 연동 시 (안태환 씨) — GET /restaurants/{id}/menus 응답으로 교체
   // restaurantId: 실제 연동 시 상위 화면(CU-13)에서 전달받은 식당 UUID로 교체
+  // id는 API 연동 후 서버 ID로 교체될 예정
+  // ── [SEED 연결 포인트] ──────────────────────────────────
+  // → menu_seeds.dart의 menuSeeds에서 restaurantId로 필터링하여 교체
+  // → DetailTexts.soldOut, DetailTexts.noMenu 등 문구 적용
   static const List<MenuItem> _mockMenuItems = [
     // ── 추천 메뉴 ─────────────────────────────────────────
     MenuItem(
