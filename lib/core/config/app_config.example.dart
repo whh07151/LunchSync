@@ -11,5 +11,5 @@ class AppConfig {
   AppConfig._();
 
   /// 카카오 Native 앱 키 — 카카오 개발자 콘솔에서 확인 후 입력
-  static const String kakaoNativeAppKey = 'YOUR_KAKAO_NATIVE_APP_KEY_HERE';
+  static const String kakaoNativeAppKey = 'f';
 }

@@ -8,6 +8,14 @@ import '../../core/debug/debug_toast.dart';
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-06 홈 대시보드 화면
 //
+// [연결 예정 데이터]
+//   - lib/data/seeds/restaurant_seeds.dart → _mockRestaurants 교체
+//   - lib/core/constants/ui_texts.dart (RecommendTexts) → 추천 근거 문구
+//   - lib/core/constants/ui_texts.dart (DetailTexts) → 식당 정보 레이블
+//   - lib/core/utils/normalizer.dart → 카테고리/가격대 정규화
+//   - lib/models/restaurant.dart → _MockRestaurant 클래스 교체
+//   - lib/models/tag.dart → 태그 기반 필터/추천 표시
+//
 // 와이어프레임 기준 구성 요소:
 //   - 상단 앱바: 앱 로고(왼쪽) + 알림 아이콘(오른쪽)
 //   - 인사말 헤더: 사용자 이름 + 오늘 날짜
@@ -74,6 +82,11 @@ class _HomeScreenState extends State<HomeScreen> {
   // ── Mock 데이터: AI 추천 식당 목록 ──────────────────────
   // TODO: API 연동 시 (안태환) — GET /restaurants/recommend 응답으로 교체
   // 사용자의 기본 조건(반경/예산/속도)을 기반으로 필터링된 결과를 받게 됨
+  // ── [SEED 연결 포인트] ──────────────────────────────────
+  // → restaurant_seeds.dart의 restaurantSeeds로 교체
+  // → Restaurant 모델 + Tag 모델로 전환
+  // → RecommendTexts에서 추천 근거 문구 가져오기
+  // → normalizeCategory()로 카테고리 표시 통일
   static const List<_MockRestaurant> _mockRestaurants = [
     _MockRestaurant(
       name: '한솥도시락',
