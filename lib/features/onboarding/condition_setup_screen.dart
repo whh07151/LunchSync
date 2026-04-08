@@ -15,8 +15,8 @@ import '../splash/splash_screen.dart'; // markOnboardingDone() 사용
 // 구성 요소:
 //   - 상단: 온보딩 진행 단계 표시 (2/3)
 //   - 제목: "기본 조건을 설정해주세요" + 안내 문구
-//   - 반경 슬라이더: 500m ~ 3km (도보 이동 범위)
-//   - 예산 칩 선택: 5,000원 / 8,000원 / 12,000원 / 15,000원 이상
+//   - 반경 슬라이더: 300m ~ 3km (도보 이동 범위)
+//   - 예산 칩 선택: 5천원 이하 / 8천원 이하 / 1만원 이하 / 1만5천원 이하 / 제한 없음
 //   - 식사 속도 칩 선택: 빠르게 / 보통 / 여유롭게
 //   - 하단 "홈으로 이동" 버튼
 //
@@ -25,29 +25,22 @@ import '../splash/splash_screen.dart'; // markOnboardingDone() 사용
 //   → 반경/예산/속도 조건 선택 (모두 기본값 있음 → 버튼 항상 활성)
 //   → "홈으로 이동" 버튼 탭 → 홈 대시보드(CU-06)로 이동
 //
-// 저장 방식:
-//   현재는 로컬 상태(setState)만 사용.
-//   TODO: 상태 관리 라이브러리 결정 후 전역 상태 또는 DB에 저장
-//
-// 상태 관리 라이브러리 무관:
-//   콜백(onComplete) 방식으로 구현되어 있어,
-//   어떤 상태 관리를 선택하더라도 이 파일은 수정 불필요.
+// 저장 방식 (개선안 2 — 단계별 서버 저장):
+//   CU-03에서 이름/소속/반경을 이미 서버에 저장했으므로,
+//   이 화면은 반경(덮어쓰기)/예산/속도만 PATCH /users/me로 저장.
+//   profileName/profileOrg를 props로 받지 않아도 됨.
 // ══════════════════════════════════════════════════════════
 
 class ConditionSetupScreen extends ConsumerStatefulWidget {
   const ConditionSetupScreen({
     super.key,
     required this.onComplete,
-    required this.profileName, // CU-03에서 입력한 이름
-    required this.profileOrg,  // CU-03에서 입력한 소속
+    // profileName/profileOrg 제거:
+    // CU-03(ProfileSetupScreen)에서 PATCH /users/me로 이미 저장됨.
   });
 
   /// 온보딩 완료 후 홈으로 이동하는 콜백
   final VoidCallback onComplete;
-
-  /// CU-03 ProfileSetupScreen에서 전달받은 프로필 데이터
-  final String profileName;
-  final String profileOrg;
 
   @override
   ConsumerState<ConditionSetupScreen> createState() =>
@@ -139,7 +132,8 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
 
   // ── 온보딩 완료: API 호출 → 온보딩 완료 플래그 저장 → 홈으로 이동 ───
   // 처리 순서:
-  //   1. PATCH /users/me — CU-03(이름/소속) + CU-05(반경/예산/속도) 한 번에 저장
+  //   1. PATCH /users/me — CU-05(반경/예산/속도)만 저장
+  //      CU-03(이름/소속)은 ProfileSetupScreen에서 이미 저장됨
   //   2. markOnboardingDone() — SharedPreferences에 'onboarding_done' = true 저장
   //      → 앱 재실행 시 스플래시 건너뛰고 로그인 화면으로 바로 진입
   //   3. onComplete() — 홈 화면으로 이동
@@ -152,9 +146,8 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
     if (accessToken != null) {
       await _usersApiService.updateMe(
         accessToken: accessToken,
-        name: widget.profileName,
-        org: widget.profileOrg,
-        radius: _radiusToString(_radiusMeters),
+        // name/org 생략: CU-03에서 이미 서버에 저장됨
+        radius: _radiusToString(_radiusMeters), // 슬라이더 값으로 덮어씀
         budget: _budgetToInt(_selectedBudget),
         speed: _selectedSpeed,
       );

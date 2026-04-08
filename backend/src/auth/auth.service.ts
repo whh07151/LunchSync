@@ -27,7 +27,14 @@ interface KakaoUserInfo {
 // 로그인/회원가입 결과 반환 타입
 export interface AuthResult {
   accessToken: string; // LunchSync 자체 JWT
-  isNewUser: boolean;  // true: 신규(온보딩 필요), false: 기존(홈으로 바로)
+  isNewUser: boolean;  // true: 신규(온보딩 필요), false: 기존(홈으로 바로) — 하위 호환용
+
+  /// Flutter가 다음에 보여줄 화면을 서버가 결정해서 내려줌 (서버 드리븐 네비게이션)
+  /// "PROFILE_SETUP"   → CU-03: 온보딩 미시작 (신규 유저 또는 이름만 있는 상태)
+  /// "CONDITION_SETUP" → CU-05: CU-03 완료 후 앱 종료, 조건 설정 재진입
+  /// "HOME"            → 온보딩 완전 완료, 홈 대시보드로 바로 진입
+  nextStep: 'PROFILE_SETUP' | 'CONDITION_SETUP' | 'HOME';
+
   user: {
     id: string;
     name: string;
@@ -54,9 +61,10 @@ export class AuthService {
     const profileImage = kakaoUser.kakao_account?.profile?.profile_image_url ?? null;
 
     // ── 2단계: Supabase에서 기존 유저 조회 ──────────────────
+    // org / budget / speed: nextStep 판별에 필요 (온보딩 진행 상태 확인)
     const { data: existingUser } = await this.supabase.client
       .from('users')
-      .select('id, name, profile_image')
+      .select('id, name, profile_image, org, budget, speed')
       .eq('kakao_id', kakaoId)
       .single();
 
@@ -64,12 +72,25 @@ export class AuthService {
     let userId: string;
     let userName: string;
     let isNewUser: boolean;
+    let nextStep: AuthResult['nextStep'];
 
     if (existingUser) {
-      // 기존 유저: 그대로 사용
+      // 기존 유저: 온보딩 진행 상태에 따라 nextStep 결정
       userId = existingUser.id;
       userName = existingUser.name;
       isNewUser = false;
+
+      if (!existingUser.org) {
+        // org가 없음 → CU-03(프로필 설정)을 완료하지 않은 상태
+        nextStep = 'PROFILE_SETUP';
+      } else if (existingUser.budget == null || !existingUser.speed) {
+        // org는 있으나 budget/speed 없음 → CU-03 완료, CU-05 미완료
+        // (앱을 CU-03 완료 직후 종료한 경우)
+        nextStep = 'CONDITION_SETUP';
+      } else {
+        // 온보딩 완전 완료 → 홈으로 바로
+        nextStep = 'HOME';
+      }
     } else {
       // 신규 유저: 카카오 닉네임으로 기본 레코드 생성
       // 이름/소속/반경 등 상세 정보는 온보딩(CU-03, CU-05)에서 PATCH /users/me로 업데이트
@@ -92,6 +113,7 @@ export class AuthService {
       userId = newUser.id;
       userName = newUser.name;
       isNewUser = true;
+      nextStep = 'PROFILE_SETUP'; // 신규 유저는 항상 CU-03부터 시작
     }
 
     // ── 4단계: 자체 JWT 발급 ─────────────────────────────
@@ -102,6 +124,7 @@ export class AuthService {
     return {
       accessToken,
       isNewUser,
+      nextStep,
       user: {
         id: userId,
         name: userName,
