@@ -2,6 +2,8 @@
 **작성일:** 2026-04-08
 **버전:** 1.2 (orders.restaurant_id 추가)
 
+**구현 진행도:** [`LUNCHSYNC_PROGRESS.md`](./LUNCHSYNC_PROGRESS.md) 참조 (이 파일과 분리 운영)
+
 ---
 
 ## 목차
@@ -14,7 +16,6 @@
 7. [API 흐름](#7-api-흐름)
 8. [MVC 구현 흐름](#8-mvc-구현-흐름)
 9. [보안 및 제약 조건](#9-보안-및-제약-조건)
-10. [구현 현황](#10-구현-현황)
 
 ---
 
@@ -193,6 +194,7 @@ CREATE TABLE sessions (
   created_at TIMESTAMP DEFAULT NOW()
 );
 ```
+
 
 #### session_members
 ```sql
@@ -622,29 +624,6 @@ View (손님 OrderTrackScreen)
 - SQL Injection 대비
 - 딕셔너리 어택 대비
 - 레인보우 테이블 공격 대비
-
----
-
-## 10. 구현 현황
-
-### 완료
-- CORE-13: 공통 디자인 시스템 (컬러/타이포/버튼/네비게이션)
-- CU-01: 스플래시 화면
-- CU-02: 카카오 로그인 (실기기 테스트 완료 2026-04-08)
-- CU-03: 프로필 설정 UI
-- CU-05: 기본 조건 설정 UI
-- CU-06: 홈 대시보드 UI
-- CU-08: 멤버 선택 UI + sessionProvider 연결
-- CU-16: 메뉴/장바구니 UI + cartProvider
-
-### 미연결 (API 대기)
-- 위 모든 UI 화면의 실제 데이터 연결
-- Supabase DB 스키마 생성 (김지효 주도 예정)
-
-### 미구현
-- CU-09, 10, 13, 14, 19, 20, 22, 23
-- OW-02, POS-07, POS-10
-- CORE-01~12, 14~16 (타 팀원 담당)
 
 ---
 

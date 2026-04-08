@@ -78,10 +78,13 @@ class LunchSyncApp extends StatelessWidget {
 //   첫 실행인지 재실행인지 판단합니다.
 //
 //   첫 실행 (onboarding_done == false):
-//     SplashScreen → LoginScreen → 온보딩(CU-03 → CU-05) → HomeScreen
+//     SplashScreen → LoginScreen → nextStep에 따라 화면 분기
+//       "PROFILE_SETUP"   → CU-03 → CU-05 → HomeScreen
+//       "CONDITION_SETUP" → CU-05 → HomeScreen (CU-03 완료 후 재진입)
+//       "HOME"            → HomeScreen (온보딩 완료)
 //
 //   재실행 (onboarding_done == true):
-//     SplashScreen 건너뜀 → LoginScreen → HomeScreen
+//     SplashScreen 건너뜀 → LoginScreen → nextStep에 따라 동일 분기
 //     (JWT가 인메모리라 앱 재실행 시 항상 로그인 필요)
 //
 // StatefulWidget을 쓰는 이유:
@@ -115,40 +118,65 @@ class _RootNavigatorState extends State<_RootNavigator> {
     }
   }
 
-  // ── 로그인 성공 후 isNewUser에 따라 화면 분기 ──────────────
-  // context와 isNewUser를 받아 적절한 화면으로 이동.
-  // 첫 실행(SplashScreen 경유)과 재실행(LoginScreen 직접) 모두 동일 로직 사용.
-  void _handleLoginSuccess(BuildContext ctx, bool isNewUser) {
-    if (isNewUser) {
-      // 신규 유저: 프로필 설정 → 조건 설정 → 홈
-      Navigator.of(ctx).pushReplacement(
-        MaterialPageRoute(
-          builder: (ctx2) => ProfileSetupScreen(
-            onNext: ({required String name, required String org}) {
-              Navigator.of(ctx2).pushReplacement(
-                MaterialPageRoute(
-                  builder: (ctx3) => ConditionSetupScreen(
-                    profileName: name,
-                    profileOrg: org,
-                    onComplete: () {
-                      Navigator.of(ctx3).pushReplacement(
-                        MaterialPageRoute(
-                          builder: (_) => const HomeScreen(),
-                        ),
-                      );
-                    },
+  // ── 로그인 성공 후 nextStep에 따라 화면 분기 ───────────────
+  // nextStep: 서버가 지정한 다음 화면
+  //   "PROFILE_SETUP"   → CU-03 기본 프로필 설정 (신규 유저)
+  //   "CONDITION_SETUP" → CU-05 기본 조건 설정 (CU-03 완료 후 재진입한 유저)
+  //   "HOME" (그 외)    → 홈 대시보드로 바로 이동 (온보딩 완료 유저)
+  //
+  // 왜 switch인가?
+  //   isNewUser bool 분기와 달리, 서버가 추가 단계를 내려줄 수 있음.
+  //   새로운 nextStep 값이 생겨도 case 하나만 추가하면 됨.
+  void _handleLoginSuccess(BuildContext ctx, String nextStep) {
+    switch (nextStep) {
+
+      // ── CU-03: 기본 프로필 설정 ───────────────────────────
+      case 'PROFILE_SETUP':
+        Navigator.of(ctx).pushReplacement(
+          MaterialPageRoute(
+            builder: (ctx2) => ProfileSetupScreen(
+              // name/org는 ProfileSetupScreen이 서버에 직접 저장하므로
+              // 여기서 받아서 넘길 필요 없음 (VoidCallback)
+              onNext: () {
+                Navigator.of(ctx2).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (ctx3) => ConditionSetupScreen(
+                      onComplete: () {
+                        Navigator.of(ctx3).pushReplacement(
+                          MaterialPageRoute(
+                            builder: (_) => const HomeScreen(),
+                          ),
+                        );
+                      },
+                    ),
                   ),
-                ),
-              );
-            },
+                );
+              },
+            ),
           ),
-        ),
-      );
-    } else {
-      // 기존 유저: 홈으로 바로 이동
-      Navigator.of(ctx).pushReplacement(
-        MaterialPageRoute(builder: (_) => const HomeScreen()),
-      );
+        );
+
+      // ── CU-05: 기본 조건 설정 (프로필 완료 후 재진입) ──────
+      // CU-03에서 이름/소속이 이미 서버에 저장돼 있으므로
+      // profileName/profileOrg props 없이 바로 진입 가능
+      case 'CONDITION_SETUP':
+        Navigator.of(ctx).pushReplacement(
+          MaterialPageRoute(
+            builder: (ctx3) => ConditionSetupScreen(
+              onComplete: () {
+                Navigator.of(ctx3).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const HomeScreen()),
+                );
+              },
+            ),
+          ),
+        );
+
+      // ── 홈: 온보딩 완료 유저 ─────────────────────────────
+      default: // 'HOME' 또는 알 수 없는 값
+        Navigator.of(ctx).pushReplacement(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
     }
   }
 
@@ -166,8 +194,8 @@ class _RootNavigatorState extends State<_RootNavigator> {
     // ── 재실행 (온보딩 완료): 스플래시 건너뜀 → 로그인 화면 ─
     if (_onboardingDone!) {
       return LoginScreen(
-        onLoginSuccess: ({required bool isNewUser}) =>
-            _handleLoginSuccess(context, isNewUser),
+        onLoginSuccess: ({required String nextStep}) =>
+            _handleLoginSuccess(context, nextStep),
       );
     }
 
@@ -177,8 +205,8 @@ class _RootNavigatorState extends State<_RootNavigator> {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (ctx) => LoginScreen(
-              onLoginSuccess: ({required bool isNewUser}) =>
-                  _handleLoginSuccess(ctx, isNewUser),
+              onLoginSuccess: ({required String nextStep}) =>
+                  _handleLoginSuccess(ctx, nextStep),
             ),
           ),
         );

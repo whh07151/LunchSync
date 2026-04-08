@@ -22,23 +22,36 @@ class AuthResponse {
   const AuthResponse({
     required this.accessToken,
     required this.isNewUser,
+    required this.nextStep,
     required this.userId,
     required this.name,
     this.profileImage,
   });
 
   final String accessToken; // LunchSync 자체 JWT
-  final bool isNewUser;     // true: 온보딩 필요, false: 홈으로 바로
-  final String userId;      // Supabase users.id (UUID)
-  final String name;        // 카카오 닉네임 (온보딩 전 임시)
+  final bool isNewUser;     // true: 온보딩 필요, false: 홈으로 바로 (하위 호환용)
+
+  /// 서버가 지정한 다음 화면.
+  /// "PROFILE_SETUP"  → CU-03 기본 프로필 설정 (신규 유저)
+  /// "CONDITION_SETUP" → CU-05 기본 조건 설정 (프로필까지 완료한 유저가 재진입)
+  /// "HOME"           → 온보딩 완료, 홈 대시보드로 바로 진입
+  final String nextStep;
+
+  final String userId;       // Supabase users.id (UUID)
+  final String name;         // 카카오 닉네임 (온보딩 전 임시)
   final String? profileImage;
 
   // JSON 파싱: POST /auth/kakao 응답의 data 필드에서 생성
+  // 백엔드가 nextStep 필드를 추가해야 동작함 (안태환 씨 담당)
   factory AuthResponse.fromJson(Map<String, dynamic> json) {
     final user = json['user'] as Map<String, dynamic>;
     return AuthResponse(
       accessToken: json['accessToken'] as String,
       isNewUser: json['isNewUser'] as bool,
+      // 백엔드가 nextStep을 내려주지 않는 경우 isNewUser로 폴백
+      // → 백엔드 배포 전까지 기존 동작 유지 가능
+      nextStep: json['nextStep'] as String? ??
+          (json['isNewUser'] as bool ? 'PROFILE_SETUP' : 'HOME'),
       userId: user['id'] as String,
       name: user['name'] as String,
       profileImage: user['profileImage'] as String?,

@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
+import '../../services/users_api_service.dart';
+import '../../providers/user_provider.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-03 기본 프로필 설정 화면
@@ -23,27 +26,27 @@ import '../../core/debug/debug_toast.dart';
 //   이름과 소속이 모두 입력되어야 "다음" 버튼이 활성화됩니다.
 //   반경은 기본값(500m)이 선택되어 있어 항상 유효합니다.
 //
-// 상태 관리 라이브러리 무관:
-//   콜백(onNext) 방식으로 구현되어 있어,
-//   어떤 상태 관리를 선택하더라도 이 파일은 수정 불필요.
+// 저장 흐름 (개선안 2 — 단계별 서버 저장):
+//   "다음" 버튼 탭 → PATCH /users/me(name, org, radius) 호출 → 성공 시 onNext()
+//   CU-05(조건 설정)는 이 화면의 결과를 props로 받지 않아도 됨.
+//   (서버에 이미 저장되어 있으므로)
 // ══════════════════════════════════════════════════════════
 
-class ProfileSetupScreen extends StatefulWidget {
+class ProfileSetupScreen extends ConsumerStatefulWidget {
   const ProfileSetupScreen({
     super.key,
-    required this.onNext, // "다음" 버튼 탭 시 실행: 입력한 name/org를 전달
+    required this.onNext, // 저장 성공 시 실행: 다음 온보딩 화면(CU-05)으로 이동
   });
 
-  /// "다음" 버튼을 눌렀을 때 실행되는 함수
-  /// [name]: 입력된 이름, [org]: 입력된 소속
+  /// 이름/소속/반경을 서버에 저장한 뒤 호출되는 콜백
   /// → 다음 온보딩 화면(기본 조건 설정, CU-05)으로 이동
-  final void Function({required String name, required String org}) onNext;
+  final VoidCallback onNext;
 
   @override
-  State<ProfileSetupScreen> createState() => _ProfileSetupScreenState();
+  ConsumerState<ProfileSetupScreen> createState() => _ProfileSetupScreenState();
 }
 
-class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
+class _ProfileSetupScreenState extends ConsumerState<ProfileSetupScreen> {
   // ── 입력값 컨트롤러 ────────────────────────────────────
   // TextEditingController: 텍스트 필드의 내용을 읽거나 지울 때 사용
   final TextEditingController _nameController = TextEditingController();
@@ -56,6 +59,13 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
   // 반경 선택지 목록: 칩으로 표시될 옵션들
   // TODO: 수치 확정 시 수정 — 실제 서비스에서 제공할 반경 단위로 변경
   static const List<String> _radiusOptions = ['300m', '500m', '1km', '2km'];
+
+  // ── API 서비스 ─────────────────────────────────────────
+  static const _usersApiService = UsersApiService();
+
+  // ── 저장 중 여부 ────────────────────────────────────────
+  // true: 버튼 비활성화 + 텍스트 "저장 중..." 표시
+  bool _isSaving = false;
 
   // ── 유효성 검사 ─────────────────────────────────────────
   // 이름과 소속이 모두 입력됐을 때만 true → "다음" 버튼 활성화
@@ -71,6 +81,33 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
     // 텍스트가 바뀔 때마다 _canProceed를 다시 계산해서 버튼 활성화 상태 갱신
     _nameController.addListener(() => setState(() {}));
     _orgController.addListener(() => setState(() {}));
+  }
+
+  // ── "다음" 버튼 핸들러: 서버 저장 → onNext() 호출 ──────
+  // 처리 순서:
+  //   1. PATCH /users/me — 이름/소속/반경을 서버에 먼저 저장
+  //      → CU-05(ConditionSetupScreen)가 props로 데이터를 받지 않아도 됨
+  //   2. onNext() — 다음 온보딩 화면(CU-05)으로 이동
+  Future<void> _handleNext() async {
+    if (_isSaving) return;
+    setState(() => _isSaving = true);
+
+    final accessToken = ref.read(userProvider).accessToken;
+
+    if (accessToken != null) {
+      await _usersApiService.updateMe(
+        accessToken: accessToken,
+        name: _nameController.text.trim(),
+        org: _orgController.text.trim(),
+        radius: _selectedRadius, // 칩 선택값: '300m' | '500m' | '1km' | '2km'
+      );
+    }
+
+    if (!mounted) return;
+    setState(() => _isSaving = false);
+
+    // 저장 완료 → 다음 화면으로 이동 (name/org를 props로 넘길 필요 없음)
+    widget.onNext();
   }
 
   // ── 생명주기: 화면이 사라질 때 ─────────────────────────
@@ -391,15 +428,10 @@ class _ProfileSetupScreenState extends State<ProfileSetupScreen> {
         ),
       ),
       child: AppPrimaryButton(
-        label: '다음',
-        // _canProceed가 true(이름+소속 입력됨)일 때만 버튼 활성화
-        isEnabled: _canProceed,
-        onPressed: _canProceed
-            ? () => widget.onNext(
-                  name: _nameController.text.trim(),
-                  org: _orgController.text.trim(),
-                )
-            : null,
+        // _canProceed(이름+소속 입력됨) + 저장 중이 아닐 때만 활성화
+        label: _isSaving ? '저장 중...' : '다음',
+        isEnabled: _canProceed && !_isSaving,
+        onPressed: (_canProceed && !_isSaving) ? _handleNext : null,
       ),
     );
   }

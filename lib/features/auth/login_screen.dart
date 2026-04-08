@@ -20,9 +20,8 @@ import '../../providers/user_provider.dart';
 //     → 로그인 성공 + 기존 유저 → CU-06 홈 대시보드
 //
 // 신규/기존 유저 분기:
-//   현재: 항상 CU-03으로 이동 (백엔드 미연동 상태)
-//   TODO: 안태환 씨 POST /auth/kakao API 완성 후
-//         응답의 isNewUser 필드로 분기 처리
+//   서버 응답의 nextStep 필드("PROFILE_SETUP" | "CONDITION_SETUP" | "HOME")로 결정.
+//   nextStep이 없을 경우 isNewUser 폴백 사용 (AuthResponse.fromJson 참고).
 //
 // KakaoAuthService 사용 이유:
 //   카카오 SDK 코드를 UI에서 분리해 테스트 및 교체가 용이하도록 함
@@ -35,9 +34,11 @@ class LoginScreen extends ConsumerStatefulWidget {
   });
 
   /// 로그인 성공 콜백
-  /// [isNewUser]: true면 CU-03으로, false면 홈으로 이동
-  /// TODO: 현재는 항상 isNewUser=true로 호출 (백엔드 미연동)
-  final void Function({required bool isNewUser}) onLoginSuccess;
+  /// [nextStep]: 서버가 지정한 다음 화면
+  ///   "PROFILE_SETUP"   → CU-03 기본 프로필 설정
+  ///   "CONDITION_SETUP" → CU-05 기본 조건 설정 (프로필 완료 후 재진입)
+  ///   "HOME"            → 온보딩 완료, 홈으로 바로 진입
+  final void Function({required String nextStep}) onLoginSuccess;
 
   @override
   ConsumerState<LoginScreen> createState() => _LoginScreenState();
@@ -88,7 +89,7 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       if (authResponse != null) {
         // ── 서버 응답 성공: 유저 정보 Riverpod에 저장 ────────
         ref.read(userProvider.notifier).setUser(authResponse);
-        widget.onLoginSuccess(isNewUser: authResponse.isNewUser);
+        widget.onLoginSuccess(nextStep: authResponse.nextStep);
       } else {
         // ── 서버 통신 실패 ─────────────────────────────────
         // 카카오 인증은 됐지만 서버가 응답하지 않는 경우
