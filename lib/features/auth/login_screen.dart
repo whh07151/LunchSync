@@ -1,7 +1,10 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../services/kakao_auth_service.dart';
+import '../../services/auth_api_service.dart';
+import '../../providers/user_provider.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-02 카카오 로그인 화면
@@ -17,34 +20,35 @@ import '../../services/kakao_auth_service.dart';
 //     → 로그인 성공 + 기존 유저 → CU-06 홈 대시보드
 //
 // 신규/기존 유저 분기:
-//   현재: 항상 CU-03으로 이동 (백엔드 미연동 상태)
-//   TODO: 안태환 씨 POST /auth/kakao API 완성 후
-//         응답의 isNewUser 필드로 분기 처리
+//   서버 응답의 nextStep 필드("PROFILE_SETUP" | "CONDITION_SETUP" | "HOME")로 결정.
+//   nextStep이 없을 경우 isNewUser 폴백 사용 (AuthResponse.fromJson 참고).
 //
 // KakaoAuthService 사용 이유:
 //   카카오 SDK 코드를 UI에서 분리해 테스트 및 교체가 용이하도록 함
 // ══════════════════════════════════════════════════════════
 
-class LoginScreen extends StatefulWidget {
+class LoginScreen extends ConsumerStatefulWidget {
   const LoginScreen({
     super.key,
     required this.onLoginSuccess, // 로그인 성공 시 실행 (신규/기존 유저 구분 포함)
   });
 
   /// 로그인 성공 콜백
-  /// [isNewUser]: true면 CU-03으로, false면 홈으로 이동
-  /// TODO: 현재는 항상 isNewUser=true로 호출 (백엔드 미연동)
-  final void Function({required bool isNewUser}) onLoginSuccess;
+  /// [nextStep]: 서버가 지정한 다음 화면
+  ///   "PROFILE_SETUP"   → CU-03 기본 프로필 설정
+  ///   "CONDITION_SETUP" → CU-05 기본 조건 설정 (프로필 완료 후 재진입)
+  ///   "HOME"            → 온보딩 완료, 홈으로 바로 진입
+  final void Function({required String nextStep}) onLoginSuccess;
 
   @override
-  State<LoginScreen> createState() => _LoginScreenState();
+  ConsumerState<LoginScreen> createState() => _LoginScreenState();
 }
 
-class _LoginScreenState extends State<LoginScreen> {
+class _LoginScreenState extends ConsumerState<LoginScreen> {
 
-  // ── 카카오 인증 서비스 ────────────────────────────────────
-  // const로 생성: 상태 없는 서비스 클래스이므로 매번 새로 만들 필요 없음
+  // ── 서비스 인스턴스 ──────────────────────────────────────
   static const _kakaoAuthService = KakaoAuthService();
+  static const _authApiService = AuthApiService();
 
   // ── 로그인 진행 중 여부 ───────────────────────────────────
   // true: 버튼 비활성화 + 로딩 인디케이터 표시
@@ -72,16 +76,38 @@ class _LoginScreenState extends State<LoginScreen> {
     // 화면이 이미 사라졌으면 setState 호출 금지 (메모리 오류 방지)
     if (!mounted) return;
 
-    setState(() => _isLoading = false);
-
     if (result.isSuccess) {
-      // ── 로그인 성공 ────────────────────────────────────────
-      // TODO: 안태환 씨 API 완성 후 → result.kakaoUser 정보를
-      //       POST /auth/kakao 로 전송하고 isNewUser 값 받기
-      // 현재: 항상 신규 유저로 처리 (CU-03으로 이동)
-      widget.onLoginSuccess(isNewUser: true);
+      // ── 카카오 토큰 → LunchSync 서버에 전달 ───────────────
+      // POST /auth/kakao: 서버에서 유저 조회/생성 후 JWT + isNewUser 반환
+      final authResponse = await _authApiService.loginWithKakao(
+        result.kakaoAccessToken!,
+      );
+
+      if (!mounted) return;
+      setState(() => _isLoading = false);
+
+      if (authResponse != null) {
+        // ── 서버 응답 성공: 유저 정보 Riverpod에 저장 ────────
+        ref.read(userProvider.notifier).setUser(authResponse);
+        widget.onLoginSuccess(nextStep: authResponse.nextStep);
+      } else {
+        // ── 서버 통신 실패 ─────────────────────────────────
+        // 카카오 인증은 됐지만 서버가 응답하지 않는 경우
+        // (서버 미실행, 네트워크 오류 등)
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(
+              '서버 연결에 실패했어요. 서버가 실행 중인지 확인해주세요.',
+              style: AppTextStyles.bodySmall.copyWith(color: Colors.white),
+            ),
+            backgroundColor: AppColors.error,
+            duration: const Duration(seconds: 3),
+          ),
+        );
+      }
     } else {
-      // ── 로그인 실패: 오류 메시지 스낵바 표시 ──────────────
+      setState(() => _isLoading = false);
+      // ── 카카오 로그인 실패: 오류 메시지 스낵바 표시 ───────
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(

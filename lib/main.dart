@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme/theme.dart';
 import 'core/config/app_config.dart';
 import 'features/splash/splash_screen.dart';
@@ -73,72 +74,147 @@ class LunchSyncApp extends StatelessWidget {
 // _RootNavigator: 앱의 첫 화면을 결정하고 라우팅을 담당하는 위젯
 //
 // 역할:
-//   SplashScreen에 콜백 함수를 넘겨줍니다.
-//   SplashScreen이 판단을 마치면 여기서 정의한 함수가 실행되어
-//   적절한 화면으로 이동합니다.
+//   앱 실행 시 SharedPreferences의 'onboarding_done' 값을 읽어서
+//   첫 실행인지 재실행인지 판단합니다.
 //
-// 왜 콜백(callback) 방식을 쓰나?
-//   SplashScreen이 "어디로 갈지"를 직접 알 필요가 없게 합니다.
-//   나중에 상태 관리 라이브러리로 라우팅 방식이 바뀌어도
-//   SplashScreen 코드는 수정 없이 이 파일만 바꾸면 됩니다.
+//   첫 실행 (onboarding_done == false):
+//     SplashScreen → LoginScreen → nextStep에 따라 화면 분기
+//       "PROFILE_SETUP"   → CU-03 → CU-05 → HomeScreen
+//       "CONDITION_SETUP" → CU-05 → HomeScreen (CU-03 완료 후 재진입)
+//       "HOME"            → HomeScreen (온보딩 완료)
+//
+//   재실행 (onboarding_done == true):
+//     SplashScreen 건너뜀 → LoginScreen → nextStep에 따라 동일 분기
+//     (JWT가 인메모리라 앱 재실행 시 항상 로그인 필요)
+//
+// StatefulWidget을 쓰는 이유:
+//   SharedPreferences 조회가 비동기(async)라 결과가 오기 전까지
+//   로딩 상태를 표시해야 합니다. StatelessWidget은 상태 변경 불가.
 // ─────────────────────────────────────────────────────────
-class _RootNavigator extends StatelessWidget {
+class _RootNavigator extends StatefulWidget {
   const _RootNavigator();
 
   @override
-  Widget build(BuildContext context) {
-    return SplashScreen(
-      // "카카오로 시작하기" 버튼: CU-02 로그인 화면으로 이동
-      onStart: () {
-        Navigator.of(context).pushReplacement(
+  State<_RootNavigator> createState() => _RootNavigatorState();
+}
+
+class _RootNavigatorState extends State<_RootNavigator> {
+
+  // null: 아직 확인 중 / true: 온보딩 완료 / false: 첫 실행
+  bool? _onboardingDone;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkOnboardingStatus();
+  }
+
+  // ── SharedPreferences에서 온보딩 완료 여부 확인 ──────────
+  Future<void> _checkOnboardingStatus() async {
+    final prefs = await SharedPreferences.getInstance();
+    final done = prefs.getBool('onboarding_done') ?? false;
+    if (mounted) {
+      setState(() => _onboardingDone = done);
+    }
+  }
+
+  // ── 로그인 성공 후 nextStep에 따라 화면 분기 ───────────────
+  // nextStep: 서버가 지정한 다음 화면
+  //   "PROFILE_SETUP"   → CU-03 기본 프로필 설정 (신규 유저)
+  //   "CONDITION_SETUP" → CU-05 기본 조건 설정 (CU-03 완료 후 재진입한 유저)
+  //   "HOME" (그 외)    → 홈 대시보드로 바로 이동 (온보딩 완료 유저)
+  //
+  // 왜 switch인가?
+  //   isNewUser bool 분기와 달리, 서버가 추가 단계를 내려줄 수 있음.
+  //   새로운 nextStep 값이 생겨도 case 하나만 추가하면 됨.
+  void _handleLoginSuccess(BuildContext ctx, String nextStep) {
+    switch (nextStep) {
+
+      // ── CU-03: 기본 프로필 설정 ───────────────────────────
+      case 'PROFILE_SETUP':
+        Navigator.of(ctx).pushReplacement(
           MaterialPageRoute(
-            builder: (ctx) => LoginScreen(
-              onLoginSuccess: ({required bool isNewUser}) {
-                if (isNewUser) {
-                  // ── 신규 유저: CU-03 프로필 설정으로 이동 ──────
-                  Navigator.of(ctx).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (ctx2) => ProfileSetupScreen(
-                        onNext: () {
-                          Navigator.of(ctx2).pushReplacement(
-                            MaterialPageRoute(
-                              builder: (ctx3) => ConditionSetupScreen(
-                                onComplete: () {
-                                  Navigator.of(ctx3).pushReplacement(
-                                    MaterialPageRoute(
-                                      // CU-06 홈 대시보드로 이동 (온보딩 완료)
-                                      builder: (_) => const HomeScreen(),
-                                    ),
-                                  );
-                                },
-                              ),
-                            ),
-                          );
-                        },
-                      ),
+            builder: (ctx2) => ProfileSetupScreen(
+              // name/org는 ProfileSetupScreen이 서버에 직접 저장하므로
+              // 여기서 받아서 넘길 필요 없음 (VoidCallback)
+              onNext: () {
+                Navigator.of(ctx2).pushReplacement(
+                  MaterialPageRoute(
+                    builder: (ctx3) => ConditionSetupScreen(
+                      onComplete: () {
+                        Navigator.of(ctx3).pushReplacement(
+                          MaterialPageRoute(
+                            builder: (_) => const HomeScreen(),
+                          ),
+                        );
+                      },
                     ),
-                  );
-                } else {
-                  // ── 기존 유저: 홈으로 바로 이동 ───────────────
-                  // TODO: 안태환 씨 API 완성 후 활성화
-                  // 현재는 isNewUser가 항상 true이므로 이 분기는 미도달
-                  Navigator.of(ctx).pushReplacement(
-                    MaterialPageRoute(
-                      builder: (_) => const HomeScreen(),
-                    ),
-                  );
-                }
+                  ),
+                );
               },
             ),
           ),
         );
-      },
 
-      // "서비스 둘러보기" 버튼: 로그인 없이 둘러보기
-      onBrowse: () {
+      // ── CU-05: 기본 조건 설정 (프로필 완료 후 재진입) ──────
+      // CU-03에서 이름/소속이 이미 서버에 저장돼 있으므로
+      // profileName/profileOrg props 없이 바로 진입 가능
+      case 'CONDITION_SETUP':
+        Navigator.of(ctx).pushReplacement(
+          MaterialPageRoute(
+            builder: (ctx3) => ConditionSetupScreen(
+              onComplete: () {
+                Navigator.of(ctx3).pushReplacement(
+                  MaterialPageRoute(builder: (_) => const HomeScreen()),
+                );
+              },
+            ),
+          ),
+        );
+
+      // ── 홈: 온보딩 완료 유저 ─────────────────────────────
+      default: // 'HOME' 또는 알 수 없는 값
+        Navigator.of(ctx).pushReplacement(
+          MaterialPageRoute(builder: (_) => const HomeScreen()),
+        );
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+
+    // ── SharedPreferences 조회 중: 로딩 표시 ───────────────
+    if (_onboardingDone == null) {
+      return const Scaffold(
+        backgroundColor: AppColors.background,
+        body: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    // ── 재실행 (온보딩 완료): 스플래시 건너뜀 → 로그인 화면 ─
+    if (_onboardingDone!) {
+      return LoginScreen(
+        onLoginSuccess: ({required String nextStep}) =>
+            _handleLoginSuccess(context, nextStep),
+      );
+    }
+
+    // ── 첫 실행: 스플래시 화면 표시 ─────────────────────────
+    return SplashScreen(
+      onStart: () {
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
-            // TODO: 둘러보기 모드 화면 완성 후 교체
+            builder: (ctx) => LoginScreen(
+              onLoginSuccess: ({required String nextStep}) =>
+                  _handleLoginSuccess(ctx, nextStep),
+            ),
+          ),
+        );
+      },
+      onBrowse: () {
+        // TODO: 둘러보기 모드 화면 완성 후 교체
+        Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
             builder: (_) => const _PlaceholderScreen(title: '둘러보기 (준비 중)'),
           ),
         );
@@ -146,7 +222,6 @@ class _RootNavigator extends StatelessWidget {
     );
   }
 }
-
 
 // ─────────────────────────────────────────────────────────
 // _PlaceholderScreen: 아직 만들지 않은 화면을 임시로 대체하는 화면

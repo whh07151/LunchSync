@@ -33,22 +33,30 @@ enum MenuCategory {
 /// 장바구니(cartProvider)와 메뉴 화면(CU-16)에서 공통으로 사용합니다.
 class MenuItem {
   const MenuItem({
-    required this.id,          // 메뉴 고유 식별자
-    required this.name,        // 메뉴 이름
-    required this.description, // 메뉴 설명 (재료, 특징 등)
-    required this.price,       // 가격 (원 단위 정수)
-    required this.category,    // 카테고리 분류
-    this.imageUrl,             // 메뉴 이미지 URL (없으면 기본 아이콘 표시)
-    this.isSoldOut = false,    // 품절 여부 (기본: 판매 중)
+    required this.id,           // 메뉴 고유 식별자
+    required this.restaurantId, // 소속 식당 ID (DB menu_items.restaurant_id)
+    required this.name,         // 메뉴 이름
+    required this.description,  // 메뉴 설명 (재료, 특징 등)
+    required this.price,        // 가격 (원 단위 정수)
+    required this.category,     // 카테고리 분류
+    this.imageUrl,              // 메뉴 이미지 URL (없으면 기본 아이콘 표시)
+    this.isSoldOut = false,     // 품절 여부 (기본: 판매 중)
+    // TODO: 장다연 씨 DB 컬럼 추가 확정 후 아래 필드 활성화
+    // this.spicy = false,
+    // this.allergyNotes,
   });
 
   final String id;
+  final String restaurantId; // 식당-메뉴 연결 키 (장다연 씨 기준: Menu.restaurantId = Restaurant.id)
   final String name;
   final String description;
   final int price;
   final MenuCategory category;
   final String? imageUrl;
   final bool isSoldOut;
+  // TODO: 장다연 씨 확정 후 추가
+  // final bool spicy;
+  // final String? allergyNotes;
 
   // ── 가격 포맷 헬퍼 ───────────────────────────────────────
   // "6,500원" 형태로 반환. 장바구니 합계 표시에도 활용
