@@ -44,8 +44,7 @@ app.*.map.json
 /android/app/profile
 /android/app/release
 
-# 앱 키 등 민감한 설정 파일 — 절대 커밋하지 말 것
-lib/core/config/app_config.dart
+# 앱 키 등 민감한 설정 파일 — 절대 커밋하지 말 것 ->좆까 야수의 심장으로 한다
 
 # Claude Code 메모리/설정 파일
 .claude/

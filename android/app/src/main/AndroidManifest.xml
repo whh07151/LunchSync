@@ -29,10 +29,11 @@
 
         <!-- 카카오 로그인: 웹 브라우저(커스텀 탭) 로그인 후 앱으로 돌아오는 리다이렉트 처리 -->
         <!-- 카카오톡 앱이 없거나 웹 로그인을 선택했을 때 이 Activity가 리다이렉트를 받음 -->
+        <!-- kakao_flutter_sdk 1.x 버전은 AuthCodeCustomTabsActivity 사용 (구버전 AuthCodeHandlerActivity에서 변경) -->
         <activity
-            android:name="com.kakao.sdk.auth.AuthCodeHandlerActivity"
+            android:name="com.kakao.sdk.flutter.AuthCodeCustomTabsActivity"
             android:exported="true">
-            <intent-filter>
+            <intent-filter android:label="flutter_web_auth">
                 <action android:name="android.intent.action.VIEW" />
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
