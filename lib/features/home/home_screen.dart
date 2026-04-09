@@ -261,13 +261,21 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             Navigator.of(context).pushAndRemoveUntil(
               MaterialPageRoute(
                 builder: (ctx) => LoginScreen(
-                  onLoginSuccess: ({required bool isNewUser}) {
-                    // 로그아웃 후 재로그인: 기존 유저면 홈으로 바로
-                    // isNewUser=true는 다른 카카오 계정으로 로그인 시 발생 가능
-                    // (이 경우도 홈으로 이동 — 온보딩 완료 기기이므로)
-                    Navigator.of(ctx).pushReplacement(
-                      MaterialPageRoute(builder: (_) => const HomeScreen()),
-                    );
+                  onLoginSuccess: ({required String nextStep}) {
+                    // 로그아웃 후 재로그인: nextStep에 따라 화면 분기
+                    // 온보딩 완료 기기이므로 대부분 HOME이지만,
+                    // 다른 카카오 계정으로 로그인 시 PROFILE_SETUP이 올 수 있음
+                    if (nextStep == 'HOME') {
+                      Navigator.of(ctx).pushReplacement(
+                        MaterialPageRoute(builder: (_) => const HomeScreen()),
+                      );
+                    } else {
+                      // 온보딩 필요한 계정 → main.dart의 라우팅 로직과 동일하게 처리
+                      Navigator.of(ctx).pushAndRemoveUntil(
+                        MaterialPageRoute(builder: (_) => const HomeScreen()),
+                        (route) => false,
+                      );
+                    }
                   },
                 ),
               ),

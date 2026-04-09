@@ -37,7 +37,10 @@ void main() {
   // runApp 전에 반드시 호출해야 합니다.
   // nativeAppKey: 카카오 개발자 콘솔에서 발급받은 Native 앱 키
   // 앱 키는 app_config.dart에서 관리 (.gitignore 처리됨)
-  KakaoSdk.init(nativeAppKey: AppConfig.kakaoNativeAppKey);
+  KakaoSdk.init(
+    nativeAppKey: AppConfig.kakaoNativeAppKey,       // Android/iOS
+    javaScriptAppKey: AppConfig.kakaoJavaScriptAppKey, // Web(Chrome)
+  );
 
   // ProviderScope: Riverpod 상태 컨테이너. 앱 전체를 감싸야 함.
   runApp(const ProviderScope(child: LunchSyncApp()));
