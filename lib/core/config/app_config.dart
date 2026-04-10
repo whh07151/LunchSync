@@ -26,6 +26,6 @@ class AppConfig {
   ///
   /// 실기기 테스트 시: PC의 로컬 IP 주소로 변경 (예: http://192.168.0.5:3000/api)
   /// 에뮬레이터 테스트 시: http://10.0.2.2:3000/api (Android 에뮬레이터 → 호스트 PC)
-  /// TODO: 배포 시 실제 서버 도메인으로 교체
-  static const String backendBaseUrl = 'http://192.168.45.15:3000/api';
+  /// TODO: 배포 시 실제 서버 도메인으로 교체 -->04/11 완료, aws서버
+  static const String backendBaseUrl = 'http://13.125.165.80:3000/api';
 }
