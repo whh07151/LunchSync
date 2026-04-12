@@ -5,6 +5,13 @@ import { AppService } from './app.service';
 import { SupabaseModule } from './supabase/supabase.module';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
+import { SessionsModule } from './sessions/sessions.module';
+import { InvitationsModule } from './invitations/invitations.module';
+import { RestaurantsModule } from './restaurants/restaurants.module';
+import { RecommendationsModule } from './recommendations/recommendations.module';
+import { VotesModule } from './votes/votes.module';
+import { OrdersModule } from './orders/orders.module';
+import { PosModule } from './pos/pos.module';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: NestJS 루트 모듈
@@ -37,6 +44,27 @@ import { UsersModule } from './users/users.module';
 
     // 유저 프로필 조회/수정
     UsersModule,
+
+    // 점심 세션 생성/조회/멤버 관리
+    SessionsModule,
+
+    // 초대 링크 생성/수락
+    InvitationsModule,
+
+    // 식당/메뉴 조회
+    RestaurantsModule,
+
+    // CORE-07/08: 그룹 추천 엔진 + 중복 회피
+    RecommendationsModule,
+
+    // 투표 + CU-15 결과 확정
+    VotesModule,
+
+    // 주문/결제 (CORE-09/10, CU-17/18/19)
+    OrdersModule,
+
+    // 점주앱/POS (OW-10, POS-08/09/13)
+    PosModule,
   ],
   controllers: [AppController],
   providers: [AppService],

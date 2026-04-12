@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Patch, Req, UseGuards } from '@nestjs/common';
-import { IsOptional, IsString, IsNumber } from 'class-validator';
+import { IsOptional, IsString, IsNumber, IsArray } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { UsersService } from './users.service';
 
@@ -22,6 +22,8 @@ class UpdateUserDto {
   @IsOptional() @IsString() radius?: string;
   @IsOptional() @IsNumber() budget?: number;
   @IsOptional() @IsString() speed?: string;
+  @IsOptional() @IsArray() @IsString({ each: true }) allergies?: string[];
+  @IsOptional() @IsArray() @IsString({ each: true }) dislikes?: string[];
 }
 
 @Controller('users')

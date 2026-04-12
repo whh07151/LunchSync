@@ -17,6 +17,8 @@ export interface UpdateUserDto {
   radius?: string;
   budget?: number;
   speed?: string;
+  allergies?: string[];
+  dislikes?: string[];
 }
 
 @Injectable()
@@ -28,7 +30,7 @@ export class UsersService {
   async getMe(userId: string) {
     const { data, error } = await this.supabase.client
       .from('users')
-      .select('id, name, org, profile_image, radius, budget, speed, role')
+      .select('id, name, org, profile_image, radius, budget, speed, role, allergies, dislikes')
       .eq('id', userId)
       .single();
 
@@ -46,6 +48,8 @@ export class UsersService {
       budget: data.budget,
       speed: data.speed,
       role: data.role,
+      allergies: data.allergies ?? [],
+      dislikes: data.dislikes ?? [],
     };
   }
 
@@ -61,12 +65,14 @@ export class UsersService {
     if (dto.radius !== undefined) updateData.radius = dto.radius;
     if (dto.budget !== undefined) updateData.budget = dto.budget;
     if (dto.speed !== undefined) updateData.speed = dto.speed;
+    if (dto.allergies !== undefined) updateData.allergies = dto.allergies;
+    if (dto.dislikes !== undefined) updateData.dislikes = dto.dislikes;
 
     const { data, error } = await this.supabase.client
       .from('users')
       .update(updateData)
       .eq('id', userId)
-      .select('id, name, org, profile_image, radius, budget, speed')
+      .select('id, name, org, profile_image, radius, budget, speed, allergies, dislikes')
       .single();
 
     if (error || !data) {
@@ -81,6 +87,8 @@ export class UsersService {
       radius: data.radius,
       budget: data.budget,
       speed: data.speed,
+      allergies: data.allergies ?? [],
+      dislikes: data.dislikes ?? [],
     };
   }
 }

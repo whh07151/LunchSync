@@ -48,3 +48,15 @@ app.*.map.json
 
 # Claude Code 메모리/설정 파일
 .claude/
+CLAUDE.md
+
+# Node.js
+node_modules/
+package-lock.json
+package.json
+
+# Playwright / E2E 테스트 결과물
+e2e/
+playwright.config.ts
+playwright-report/
+test-results/

@@ -97,6 +97,35 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
   // ── API 서비스 ────────────────────────────────────────
   static const _usersApiService = UsersApiService();
 
+  // ── 알레르기 선택 상태 (CU-04) ─────────────────────────
+  final List<String> _selectedAllergies = [];
+
+  // 알레르기 선택지 목록
+  static const List<String> _allergyOptions = [
+    '땅콩',
+    '갑각류',
+    '유제품',
+    '계란',
+    '밀',
+    '대두',
+    '생선',
+    '조개류',
+    '견과류',
+  ];
+
+  // ── 비선호 음식 선택 상태 (CU-04) ─────────────────────
+  final List<String> _selectedDislikes = [];
+
+  // 비선호 음식 선택지 목록
+  static const List<String> _dislikeOptions = [
+    '매운 음식',
+    '날생선(회)',
+    '내장류',
+    '향채(고수)',
+    '튀김류',
+    '패스트푸드',
+  ];
+
   // ── 저장 중 여부 ──────────────────────────────────────
   bool _isSaving = false;
 
@@ -150,6 +179,8 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
         radius: _radiusToString(_radiusMeters), // 슬라이더 값으로 덮어씀
         budget: _budgetToInt(_selectedBudget),
         speed: _selectedSpeed,
+        allergies: _selectedAllergies,
+        dislikes: _selectedDislikes,
       );
     }
 
@@ -220,6 +251,26 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
 
                     // ── 식사 속도 선택 섹션 ─────────────────
                     _buildSpeedSection(),
+
+                    const SizedBox(height: AppSpacing.lg + 4),
+
+                    // ── 구분선 ───────────────────────────────
+                    const Divider(color: AppColors.divider, height: 1),
+
+                    const SizedBox(height: AppSpacing.lg + 4),
+
+                    // ── 알레르기 선택 섹션 (CU-04) ──────────
+                    _buildAllergySection(),
+
+                    const SizedBox(height: AppSpacing.lg + 4),
+
+                    // ── 구분선 ───────────────────────────────
+                    const Divider(color: AppColors.divider, height: 1),
+
+                    const SizedBox(height: AppSpacing.lg + 4),
+
+                    // ── 비선호 음식 선택 섹션 (CU-04) ────────
+                    _buildDislikeSection(),
 
                     const SizedBox(height: AppSpacing.xl),
                   ],
@@ -512,6 +563,90 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
                   ),
                 ),
               ),
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  // ── 알레르기 선택 섹션 위젯 (CU-04) ─────────────────────
+  Widget _buildAllergySection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '알레르기',
+          style: AppTextStyles.bodyMedium.copyWith(
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '해당하는 알레르기가 있으면 선택해주세요 (선택사항)',
+          style: AppTextStyles.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: _allergyOptions.map((allergy) {
+            final isSelected = _selectedAllergies.contains(allergy);
+            return AppChip(
+              label: allergy,
+              isSelected: isSelected,
+              onTap: () {
+                setState(() {
+                  if (isSelected) {
+                    _selectedAllergies.remove(allergy);
+                  } else {
+                    _selectedAllergies.add(allergy);
+                  }
+                });
+              },
+            );
+          }).toList(),
+        ),
+      ],
+    );
+  }
+
+  // ── 비선호 음식 선택 섹션 위젯 (CU-04) ────────────────────
+  Widget _buildDislikeSection() {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Text(
+          '비선호 음식',
+          style: AppTextStyles.bodyMedium.copyWith(
+            fontWeight: FontWeight.w600,
+            color: AppColors.textPrimary,
+          ),
+        ),
+        const SizedBox(height: 4),
+        Text(
+          '피하고 싶은 음식 종류가 있으면 선택해주세요 (선택사항)',
+          style: AppTextStyles.bodySmall,
+        ),
+        const SizedBox(height: 12),
+        Wrap(
+          spacing: AppSpacing.sm,
+          runSpacing: AppSpacing.sm,
+          children: _dislikeOptions.map((dislike) {
+            final isSelected = _selectedDislikes.contains(dislike);
+            return AppChip(
+              label: dislike,
+              isSelected: isSelected,
+              onTap: () {
+                setState(() {
+                  if (isSelected) {
+                    _selectedDislikes.remove(dislike);
+                  } else {
+                    _selectedDislikes.add(dislike);
+                  }
+                });
+              },
             );
           }).toList(),
         ),

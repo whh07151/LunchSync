@@ -22,6 +22,8 @@ class UserProfile {
     this.budget,
     this.speed,
     this.role,
+    this.allergies = const [],
+    this.dislikes = const [],
   });
 
   final String id;
@@ -32,6 +34,8 @@ class UserProfile {
   final int? budget;           // 예산 조건
   final String? speed;         // 속도 조건
   final String? role;          // CUSTOMER | OWNER
+  final List<String> allergies; // 알레르기 목록 (CU-04)
+  final List<String> dislikes;  // 비선호 음식 목록 (CU-04)
 
   // JSON 파싱: GET /api/users/me 응답의 data 필드에서 생성
   factory UserProfile.fromJson(Map<String, dynamic> json) {
@@ -44,6 +48,8 @@ class UserProfile {
       budget: json['budget'] as int?,
       speed: json['speed'] as String?,
       role: json['role'] as String?,
+      allergies: (json['allergies'] as List<dynamic>?)?.cast<String>() ?? [],
+      dislikes: (json['dislikes'] as List<dynamic>?)?.cast<String>() ?? [],
     );
   }
 }
@@ -90,6 +96,8 @@ class UsersApiService {
     String? radius,
     int? budget,
     String? speed,
+    List<String>? allergies,
+    List<String>? dislikes,
   }) async {
     try {
       // null이 아닌 필드만 요청 바디에 포함
@@ -99,6 +107,8 @@ class UsersApiService {
       if (radius != null) body['radius'] = radius;
       if (budget != null) body['budget'] = budget;
       if (speed != null) body['speed'] = speed;
+      if (allergies != null) body['allergies'] = allergies;
+      if (dislikes != null) body['dislikes'] = dislikes;
 
       final response = await http.patch(
         Uri.parse('${AppConfig.backendBaseUrl}/users/me'),

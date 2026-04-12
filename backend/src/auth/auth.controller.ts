@@ -25,13 +25,7 @@ export class AuthController {
   // LunchSync JWT + isNewUser + 유저 기본 정보를 반환
   @Post('kakao')
   async kakaoLogin(@Body() dto: KakaoLoginDto) {
-    try {
-      const result = await this.authService.kakaoLogin(dto.kakaoAccessToken);
-      return { success: true, data: result };
-    } catch (e) {
-      // 디버깅용: 실제 에러 메시지를 응답에 포함
-      // TODO: 배포 전 제거
-      throw new Error(`카카오 로그인 실패: ${e instanceof Error ? e.message : String(e)}`);
-    }
+    const result = await this.authService.kakaoLogin(dto.kakaoAccessToken);
+    return { success: true, data: result };
   }
 }

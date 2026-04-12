@@ -5,6 +5,10 @@ import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../models/member.dart';
 import '../../providers/session_provider.dart';
+import '../../providers/user_provider.dart';
+import '../../services/invitations_api_service.dart';
+import '../../services/sessions_api_service.dart';
+import 'package:flutter/services.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-08 친구/멤버 리스트 화면
@@ -173,6 +177,51 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
         ),
       ),
     );
+  }
+
+  // ── 초대 링크 생성 핸들러 (CORE-02) ───────────────────────
+  Future<void> _handleCreateInviteLink(BuildContext context) async {
+    final accessToken = ref.read(userProvider).accessToken;
+    if (accessToken == null) return;
+
+    // 세션이 아직 없으면 먼저 생성
+    const sessionsApi = SessionsApiService();
+    const invitationsApi = InvitationsApiService();
+
+    final session = await sessionsApi.createSession(
+      accessToken: accessToken,
+      name: '점심 세션',
+    );
+
+    if (session == null) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('세션 생성에 실패했어요.')),
+      );
+      return;
+    }
+
+    final invitation = await invitationsApi.createInvitation(
+      accessToken: accessToken,
+      sessionId: session.id,
+    );
+
+    if (!mounted) return;
+
+    if (invitation != null) {
+      // 초대 코드를 클립보드에 복사
+      await Clipboard.setData(ClipboardData(text: invitation.inviteCode));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('초대 코드가 복사됐어요: ${invitation.inviteCode}'),
+          duration: const Duration(seconds: 3),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('초대 링크 생성에 실패했어요.')),
+      );
+    }
   }
 
   // ── 세션 생성 단계 표시바 위젯 ─────────────────────────────
@@ -462,6 +511,14 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
             ),
             const SizedBox(height: 8),
           ],
+
+          // ── "초대 링크 복사" 버튼 (CORE-02) ─────────────
+          AppOutlinedButton(
+            label: '초대 링크 복사하기',
+            onPressed: () => _handleCreateInviteLink(context),
+          ),
+
+          const SizedBox(height: 8),
 
           // ── "조건 설정하기" 버튼 ────────────────────────
           // onPressed가 null이면 버튼 비활성화(회색)됨
