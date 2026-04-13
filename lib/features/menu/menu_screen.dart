@@ -5,6 +5,7 @@ import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../models/menu_item.dart';
 import '../../providers/cart_provider.dart';
+import '../payment/order_review_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-16 메뉴 목록 / 장바구니 화면
@@ -72,25 +73,31 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
   MenuCategory _selectedCategory = MenuCategory.all;
 
   // ── Mock 메뉴 데이터 ─────────────────────────────────────
-  // TODO: API 연동 시 (안태환 씨) — GET /restaurants/{id}/menus 응답으로 교체
-  // restaurantId: 실제 연동 시 상위 화면(CU-13)에서 전달받은 식당 UUID로 교체
-  // id는 API 연동 후 서버 ID로 교체될 예정
+  // ⚠️ id / restaurantId 는 backend/scripts/seed-test-data.ts 의
+  //    UUID 와 동일해야 /api/orders 호출 시 menu_items 조회가 성공합니다.
+  //    seed 실행:  cd backend && npx ts-node scripts/seed-test-data.ts
+  //
+  // TODO: 실제 GET /restaurants/{id}/menus API 연동 시 전부 제거
+  //
   // ── [SEED 연결 포인트] ──────────────────────────────────
-  // → menu_seeds.dart의 menuSeeds에서 restaurantId로 필터링하여 교체
-  // → DetailTexts.soldOut, DetailTexts.noMenu 등 문구 적용
+  // 이 하드코딩된 UUID 리스트는 seed-test-data.ts 의 MENU_ITEMS 배열과
+  // 1:1 대응됩니다. 한쪽이 바뀌면 반드시 양쪽을 동시에 수정하세요.
+  static const String _seedRestaurantId =
+      '11111111-1111-1111-1111-111111111111';
+
   static const List<MenuItem> _mockMenuItems = [
-    // ── 추천 메뉴 ─────────────────────────────────────────
+    // ── 추천 메뉴 (카테고리만 recommended 로 표기) ────────
     MenuItem(
-      id: 'm01',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000001',
+      restaurantId: _seedRestaurantId,
       name: '불고기 덮밥',
       description: '달콤한 불고기 소스와 부드러운 소고기가 밥 위에 올려진 메뉴',
       price: 8900,
       category: MenuCategory.recommended,
     ),
     MenuItem(
-      id: 'm02',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000002',
+      restaurantId: _seedRestaurantId,
       name: '치즈 돈까스',
       description: '두툼한 돼지고기 커틀릿에 진한 치즈 소스',
       price: 9500,
@@ -99,24 +106,24 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
     // ── 밥류 ────────────────────────────────────────────
     MenuItem(
-      id: 'm03',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000003',
+      restaurantId: _seedRestaurantId,
       name: '제육볶음 정식',
       description: '매콤한 제육볶음 + 공깃밥 + 국 + 반찬 3종',
       price: 9000,
       category: MenuCategory.rice,
     ),
     MenuItem(
-      id: 'm04',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000004',
+      restaurantId: _seedRestaurantId,
       name: '김치찌개 정식',
       description: '묵은지로 끓인 진한 김치찌개 + 밥 + 반찬',
       price: 8500,
       category: MenuCategory.rice,
     ),
     MenuItem(
-      id: 'm05',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000005',
+      restaurantId: _seedRestaurantId,
       name: '비빔밥',
       description: '신선한 야채와 고추장으로 비벼 먹는 건강 한 끼',
       price: 8000,
@@ -125,16 +132,16 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
     // ── 면류 ────────────────────────────────────────────
     MenuItem(
-      id: 'm06',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000006',
+      restaurantId: _seedRestaurantId,
       name: '잔치국수',
       description: '멸치 육수에 소면을 넣은 담백한 국수',
       price: 7000,
       category: MenuCategory.noodle,
     ),
     MenuItem(
-      id: 'm07',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000007',
+      restaurantId: _seedRestaurantId,
       name: '비빔국수',
       description: '새콤달콤한 양념장에 비벼 먹는 여름 별미',
       price: 7500,
@@ -143,24 +150,24 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
     // ── 분식 ────────────────────────────────────────────
     MenuItem(
-      id: 'm08',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000008',
+      restaurantId: _seedRestaurantId,
       name: '떡볶이',
       description: '쫄깃한 가래떡에 매콤달콤한 소스. 순한맛/매운맛 선택',
       price: 6000,
       category: MenuCategory.snack,
     ),
     MenuItem(
-      id: 'm09',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000009',
+      restaurantId: _seedRestaurantId,
       name: '김밥 (1줄)',
       description: '참기름 향 가득한 참치김밥. 야채·참치·계란 구성',
       price: 4000,
       category: MenuCategory.snack,
     ),
     MenuItem(
-      id: 'm10',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000010',
+      restaurantId: _seedRestaurantId,
       name: '순대볶음',
       description: '당면이 가득한 순대를 매콤하게 볶은 메뉴',
       price: 8000,
@@ -170,16 +177,16 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
     // ── 음료 ────────────────────────────────────────────
     MenuItem(
-      id: 'm11',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000011',
+      restaurantId: _seedRestaurantId,
       name: '아이스 아메리카노',
       description: '깔끔한 에스프레소에 얼음을 가득 넣은 아이스 커피',
       price: 2500,
       category: MenuCategory.drink,
     ),
     MenuItem(
-      id: 'm12',
-      restaurantId: 'mock_restaurant_01',
+      id: 'aaaaaaaa-0000-4000-8000-000000000012',
+      restaurantId: _seedRestaurantId,
       name: '식혜',
       description: '전통 발효 음료. 달달하고 시원한 맛',
       price: 2000,
@@ -621,21 +628,19 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
           const SizedBox(height: 10),
 
           // ── "주문하기" 버튼 ───────────────────────────────
+          // CU-17 주문 검토 화면으로 이동 → CU-18/19 토스 결제로 이어짐
+          //
+          // sessionId 는 seed-test-data.ts 로 생성한 고정 UUID 사용.
+          // (실제 세션 흐름 연결 시 sessionProvider 에서 읽어오도록 교체)
           AppPrimaryButton(
             label: '주문하기 ($formattedTotal)',
             onPressed: () {
-              // TODO: CU-20 그룹 주문 검토 화면 (안태환 담당) 완성 후 연결
-              // 현재는 탭 시 스낵바로 임시 안내
-              ScaffoldMessenger.of(context).showSnackBar(
-                SnackBar(
-                  content: Text(
-                    'CU-20 그룹 주문 검토 화면 연결 예정 (안태환 담당)',
-                    style: AppTextStyles.bodySmall.copyWith(
-                      color: Colors.white,
-                    ),
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => OrderReviewScreen(
+                    sessionId: '22222222-2222-2222-2222-222222222222',
+                    restaurantName: widget.restaurantName,
                   ),
-                  backgroundColor: AppColors.textPrimary,
-                  duration: const Duration(seconds: 2),
                 ),
               );
             },

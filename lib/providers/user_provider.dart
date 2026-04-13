@@ -86,6 +86,29 @@ class UserNotifier extends Notifier<UserState> {
     );
   }
 
+  // ── 결제 왕복 후 sessionStorage 에서 복원 ─────────────────
+  // Flutter 웹은 토스 결제 페이지로 전체 리다이렉트될 때 앱이
+  // 새로 로드돼 Riverpod 상태(특히 JWT)가 모두 날아갑니다.
+  // 결제 직전에 sessionStorage 로 백업해둔 값을 앱 시작 시점에
+  // 이 메서드로 복원해서 로그인 상태를 이어갑니다.
+  //
+  // Why:
+  //   결제 후 "홈으로" 복귀 → 바로 다시 결제 시도할 때
+  //   "로그인 정보가 없습니다" 에러가 뜨는 이슈 해결.
+  void restoreFromSession({
+    required String accessToken,
+    String? userId,
+    String? name,
+    String? profileImage,
+  }) {
+    state = UserState(
+      accessToken: accessToken,
+      userId: userId,
+      name: name,
+      profileImage: profileImage,
+    );
+  }
+
   // ── 로그아웃 시 유저 정보 초기화 ─────────────────────────
   // CU-23 로그아웃 버튼 탭 시 호출
   void clear() {

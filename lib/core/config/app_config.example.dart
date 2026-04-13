@@ -12,4 +12,17 @@ class AppConfig {
 
   /// 카카오 Native 앱 키 — 카카오 개발자 콘솔에서 확인 후 입력
   static const String kakaoNativeAppKey = 'f';
+
+  /// 카카오 JavaScript 앱 키 (Web)
+  static const String kakaoJavaScriptAppKey = '<your-kakao-js-key>';
+
+  /// 백엔드 기본 URL
+  static const String backendBaseUrl = 'http://localhost:3000/api';
+
+  /// 토스페이먼츠 테스트 클라이언트 키 (test_ck_...)
+  /// https://developers.tosspayments.com/ → API 키 → 테스트 → 클라이언트 키
+  static const String tossClientKey = '<your-toss-test-client-key>';
+
+  static const String tossSuccessUrl = 'http://localhost:8080/payment/success';
+  static const String tossFailUrl = 'http://localhost:8080/payment/fail';
 }

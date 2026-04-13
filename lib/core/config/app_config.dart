@@ -20,12 +20,40 @@ class AppConfig {
 
   /// 카카오 JavaScript 앱 키 (Web/Chrome)
   /// https://developers.kakao.com → 내 애플리케이션 → 앱 키 → JavaScript 앱 키
-  static const String kakaoJavaScriptAppKey = '4873cbbe1f8110a38bb487677405a6ac';
+  static const String kakaoJavaScriptAppKey =
+      '4873cbbe1f8110a38bb487677405a6ac';
 
   /// LunchSync 백엔드 서버 기본 URL
   ///
   /// 실기기 테스트 시: PC의 로컬 IP 주소로 변경 (예: http://192.168.0.5:3000/api)
   /// 에뮬레이터 테스트 시: http://10.0.2.2:3000/api (Android 에뮬레이터 → 호스트 PC)
-  /// TODO: 배포 시 실제 서버 도메인으로 교체 -->04/11 완료, aws서버
-  static const String backendBaseUrl = 'http://13.125.165.80:3000/api';
+  ///
+  /// 🟢 현재: 로컬 개발 서버 (결제/주문 모듈 AWS 미배포 상태라 localhost 사용)
+  /// 🔴 AWS 배포본: http://13.125.165.80:3000/api
+  ///    → AWS 재배포 완료 후 위 주소로 복귀
+  static const String backendBaseUrl = 'http://localhost:3000/api';
+
+  // ══════════════════════════════════════════════════════════
+  // 토스페이먼츠 (결제위젯 v2)
+  // ══════════════════════════════════════════════════════════
+  // 개발자센터: https://developers.tosspayments.com/
+  //
+  // ⚠️ 클라이언트 키만 여기에 둡니다.
+  //    시크릿 키(test_sk_...)는 절대 프론트에 넣지 않습니다.
+  //    시크릿 키는 backend/.env → TOSS_SECRET_KEY 로만 관리합니다.
+  //
+  // 💡 테스트 키(test_ck_...)로도 모든 결제수단 UI가 실제와 동일하게 동작하며,
+  //    실결제는 발생하지 않습니다. 라이브 전환 시 live_ck_... 로만 교체.
+  // ══════════════════════════════════════════════════════════
+
+  /// 토스페이먼츠 테스트 클라이언트 키
+  /// https://developers.tosspayments.com/ → API 키 → 테스트 → 클라이언트 키
+  static const String tossClientKey = 'test_gck_docs_Ovk5rk1EwkEbP0W43n07xlzm';
+
+  /// 결제 성공 시 리다이렉트될 경로 (Flutter 웹 라우트)
+  /// 토스 결제창에서 승인 완료 후 이 URL로 paymentKey, orderId, amount가 쿼리스트링으로 전달됨
+  static const String tossSuccessUrl = 'http://localhost:8080/payment/success';
+
+  /// 결제 실패 시 리다이렉트될 경로
+  static const String tossFailUrl = 'http://localhost:8080/payment/fail';
 }

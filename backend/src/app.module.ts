@@ -11,6 +11,7 @@ import { RestaurantsModule } from './restaurants/restaurants.module';
 import { RecommendationsModule } from './recommendations/recommendations.module';
 import { VotesModule } from './votes/votes.module';
 import { OrdersModule } from './orders/orders.module';
+import { PaymentsModule } from './payments/payments.module';
 import { PosModule } from './pos/pos.module';
 
 // ══════════════════════════════════════════════════════════
@@ -62,6 +63,9 @@ import { PosModule } from './pos/pos.module';
 
     // 주문/결제 (CORE-09/10, CU-17/18/19)
     OrdersModule,
+
+    // 토스페이먼츠 v2 결제 승인 (CU-19)
+    PaymentsModule,
 
     // 점주앱/POS (OW-10, POS-08/09/13)
     PosModule,

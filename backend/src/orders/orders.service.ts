@@ -45,6 +45,8 @@ export class OrdersService {
     if (restaurantIds.size > 1) {
       throw new Error('서로 다른 식당의 메뉴를 동시에 주문할 수 없습니다.');
     }
+    // orders.restaurant_id 컬럼에 들어갈 단일 값
+    const restaurantId = menuItems[0].restaurant_id as string;
 
     // 2. 총 금액 계산
     const menuMap = new Map(menuItems.map((m) => [m.id, m]));
@@ -66,11 +68,13 @@ export class OrdersService {
     }
 
     // 3. orders 테이블 INSERT
+    // restaurant_id 는 NOT NULL 제약이 있어 반드시 포함해야 함
     const { data: order, error: orderError } = await this.supabase.client
       .from('orders')
       .insert({
         session_id: dto.sessionId,
         user_id: userId,
+        restaurant_id: restaurantId,
         total_price: totalPrice,
         status: 'PENDING',
       })
@@ -113,11 +117,13 @@ export class OrdersService {
   }
 
   // ── CORE-10: 결제 처리 레이어 ─────────────────────────
-  // 현재: 가상 결제 (SIMULATE 모드)
-  // 추후: Toss Payments API 연동으로 교체
+  // SIMULATE/CASH: 서버에서 즉시 PAID 처리 (테스트/현금 결제)
+  // TOSS: 프론트가 결제위젯 v2로 승인 요청 → 성공 시
+  //       /api/payments/confirm 엔드포인트에서 최종 승인 처리
+  //       (이 단계에서는 주문만 PENDING 상태로 둔다)
   private async processPayment(
     orderId: string,
-    amount: number,
+    _amount: number,
     method: string,
   ): Promise<{ paid: boolean; paymentKey: string | null }> {
     if (method === 'SIMULATE' || method === 'CASH') {
@@ -132,16 +138,8 @@ export class OrdersService {
       return { paid: true, paymentKey };
     }
 
-    // TODO: Toss Payments 실제 연동
-    // const response = await fetch('https://api.tosspayments.com/v1/payments/confirm', {
-    //   method: 'POST',
-    //   headers: {
-    //     Authorization: `Basic ${Buffer.from(secretKey + ':').toString('base64')}`,
-    //     'Content-Type': 'application/json',
-    //   },
-    //   body: JSON.stringify({ paymentKey, orderId, amount }),
-    // });
-
+    // TOSS: 주문만 생성해두고 승인은 프론트가 /payments/confirm 에서 처리
+    // 여기서는 PENDING 상태 유지 + paymentKey 없음
     return { paid: false, paymentKey: null };
   }
 

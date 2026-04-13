@@ -9,6 +9,10 @@ import 'features/auth/login_screen.dart';
 import 'features/onboarding/profile_setup_screen.dart';
 import 'features/onboarding/condition_setup_screen.dart';
 import 'features/home/home_screen.dart';
+import 'features/payment/payment_success_screen.dart';
+import 'features/payment/payment_fail_screen.dart';
+import 'features/payment/payment_web_bridge.dart';
+import 'providers/user_provider.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 앱의 시작점(Entry Point)
@@ -94,22 +98,76 @@ class LunchSyncApp extends StatelessWidget {
 //   SharedPreferences 조회가 비동기(async)라 결과가 오기 전까지
 //   로딩 상태를 표시해야 합니다. StatelessWidget은 상태 변경 불가.
 // ─────────────────────────────────────────────────────────
-class _RootNavigator extends StatefulWidget {
+class _RootNavigator extends ConsumerStatefulWidget {
   const _RootNavigator();
 
   @override
-  State<_RootNavigator> createState() => _RootNavigatorState();
+  ConsumerState<_RootNavigator> createState() => _RootNavigatorState();
 }
 
-class _RootNavigatorState extends State<_RootNavigator> {
+class _RootNavigatorState extends ConsumerState<_RootNavigator> {
 
   // null: 아직 확인 중 / true: 온보딩 완료 / false: 첫 실행
   bool? _onboardingDone;
 
+  // ── 결제 왕복 리턴 처리용 플래그 ────────────────────────
+  // 토스 결제위젯이 successUrl/failUrl 로 리다이렉트해 돌아오면
+  // URL 에 paymentStatus=success|fail 쿼리가 붙어있음.
+  // 이 경우 스플래시/로그인 흐름을 건너뛰고 결제 결과 화면으로 바로 진입.
+  _PaymentReturnInfo? _paymentReturn;
+
   @override
   void initState() {
     super.initState();
+    _restoreUserFromSession();
+    _detectPaymentReturn();
     _checkOnboardingStatus();
+  }
+
+  // ── 앱 시작 시 sessionStorage 에서 유저 복원 ──────────────
+  // 토스 결제 페이지로 전체 리다이렉트된 뒤 Flutter 앱이 다시
+  // 로드되면 Riverpod 의 userProvider 가 초기 상태(null)로 돌아갑니다.
+  // OrderReviewScreen 이 결제 직전에 백업해둔 ls_jwt/ls_user_* 가 있으면
+  // 그대로 userProvider 에 복원해서 로그인 상태를 이어갑니다.
+  //
+  // 동작 조건:
+  //   - 웹 빌드에서만 실제 값이 들어옴 (모바일 스텁은 항상 null 반환)
+  //   - sessionStorage 가 비었으면 no-op
+  void _restoreUserFromSession() {
+    final savedJwt = PaymentWebBridge.getSessionItem('ls_jwt');
+    if (savedJwt == null || savedJwt.isEmpty) return;
+
+    ref.read(userProvider.notifier).restoreFromSession(
+          accessToken: savedJwt,
+          userId: PaymentWebBridge.getSessionItem('ls_user_id'),
+          name: PaymentWebBridge.getSessionItem('ls_user_name'),
+          profileImage: PaymentWebBridge.getSessionItem('ls_user_profile'),
+        );
+  }
+
+  // ── 앱 시작 시 URL 쿼리에서 결제 리턴 여부 감지 ──────────
+  // 웹에서만 의미 있음 (모바일 스텁 구현은 빈 맵 반환)
+  void _detectPaymentReturn() {
+    final params = PaymentWebBridge.currentQueryParams();
+    final status = params['paymentStatus'];
+    if (status == 'success') {
+      final paymentKey = params['paymentKey'] ?? '';
+      final orderId = params['orderId'] ?? '';
+      final amount = int.tryParse(params['amount'] ?? '0') ?? 0;
+      if (paymentKey.isNotEmpty && orderId.isNotEmpty && amount > 0) {
+        _paymentReturn = _PaymentReturnInfo.success(
+          paymentKey: paymentKey,
+          orderId: orderId,
+          amount: amount,
+        );
+      }
+    } else if (status == 'fail') {
+      _paymentReturn = _PaymentReturnInfo.fail(
+        code: params['code'],
+        message: params['message'],
+        orderId: params['orderId'],
+      );
+    }
   }
 
   // ── SharedPreferences에서 온보딩 완료 여부 확인 ──────────
@@ -186,6 +244,26 @@ class _RootNavigatorState extends State<_RootNavigator> {
   @override
   Widget build(BuildContext context) {
 
+    // ── 결제 왕복 리턴: 스플래시/로그인 건너뛰고 바로 결과 화면 ──
+    // 토스 결제위젯이 돌려보낸 쿼리(paymentStatus=success|fail)를
+    // _detectPaymentReturn 에서 파싱했으면 그 화면을 먼저 보여준다.
+    if (_paymentReturn != null) {
+      final info = _paymentReturn!;
+      if (info.isSuccess) {
+        return PaymentSuccessScreen(
+          paymentKey: info.paymentKey!,
+          orderId: info.orderId!,
+          amount: info.amount!,
+        );
+      } else {
+        return PaymentFailScreen(
+          code: info.code,
+          message: info.message,
+          orderId: info.orderId,
+        );
+      }
+    }
+
     // ── SharedPreferences 조회 중: 로딩 표시 ───────────────
     if (_onboardingDone == null) {
       return const Scaffold(
@@ -225,6 +303,55 @@ class _RootNavigatorState extends State<_RootNavigator> {
     );
   }
 }
+
+// ─────────────────────────────────────────────────────────
+// _PaymentReturnInfo: 결제 왕복 후 URL 쿼리에서 복원한 결과 정보
+//
+// success: paymentKey/orderId/amount 가 모두 존재
+// fail   : code/message/orderId 중 일부만 존재해도 허용
+// ─────────────────────────────────────────────────────────
+class _PaymentReturnInfo {
+  const _PaymentReturnInfo._({
+    required this.isSuccess,
+    this.paymentKey,
+    this.orderId,
+    this.amount,
+    this.code,
+    this.message,
+  });
+
+  final bool isSuccess;
+  final String? paymentKey;
+  final String? orderId;
+  final int? amount;
+  final String? code;
+  final String? message;
+
+  factory _PaymentReturnInfo.success({
+    required String paymentKey,
+    required String orderId,
+    required int amount,
+  }) =>
+      _PaymentReturnInfo._(
+        isSuccess: true,
+        paymentKey: paymentKey,
+        orderId: orderId,
+        amount: amount,
+      );
+
+  factory _PaymentReturnInfo.fail({
+    String? code,
+    String? message,
+    String? orderId,
+  }) =>
+      _PaymentReturnInfo._(
+        isSuccess: false,
+        code: code,
+        message: message,
+        orderId: orderId,
+      );
+}
+
 
 // ─────────────────────────────────────────────────────────
 // _PlaceholderScreen: 아직 만들지 않은 화면을 임시로 대체하는 화면
