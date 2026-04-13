@@ -119,9 +119,13 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
   @override
   void initState() {
     super.initState();
-    _restoreUserFromSession();
+    // _restoreUserFromSession 은 userProvider 를 직접 수정하므로
+    // 위젯 트리 빌드 완료 후 호출해야 함 (빌드 중 provider 수정 에러 방지)
     _detectPaymentReturn();
     _checkOnboardingStatus();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _restoreUserFromSession();
+    });
   }
 
   // ── 앱 시작 시 sessionStorage 에서 유저 복원 ──────────────
