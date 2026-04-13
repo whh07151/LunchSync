@@ -6,6 +6,12 @@
 //
 // 백엔드 응답 DTO와 1:1 매핑.
 // createdBy는 { id, name } 객체로 내려옴 (UUID 문자열 아님).
+//
+// CU-09 추가 필드 (세션 생성 시 설정):
+//   radius        — 식당 검색 반경 (미터)
+//   budget        — 1인당 예산 상한 (원)
+//   returnMinutes — 복귀 여유 시간 (분)
+//   memo          — 자유 메모
 // ══════════════════════════════════════════════════════════
 
 /// 세션 생성자 정보 (백엔드 createdBy 필드와 매핑)
@@ -36,17 +42,25 @@ class Session {
     this.memberCount,
     this.winnerRestaurantId,
     this.scheduledAt,
+    this.radius,
+    this.budget,
+    this.returnMinutes,
+    this.memo,
     this.createdAt,
   });
 
   final String id;
   final String name;
   final String status; // WAITING | VOTING | ORDERED | DONE
-  final String? statusLabel; // 한글 레이블 (백엔드 제공, 목록 화면용)
+  final String? statusLabel;    // 한글 레이블 (백엔드 제공, 목록 화면용)
   final SessionCreator? createdBy; // 생성자 정보 객체
-  final int? memberCount; // 세션 참여 인원 수 (목록 응답에서만 제공)
+  final int? memberCount;       // 참여 인원 수 (목록 응답에서만 제공)
   final String? winnerRestaurantId;
   final String? scheduledAt;
+  final int? radius;            // 식당 검색 반경 (미터)
+  final int? budget;            // 1인당 예산 상한 (원)
+  final int? returnMinutes;     // 복귀 여유 시간 (분)
+  final String? memo;           // 자유 메모
   final String? createdAt;
 
   factory Session.fromJson(Map<String, dynamic> json) {
@@ -65,6 +79,10 @@ class Session {
       memberCount: json['memberCount'] as int?,
       winnerRestaurantId: json['winnerRestaurantId'] as String?,
       scheduledAt: json['scheduledAt'] as String?,
+      radius: json['radius'] as int?,
+      budget: json['budget'] as int?,
+      returnMinutes: json['returnMinutes'] as int?,
+      memo: json['memo'] as String?,
       createdAt: json['createdAt'] as String?,
     );
   }

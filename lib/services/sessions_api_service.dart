@@ -25,14 +25,24 @@ class SessionsApiService {
       };
 
   // ── POST /api/sessions ────────────────────────────────
+  // CU-09에서 입력한 세션 조건을 모두 전달.
+  // null 필드는 body에서 제외 → 백엔드/DB default 값 사용.
   Future<Session?> createSession({
     required String accessToken,
     required String name,
     String? scheduledAt,
+    int? radius,        // 식당 검색 반경 (미터)
+    int? budget,        // 1인당 예산 상한 (원)
+    int? returnMinutes, // 복귀 여유 시간 (분)
+    String? memo,       // 자유 메모
   }) async {
     try {
       final body = <String, dynamic>{'name': name};
-      if (scheduledAt != null) body['scheduledAt'] = scheduledAt;
+      if (scheduledAt != null)    body['scheduledAt']    = scheduledAt;
+      if (radius != null)         body['radius']         = radius;
+      if (budget != null)         body['budget']         = budget;
+      if (returnMinutes != null)  body['returnMinutes']  = returnMinutes;
+      if (memo != null && memo.isNotEmpty) body['memo'] = memo;
 
       final response = await http.post(
         Uri.parse('${AppConfig.backendBaseUrl}/sessions'),

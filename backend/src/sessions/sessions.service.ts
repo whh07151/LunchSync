@@ -18,7 +18,11 @@ import { SupabaseService } from '../supabase/supabase.service';
 
 export interface CreateSessionDto {
   name: string;
-  scheduledAt?: string; // ISO8601
+  scheduledAt?: string;  // ISO8601 형식 (예: 2026-04-14T12:00:00.000Z)
+  radius?: number;        // 식당 검색 반경 (단위: 미터, 예: 500)
+  budget?: number;        // 1인당 예산 상한 (단위: 원, 예: 15000)
+  returnMinutes?: number; // 복귀 여유 시간 (단위: 분, 예: 30)
+  memo?: string;          // 세션 메모 (선택, 자유 입력)
 }
 
 export interface UpdateSessionStatusDto {
@@ -48,18 +52,21 @@ export class SessionsService {
   // 세션 생성 + 생성자를 자동으로 멤버에 추가
   async createSession(userId: string, dto: CreateSessionDto) {
     // 1. sessions 테이블에 INSERT
+    // undefined 필드는 삽입하지 않음 (DB default 값 사용)
     const insertData: Record<string, unknown> = {
       name: dto.name,
       created_by: userId,
     };
-    if (dto.scheduledAt) {
-      insertData.scheduled_at = dto.scheduledAt;
-    }
+    if (dto.scheduledAt)     insertData.scheduled_at    = dto.scheduledAt;
+    if (dto.radius != null)  insertData.radius          = dto.radius;
+    if (dto.budget != null)  insertData.budget          = dto.budget;
+    if (dto.returnMinutes != null) insertData.return_minutes = dto.returnMinutes;
+    if (dto.memo)            insertData.memo            = dto.memo;
 
     const { data: session, error } = await this.supabase.client
       .from('sessions')
       .insert(insertData)
-      .select('id, name, status, created_by, scheduled_at, created_at')
+      .select('id, name, status, created_by, scheduled_at, radius, budget, return_minutes, memo, created_at')
       .single();
 
     if (error || !session) {
@@ -83,6 +90,10 @@ export class SessionsService {
       name: session.name,
       status: session.status,
       scheduledAt: session.scheduled_at,
+      radius: session.radius,
+      budget: session.budget,
+      returnMinutes: session.return_minutes,
+      memo: session.memo,
       memberCount: 1,
       createdBy: creator ? { id: creator.id, name: creator.name } : { id: userId, name: null },
     };
@@ -149,7 +160,7 @@ export class SessionsService {
   async getSessionById(sessionId: string) {
     const { data, error } = await this.supabase.client
       .from('sessions')
-      .select('id, name, status, created_by, winner_restaurant_id, scheduled_at, created_at')
+      .select('id, name, status, created_by, winner_restaurant_id, scheduled_at, radius, budget, return_minutes, memo, created_at')
       .eq('id', sessionId)
       .single();
 
@@ -170,6 +181,10 @@ export class SessionsService {
       status: data.status,
       winnerRestaurantId: data.winner_restaurant_id,
       scheduledAt: data.scheduled_at,
+      radius: data.radius,
+      budget: data.budget,
+      returnMinutes: data.return_minutes,
+      memo: data.memo,
       createdAt: data.created_at,
       createdBy: creator ? { id: creator.id, name: creator.name } : { id: data.created_by, name: null },
     };

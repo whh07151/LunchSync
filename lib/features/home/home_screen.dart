@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../session/member_select_screen.dart';
+import '../session/session_create_screen.dart';
 import '../session/join_session_screen.dart';
 import '../menu/menu_screen.dart';
 import '../notifications/notification_screen.dart';
@@ -81,10 +82,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       MaterialPageRoute(
         builder: (_) => MemberSelectScreen(
           onNext: (selectedMembers) {
-            // TODO: 우현호 CU-09 완성 후 → sessionProvider에 저장된 멤버를
-            //       가지고 CU-09 세션 조건 설정 화면으로 이동
-            // 현재: 선택 완료 시 홈으로 복귀 (워킹 스켈레톤)
-            Navigator.of(context).pop();
+            // CU-08 완료 → CU-09 세션 조건 설정 화면으로 이동
+            // selectedMembers는 이미 sessionProvider에 저장된 상태이므로
+            // SessionCreateScreen에서 ref.watch(sessionProvider).selectedMembers 로 읽음
+            Navigator.of(context).push(
+              MaterialPageRoute(
+                builder: (_) => const SessionCreateScreen(),
+              ),
+            );
           },
         ),
       ),
