@@ -65,7 +65,11 @@ class InvitationsApiService {
   }
 
   // ── POST /api/invitations/:code/accept ────────────────
-  Future<bool> acceptInvitation({
+  // 결과 타입:
+  //   success   → sessionId 반환
+  //   duplicate → 이미 참가한 멤버 (409) — 본인 초대코드 사용 시 포함
+  //   invalid   → 코드 없음/만료 등
+  Future<AcceptInvitationResult> acceptInvitation({
     required String accessToken,
     required String code,
   }) async {
@@ -74,9 +78,38 @@ class InvitationsApiService {
         Uri.parse('${AppConfig.backendBaseUrl}/invitations/$code/accept'),
         headers: _headers(accessToken),
       );
-      return response.statusCode == 200 || response.statusCode == 201;
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = json['data'] as Map<String, dynamic>;
+        return AcceptInvitationResult.success(data['sessionId'] as String);
+      }
+      if (response.statusCode == 409) {
+        return const AcceptInvitationResult.duplicate();
+      }
+      return const AcceptInvitationResult.invalid();
     } catch (_) {
-      return false;
+      return const AcceptInvitationResult.invalid();
     }
   }
+}
+
+// ── 초대 수락 결과 타입 ────────────────────────────────────
+sealed class AcceptInvitationResult {
+  const AcceptInvitationResult();
+  const factory AcceptInvitationResult.success(String sessionId) = AcceptSuccess;
+  const factory AcceptInvitationResult.duplicate() = AcceptDuplicate;
+  const factory AcceptInvitationResult.invalid() = AcceptInvalid;
+}
+
+class AcceptSuccess extends AcceptInvitationResult {
+  const AcceptSuccess(this.sessionId);
+  final String sessionId;
+}
+
+class AcceptDuplicate extends AcceptInvitationResult {
+  const AcceptDuplicate();
+}
+
+class AcceptInvalid extends AcceptInvitationResult {
+  const AcceptInvalid();
 }

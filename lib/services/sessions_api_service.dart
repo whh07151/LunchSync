@@ -101,7 +101,9 @@ class SessionsApiService {
   }
 
   // ── GET /api/sessions/:id/members ─────────────────────
-  Future<List<SessionMember>> getSessionMembers({
+  // 백엔드 응답: { totalCount, joinedCount, members[] }
+  // 배열 직접이 아닌 래퍼 객체로 반환됨 → SessionMembersResponse 사용
+  Future<SessionMembersResponse?> getSessionMembers({
     required String accessToken,
     required String sessionId,
   }) async {
@@ -113,16 +115,15 @@ class SessionsApiService {
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final list = json['data'] as List<dynamic>;
-        return list
-            .map((e) => SessionMember.fromJson(e as Map<String, dynamic>))
-            .toList();
+        // data가 { totalCount, joinedCount, members[] } 구조
+        return SessionMembersResponse.fromJson(
+            json['data'] as Map<String, dynamic>);
       }
-      return [];
+      return null;
     } catch (e) {
       // ignore: avoid_print
       print('[SessionsApiService] getSessionMembers 에러: $e');
-      return [];
+      return null;
     }
   }
 

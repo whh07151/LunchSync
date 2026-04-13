@@ -1,5 +1,5 @@
 # LunchSync 코드 가이드
-**작성일:** 2026-04-08  
+**작성일:** 2026-04-08 / **최종 수정:** 2026-04-14 (feat/hyunho 머지 반영)  
 **대상:** 팀 전체 (특히 백엔드 담당자)  
 **기준 코드:** Flutter 앱 + NestJS 백엔드 현재 구현 상태
 
@@ -41,16 +41,22 @@ capstone/
 │   │   └── debug/
 │   │       └── debug_toast.dart  ← 개발용 화면 ID 토스트
 │   ├── models/
-│   │   ├── member.dart           ← 멤버/친구 데이터 모델
-│   │   └── menu_item.dart        ← 메뉴 항목 + 카테고리 enum
+│   │   ├── member.dart           ← 멤버/친구 데이터 모델 (CU-08 멤버 선택)
+│   │   ├── menu_item.dart        ← 메뉴 항목 + 카테고리 enum
+│   │   └── session.dart          ← Session / SessionCreator / SessionMember / SessionMembersResponse
 │   ├── providers/
 │   │   ├── user_provider.dart    ← 로그인 유저 정보 + JWT 전역 상태
 │   │   ├── session_provider.dart ← 세션 생성 흐름 전역 상태
 │   │   └── cart_provider.dart    ← 장바구니 전역 상태
 │   ├── services/
-│   │   ├── kakao_auth_service.dart  ← 카카오 SDK 로그인/로그아웃
-│   │   ├── auth_api_service.dart    ← POST /auth/kakao 호출
-│   │   └── users_api_service.dart   ← GET/PATCH /users/me 호출
+│   │   ├── kakao_auth_service.dart      ← 카카오 SDK 로그인/로그아웃
+│   │   ├── auth_api_service.dart        ← POST /auth/kakao 호출
+│   │   ├── users_api_service.dart       ← GET/PATCH /users/me 호출
+│   │   ├── sessions_api_service.dart    ← 세션 CRUD + 멤버 관리
+│   │   ├── invitations_api_service.dart ← 초대 코드 생성/수락
+│   │   ├── restaurants_api_service.dart ← 식당 목록/메뉴 조회
+│   │   ├── orders_api_service.dart      ← 주문 생성/조회
+│   │   └── payments_api_service.dart    ← 토스 결제 승인 호출
 │   └── features/
 │       ├── splash/               ← CU-01 스플래시
 │       ├── auth/                 ← CU-02 카카오 로그인
@@ -58,6 +64,7 @@ capstone/
 │       ├── home/                 ← CU-06 홈 대시보드
 │       ├── session/              ← CU-08 멤버 선택
 │       ├── menu/                 ← CU-16 메뉴 목록/장바구니
+│       ├── payment/              ← CU-17~19 주문확인/결제성공/실패 + Toss web bridge
 │       ├── notifications/        ← CU-22 알림함
 │       └── my_info/              ← CU-23 내정보/설정
 │
@@ -66,7 +73,15 @@ capstone/
         ├── main.ts               ← 서버 진입점, 글로벌 설정
         ├── app.module.ts         ← 루트 모듈
         ├── auth/                 ← 카카오 로그인 + JWT 발급
-        ├── users/                ← 유저 프로필 조회/수정
+        ├── users/                ← 유저 프로필 조회/수정 (GET/PATCH /users/me)
+        ├── sessions/             ← 점심 세션 CRUD + 멤버 관리 [CU-09]
+        ├── invitations/          ← 초대 코드 생성/검증/수락 [CU-07]
+        ├── restaurants/          ← 식당 목록/상세/메뉴 [CU-11]
+        ├── recommendations/      ← 그룹 추천 점수화 + 최근 7일 중복 회피 [CORE-07/08]
+        ├── votes/                ← 투표 + 결과 집계/확정 [CU-15]
+        ├── orders/               ← 주문 생성 + 메뉴 충돌 검증 [CORE-09/10]
+        ├── payments/             ← 토스 결제 승인 + 위변조 방어 [CU-19]
+        ├── pos/                  ← 점주 주문 조회/통계/취소 [OW-10, POS-08/09]
         └── supabase/             ← Supabase 클라이언트 싱글턴
 ```
 

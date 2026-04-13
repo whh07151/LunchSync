@@ -288,6 +288,19 @@ CREATE TABLE order_items (
 );
 ```
 
+#### invitations
+```sql
+CREATE TABLE invitations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+  invite_code VARCHAR(8) UNIQUE NOT NULL, -- 8자리 hex 랜덤 코드
+  expires_at TIMESTAMP NOT NULL,          -- 생성 시각 + 24시간
+  created_at TIMESTAMP DEFAULT NOW()
+);
+-- created_by 컬럼 없음 (DTO 명세에 생성자 노출 없음, 취소/관리 기능 미구현)
+-- 초대 흐름: invite_code → session_id 조회 → session_members INSERT
+```
+
 #### notifications
 ```sql
 CREATE TABLE notifications (
@@ -318,11 +331,15 @@ CREATE TYPE session_status AS ENUM (
 );
 
 CREATE TYPE order_status AS ENUM (
-  'PENDING',    -- 주문 접수, 점주 확인 대기
-  'ACCEPTED',   -- 점주 수락
-  'PREPARING',  -- 조리 중
-  'DONE',       -- 조리 완료
-  'CANCELLED'   -- 취소
+  'PENDING',    -- 주문 생성, 결제 대기
+  'PAID',       -- 결제 완료 (Toss confirm 또는 SIMULATE/CASH 즉시)
+  'PREPARING',  -- 점주 조리 시작
+  'READY',      -- 조리 완료, 픽업/배달 대기
+  'COMPLETED',  -- 주문 종료
+  'CANCELLED',  -- 취소/환불
+  -- 아래 두 값은 초기 설계 잔재. 현재 코드에서 미사용, 삭제 불가 (PG ENUM 제약)
+  'ACCEPTED',
+  'DONE'
 );
 
 CREATE TYPE user_role AS ENUM (
@@ -411,24 +428,39 @@ GET    /users             팀원 목록 조회 (멤버 선택)
 
 ### 세션
 ```
-POST   /sessions          세션 생성 (트랜잭션: sessions + session_members + 방장 포함)
-GET    /sessions/today    오늘 세션 조회 (홈 대시보드)
-GET    /sessions/:id      세션 상세
-GET    /sessions/:id/members  세션 멤버 목록 (폴링)
-PATCH  /sessions/:id/status   세션 상태 변경
+POST   /sessions                      세션 생성 (트랜잭션: sessions + session_members 방장 포함)
+GET    /sessions/today                오늘 세션 조회 (홈 대시보드)
+GET    /sessions/:id                  세션 상세
+GET    /sessions/:id/members          세션 멤버 목록 (폴링)
+PATCH  /sessions/:id/status           세션 상태 변경
+POST   /sessions/:id/members          멤버 수동 추가
+DELETE /sessions/:id/members/:userId  멤버 제거
+```
+
+### 초대
+```
+POST   /invitations                   초대 코드 생성 (8자리 hex, 24시간 유효)
+GET    /invitations/:code             초대 코드 유효성 확인 + 세션 정보
+POST   /invitations/:code/accept      초대 수락 → session_members 추가
 ```
 
 ### 식당
 ```
-GET    /restaurants       식당 목록 (조건 필터링: 반경/예산/속도)
-GET    /restaurants/:id   식당 상세
-GET    /restaurants/:id/menus  메뉴 목록
+GET    /restaurants                   식당 목록 (조건 필터링: 반경/예산/속도)
+GET    /restaurants/:id               식당 상세
+GET    /restaurants/:id/menus         메뉴 목록 → { categories[], menus[] }
+```
+
+### 추천
+```
+GET    /recommendations               그룹 추천 (점수화, 최근 7일 중복 회피)
 ```
 
 ### 투표
 ```
-POST   /votes             투표 (UNIQUE 제약으로 중복 차단)
-GET    /sessions/:id/votes  투표 현황 (폴링)
+POST   /votes                         투표 (UNIQUE 제약으로 중복 차단)
+GET    /sessions/:id/votes            투표 현황 (폴링)
+POST   /votes/finalize/:sessionId     투표 종료 + winner 확정 → sessions.status = ORDERED
 ```
 
 ### 장바구니
@@ -441,10 +473,23 @@ DELETE /cart/:id          항목 삭제
 
 ### 주문
 ```
-POST   /orders            주문 생성 (트랜잭션: orders + order_items + cart 비우기)
-GET    /orders/:id        주문 상세/상태 (폴링)
-GET    /orders/today      오늘 주문 목록 (점주앱)
-PATCH  /orders/:id/status 주문 상태 변경 (점주 수락/거절, POS 완료)
+POST   /orders                주문 생성 (트랜잭션: orders + order_items + cart 비우기)
+GET    /orders/:id            주문 상세/상태 (폴링)
+GET    /orders/session/:id    세션의 전체 주문 목록
+PATCH  /orders/:id/status     주문 상태 변경 (점주 수락/거절, POS 완료)
+```
+
+### 결제
+```
+POST   /payments/confirm      토스 결제 승인 (amount 위변조 방어 포함)
+```
+
+### POS/점주
+```
+GET    /pos/orders/:restaurantId          점주용 주문 목록
+GET    /pos/orders/:restaurantId/stats    결제 상태별 통계
+PATCH  /pos/orders/:orderId/status        주문 상태 변경 (조리중 → 준비완료 등)
+POST   /pos/orders/:orderId/cancel        취소/환불 (TODO: Toss 실제 환불 미연결)
 ```
 
 ### 알림

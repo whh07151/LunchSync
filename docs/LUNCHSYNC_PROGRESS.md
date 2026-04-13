@@ -1,5 +1,5 @@
 # LunchSync 진행도
-**최종 업데이트:** 2026-04-09
+**최종 업데이트:** 2026-04-14
 **기준:** 실제 코드 직접 확인 (추정/문서 기반 아님)
 
 ---
@@ -23,13 +23,13 @@
 | CU-03 | 기본 프로필 설정 | ✅ | condition_setup_screen.dart — `_handleComplete()`에서 PATCH /users/me 실 호출 (이름/소속 포함) |
 | CU-05 | 기본 조건 설정 | ✅ | condition_setup_screen.dart — PATCH /users/me로 반경/예산/속도 DB 저장 완료 |
 | CU-06 | 홈 대시보드 | ⚠️ 부분 | home_screen.dart — GET /users/me로 사용자 이름 조회 연결. 세션/AI추천 식당은 Mock |
-| CU-08 | 친구/멤버 리스트 | ⚠️ UI | member_select_screen.dart — UI+sessionProvider 연결. 멤버 목록은 _mockFriends (GET /users 미연결) |
-| CU-09 | 점심 세션 생성 | ❌ | 미구현 (우현호 담당) |
+| CU-08 | 친구/멤버 리스트 | ⚠️ 부분 | member_select_screen.dart — SessionsApiService 연결 (세션 초대 코드 생성). 멤버 목록은 여전히 _mockFriends (GET /users 백엔드 미구현) |
+| CU-09 | 점심 세션 생성 | ⚠️ 부분 | 백엔드 POST /sessions 구현 완료. member_select_screen에서 SessionsApiService 통해 API 호출 가능. 전용 세션생성 UI는 별도 화면 없음 |
 | CU-10 | 세션 로비 | ❌ | 미구현 (안태환 담당) |
 | CU-13 | 식당 상세/비교 | ❌ | 미구현 (장다연 담당) |
-| CU-14 | 투표 화면 | ❌ | 미구현 (안태환 담당) |
-| CU-16 | 메뉴 목록/장바구니 | ⚠️ UI | menu_screen.dart — UI+cartProvider 연결. 메뉴 데이터 Mock, 서버사이드 장바구니 미연결 |
-| CU-19 | 주문/결제 | ❌ | 미구현 (Toss Payments 미연결) |
+| CU-14 | 투표 화면 | ❌ | 미구현 (안태환 담당). 백엔드 POST/GET /sessions/:id/votes, POST /sessions/:id/decide 구현 완료 |
+| CU-16 | 메뉴 목록/장바구니 | ⚠️ UI | menu_screen.dart — UI+cartProvider 연결. 백엔드 GET /restaurants/:id/menus 구현됐으나 프론트 미연결 (Mock 데이터 유지) |
+| CU-19 | 주문/결제 | ⚠️ 부분 | order_review_screen.dart + OrdersApiService 연결. Toss 결제위젯 web bridge(payment_web_bridge) + success/fail 화면 구현. 백엔드 POST /orders, POST /payments/confirm 완료. E2E 테스트 필요 |
 | CU-20 | 주문/예약 추적 | ❌ | 미구현 (안태환 담당) |
 | CU-22 | 알림함 | ⚠️ UI | notification_screen.dart — UI+읽음처리 완료. _mockNotifications 사용, GET /notifications 미연결 |
 | CU-23 | 내정보/설정 | ✅ | my_info_screen.dart — initState에서 GET /users/me 로드, 저장 시 PATCH /users/me 실 호출. 로그아웃 카카오 unlink 미구현 |
@@ -65,12 +65,12 @@
 
 ```
 로그인 ✅ → 온보딩(프로필+조건) ✅ → 홈 ⚠️부분
-  → 멤버선택 ⚠️UI → 세션생성 ❌ → 세션로비 ❌
-  → AI추천 ❌ → 투표 ❌ → 메뉴선택 ⚠️UI
-  → 주문/결제 ❌ → 주문추적 ❌
+  → 멤버선택 ⚠️부분 → 세션생성 ⚠️부분(백엔드만) → 세션로비 ❌
+  → AI추천 ⚠️부분(백엔드만) → 투표 ❌(백엔드만) → 메뉴선택 ⚠️UI
+  → 주문/결제 ⚠️부분 → 주문추적 ❌
 ```
 
-**현재 데모 가능 범위:** 로그인 → 온보딩 → 홈 → 멤버선택 → 메뉴화면 → 내정보 수정
+**현재 데모 가능 범위:** 로그인 → 온보딩 → 홈 → 멤버선택 → 메뉴화면 → 주문결제(웹) → 내정보 수정
 
 ---
 
@@ -82,12 +82,35 @@
 | POST /auth/kakao | ✅ | 카카오 로그인 실동작 확인 |
 | GET /users/me | ✅ | CU-06, CU-23에서 실 호출 확인 |
 | PATCH /users/me | ✅ | CU-05, CU-23에서 실 호출 확인 |
-| GET /users (멤버 목록) | ❌ | CU-08 Mock 상태 |
-| POST /sessions | ❌ | CU-09 미구현 |
-| 세션/투표/주문 관련 API 전체 | ❌ | 미구현 또는 미확인 |
+| GET /users (멤버 목록) | ❌ | CU-08 Mock 상태. users.controller에 미구현 |
+| POST /sessions | ✅ | sessions.controller — 세션 생성 |
+| GET /sessions/today | ✅ | sessions.controller |
+| GET /sessions/:id | ✅ | sessions.controller |
+| PATCH /sessions/:id/status | ✅ | sessions.controller |
+| GET /sessions/:id/members | ✅ | sessions.controller |
+| POST /sessions/:id/members | ✅ | sessions.controller |
+| DELETE /sessions/:id/members/:userId | ✅ | sessions.controller |
+| POST /invitations | ✅ | invitations.controller — 초대코드 생성 |
+| GET /invitations/:code | ✅ | invitations.controller |
+| POST /invitations/:code/accept | ✅ | invitations.controller |
+| GET /restaurants | ✅ | restaurants.controller |
+| GET /restaurants/:id | ✅ | restaurants.controller |
+| GET /restaurants/:id/menus | ✅ | restaurants.controller |
+| GET /sessions/:id/recommendations | ✅ | recommendations.controller — 그룹 AI 추천 |
+| POST /sessions/:id/votes | ✅ | votes.controller |
+| GET /sessions/:id/votes | ✅ | votes.controller |
+| POST /sessions/:id/decide | ✅ | votes.controller — 투표 결과 확정 |
+| POST /orders | ✅ | orders.controller |
+| GET /orders/today | ✅ | orders.controller |
+| GET /orders/:id | ✅ | orders.controller |
+| PATCH /orders/:id/status | ✅ | orders.controller |
+| POST /payments/confirm | ✅ | payments.controller — Toss 승인 |
+| GET /pos/restaurants/:id/orders | ✅ | pos.controller — POS 주문 목록 |
+| GET /pos/restaurants/:id/stats | ✅ | pos.controller — 결제 통계 |
+| PATCH /pos/orders/:id/status | ✅ | pos.controller |
+| POST /pos/orders/:id/cancel | ✅ | pos.controller — 취소/환불 |
 | 폴링 304 최적화 | ❌ | 미구현 |
 | FCM 푸시 알림 | ❌ | 미구현 |
-| Toss Payments 연동 | ❌ | 미구현 |
 
 ---
 
@@ -96,7 +119,7 @@
 | 항목 | 내용 |
 |---|---|
 | JWT 저장 방식 | 인메모리 → flutter_secure_storage로 교체 (앱 재실행 시 자동 로그인) |
-| 백엔드 URL | 로컬 IP 하드코딩 → 실 서버 도메인으로 교체 |
+| 백엔드 URL | ~~로컬 IP 하드코딩~~ → AWS 도메인으로 변경 완료 (3a30e95) |
 | CORS | `origin: '*'` → POS 웹 실 도메인으로 제한 |
 | JWT_SECRET | 약한 개발용 값 → 강력한 랜덤 문자열로 교체 |
 | 디버깅 코드 | DebugToast, print문 전부 제거 |

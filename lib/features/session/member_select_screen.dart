@@ -9,6 +9,7 @@ import '../../providers/user_provider.dart';
 import '../../services/invitations_api_service.dart';
 import '../../services/sessions_api_service.dart';
 import 'package:flutter/services.dart';
+import 'session_lobby_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-08 친구/멤버 리스트 화면
@@ -209,15 +210,20 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
     if (!mounted) return;
 
     if (invitation != null) {
-      // 초대 코드를 클립보드에 복사
-      await Clipboard.setData(ClipboardData(text: invitation.inviteCode));
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('초대 코드가 복사됐어요: ${invitation.inviteCode}'),
-          duration: const Duration(seconds: 3),
+      if (!mounted) return;
+      // 세션 로비 화면으로 이동 (호스트 모드 — inviteCode 포함)
+      // createSession 응답을 initialSession으로 넘겨 불필요한 재조회 방지
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => SessionLobbyScreen(
+            sessionId: session.id,
+            inviteCode: invitation.inviteCode,
+            initialSession: session,
+          ),
         ),
       );
     } else {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('초대 링크 생성에 실패했어요.')),
       );

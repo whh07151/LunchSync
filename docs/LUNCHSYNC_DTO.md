@@ -1,6 +1,6 @@
 # LunchSync DTO 명세서
-**작성일:** 2026-04-08
-**버전:** 1.0
+**작성일:** 2026-04-08 / **최종 수정:** 2026-04-14
+**버전:** 1.3
 **기준:** 프론트 친화적 구조 (Flutter가 가공 없이 바로 사용 가능)
 **네이밍:** camelCase (Flutter Dart 컨벤션)
 
@@ -13,11 +13,15 @@
 2. [인증 (Auth)](#2-인증)
 3. [유저 (Users)](#3-유저)
 4. [세션 (Sessions)](#4-세션)
-5. [식당 (Restaurants)](#5-식당)
-6. [투표 (Votes)](#6-투표)
-7. [장바구니 (Cart)](#7-장바구니)
-8. [주문 (Orders)](#8-주문)
-9. [알림 (Notifications)](#9-알림)
+5. [초대 (Invitations)](#5-초대)
+6. [식당 (Restaurants)](#6-식당)
+7. [추천 (Recommendations)](#7-추천)
+8. [투표 (Votes)](#8-투표)
+9. [장바구니 (Cart)](#9-장바구니)
+10. [주문 (Orders)](#10-주문)
+11. [결제 (Payments)](#11-결제)
+12. [POS/점주 (POS)](#12-pos점주)
+13. [알림 (Notifications)](#13-알림)
 
 ---
 
@@ -203,15 +207,16 @@
 
 ### POST /sessions
 세션 생성
+> 방장 본인이 자동으로 session_members에 추가됨. 다른 멤버는 초대코드로 참가.
 
 **Request:**
 ```json
 {
   "name": "개발팀 점심",
-  "scheduledAt": "2026-04-08T12:00:00",
-  "memberIds": ["uuid1", "uuid2", "uuid3"]
+  "scheduledAt": "2026-04-08T12:00:00"
 }
 ```
+> `scheduledAt` 선택 항목
 
 **Response:**
 ```json
@@ -222,7 +227,7 @@
     "name": "개발팀 점심",
     "status": "WAITING",
     "scheduledAt": "2026-04-08T12:00:00",
-    "memberCount": 4,
+    "memberCount": 1,
     "createdBy": {
       "id": "uuid",
       "name": "김지효"
@@ -231,12 +236,37 @@
 }
 ```
 
-> ⚠️ NestJS는 memberIds + 방장 본인을 트랜잭션으로 묶어서 session_members에 INSERT
-
 ---
 
 ### GET /sessions/today
-홈 대시보드 오늘 세션 조회
+홈 대시보드 오늘 내가 속한 세션 목록
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "session_uuid",
+      "name": "개발팀 점심",
+      "status": "VOTING",
+      "statusLabel": "투표 중",
+      "memberCount": 4,
+      "scheduledAt": "2026-04-08T12:00:00",
+      "createdBy": {
+        "id": "uuid",
+        "name": "김지효"
+      }
+    }
+  ]
+}
+```
+> 빈 배열이면 오늘 세션 없음
+
+---
+
+### GET /sessions/:id
+세션 상세
 
 **Response:**
 ```json
@@ -245,14 +275,17 @@
   "data": {
     "id": "session_uuid",
     "name": "개발팀 점심",
-    "status": "VOTING",
-    "statusLabel": "투표 중",
-    "memberCount": 4,
-    "scheduledAt": "2026-04-08T12:00:00"
+    "status": "WAITING",
+    "winnerRestaurantId": null,
+    "scheduledAt": "2026-04-08T12:00:00",
+    "createdAt": "2026-04-08T11:00:00",
+    "createdBy": {
+      "id": "uuid",
+      "name": "김지효"
+    }
   }
 }
 ```
-> `data: null` 이면 오늘 세션 없음
 
 ---
 
@@ -278,6 +311,7 @@
         "id": "uuid2",
         "name": "우현호",
         "profileImage": "https://...",
+        "org": "개발팀",
         "isHost": false,
         "joinedAt": "2026-04-08T11:31:00"
       }
@@ -311,7 +345,76 @@
 
 ---
 
-## 5. 식당
+## 5. 초대
+
+### POST /invitations
+초대 코드 생성 (8자리 hex, 24시간 유효)
+
+**Request:**
+```json
+{
+  "sessionId": "session_uuid"
+}
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "invitation_uuid",
+    "sessionId": "session_uuid",
+    "inviteCode": "a1b2c3d4",
+    "expiresAt": "2026-04-09T12:00:00",
+    "createdAt": "2026-04-08T12:00:00"
+  }
+}
+```
+
+---
+
+### GET /invitations/:code
+초대 코드 유효성 확인 + 세션 정보 반환
+
+**Response (유효):**
+```json
+{
+  "success": true,
+  "data": {
+    "inviteCode": "a1b2c3d4",
+    "session": {
+      "id": "session_uuid",
+      "name": "개발팀 점심",
+      "status": "WAITING",
+      "createdBy": { "id": "uuid", "name": "김지효" }
+    }
+  }
+}
+```
+
+**Response (만료/없음):** 400 또는 404
+
+---
+
+### POST /invitations/:code/accept
+초대 수락 → session_members에 본인 추가
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "success": true,
+    "sessionId": "session_uuid"
+  }
+}
+```
+
+> 이미 참가한 멤버이면 409 DUPLICATE_MEMBER
+
+---
+
+## 6. 식당
 
 ### GET /restaurants
 AI 추천 식당 목록 (조건 필터링)
@@ -396,7 +499,38 @@ AI 추천 식당 목록 (조건 필터링)
 
 ---
 
-## 6. 투표
+## 7. 추천
+
+### GET /recommendations
+그룹 추천 (점수화, 최근 7일 중복 회피)
+
+**Query Params:**
+```
+?sessionId=session_uuid
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "restaurant_uuid",
+      "name": "한솥도시락",
+      "category": "한식",
+      "score": 87,
+      "priceRange": 7000,
+      "address": "서울시 강남구...",
+      "lat": 37.123456,
+      "lng": 127.123456
+    }
+  ]
+}
+```
+
+---
+
+## 8. 투표
 
 ### POST /votes
 투표
@@ -471,7 +605,7 @@ AI 추천 식당 목록 (조건 필터링)
 
 ---
 
-## 7. 장바구니
+## 9. 장바구니
 
 ### POST /cart
 메뉴 담기
@@ -577,20 +711,24 @@ AI 추천 식당 목록 (조건 필터링)
 
 ---
 
-## 8. 주문
+## 10. 주문
 
 ### POST /orders
-주문 생성
+주문 생성 (메뉴 충돌 검증 포함 — 같은 식당 메뉴만 허용)
 
 **Request:**
 ```json
 {
   "sessionId": "session_uuid",
-  "restaurantId": "restaurant_uuid",
-  "paymentKey": "toss_payment_key",
-  "totalPrice": 13000
+  "items": [
+    { "menuItemId": "menu_uuid", "quantity": 2 },
+    { "menuItemId": "menu_uuid2", "quantity": 1 }
+  ],
+  "paymentMethod": "TOSS"
 }
 ```
+> `paymentMethod`: `TOSS` | `CARD` | `CASH` | `SIMULATE`
+> `SIMULATE` / `CASH` 는 서버에서 즉시 PAID 처리, `TOSS`는 결제위젯 흐름으로 진행
 
 **Response:**
 ```json
@@ -598,22 +736,14 @@ AI 추천 식당 목록 (조건 필터링)
   "success": true,
   "data": {
     "id": "order_uuid",
-    "status": "PENDING",
-    "statusLabel": "주문 접수 중",
-    "restaurant": {
-      "id": "restaurant_uuid",
-      "name": "한솥도시락"
-    },
-    "items": [
-      {
-        "name": "제육볶음 도시락",
-        "quantity": 2,
-        "price": 6500,
-        "subtotal": 13000
-      }
-    ],
+    "sessionId": "session_uuid",
+    "status": "PAID",
     "totalPrice": 13000,
-    "totalPriceLabel": "13,000원",
+    "paymentMethod": "SIMULATE",
+    "paymentKey": "sim_order_uuid_timestamp",
+    "items": [
+      { "menuItemId": "menu_uuid", "quantity": 2, "price": 6500 }
+    ],
     "createdAt": "2026-04-08T12:00:00"
   }
 }
@@ -642,7 +772,7 @@ AI 추천 식당 목록 (조건 필터링)
   }
 }
 ```
-> `statusStep`: PENDING=1, ACCEPTED=2, PREPARING=3, DONE=4, CANCELLED=0
+> `statusStep`: PENDING=1, PAID=2, PREPARING=3, READY=4, COMPLETED=5, CANCELLED=0
 
 ---
 
@@ -702,7 +832,146 @@ AI 추천 식당 목록 (조건 필터링)
 
 ---
 
-## 9. 알림
+## 11. 결제
+
+### POST /payments/confirm
+토스 결제 최종 승인 (결제위젯 successUrl 리다이렉트 후 호출)
+
+**Request:**
+```json
+{
+  "paymentKey": "toss_payment_key",
+  "orderId": "order_uuid",
+  "amount": 13000
+}
+```
+> `amount` 위변조 검증: DB의 `total_price`와 다르면 400 반환
+
+**Response (성공):**
+```json
+{
+  "success": true,
+  "data": {
+    "alreadyPaid": false,
+    "orderId": "order_uuid",
+    "status": "PAID",
+    "paymentKey": "toss_payment_key",
+    "method": "카드",
+    "approvedAt": "2026-04-08T12:00:00",
+    "totalAmount": 13000
+  }
+}
+```
+
+**Response (중복 호출 — 이미 결제됨):**
+```json
+{
+  "success": true,
+  "data": {
+    "alreadyPaid": true,
+    "orderId": "order_uuid",
+    "status": "PAID"
+  }
+}
+```
+
+---
+
+## 12. POS/점주
+
+### GET /pos/orders/:restaurantId
+점주용 주문 목록 (선택적 status 필터)
+
+**Query Params:**
+```
+?status=PAID
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "order_uuid",
+      "sessionId": "session_uuid",
+      "userId": "user_uuid",
+      "status": "PAID",
+      "totalPrice": 13000,
+      "paymentKey": "toss_key",
+      "createdAt": "2026-04-08T12:00:00",
+      "updatedAt": "2026-04-08T12:00:00"
+    }
+  ]
+}
+```
+
+---
+
+### GET /pos/orders/:restaurantId/stats
+결제 상태별 통계
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "total": 10,
+    "pending": 2,
+    "paid": 3,
+    "preparing": 3,
+    "ready": 1,
+    "completed": 1,
+    "cancelled": 0,
+    "totalRevenue": 78000
+  }
+}
+```
+
+---
+
+### PATCH /pos/orders/:orderId/status
+점주 주문 상태 변경
+
+**Request:**
+```json
+{ "status": "PREPARING" }
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": {
+    "id": "order_uuid",
+    "status": "PREPARING",
+    "updatedAt": "2026-04-08T12:05:00"
+  }
+}
+```
+
+---
+
+### POST /pos/orders/:orderId/cancel
+취소/환불
+> ⚠️ Toss 실제 환불 API 미연결 (TODO: POS-13)
+
+**Request:**
+```json
+{ "reason": "고객 요청" }
+```
+
+**Response:**
+```json
+{
+  "success": true,
+  "data": { "success": true, "orderId": "order_uuid" }
+}
+```
+
+---
+
+## 13. 알림
 
 ### GET /notifications
 알림 목록 (CU-22 알림함)

@@ -98,12 +98,12 @@ export class VotesService {
       }
     }
 
-    // sessions 테이블에 winner 업데이트 + 상태 DECIDED로 변경
+    // sessions 테이블에 winner 업데이트 + 상태 ORDERED로 변경
     await this.supabase.client
       .from('sessions')
       .update({
         winner_restaurant_id: winnerId,
-        status: 'DECIDED',
+        status: 'ORDERED',
       })
       .eq('id', sessionId);
 
