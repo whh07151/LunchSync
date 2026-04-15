@@ -35,10 +35,18 @@ class AppConfig {
   /// 🔴 AWS 배포본: http://13.125.165.80:3000/api
   ///    → AWS 재배포 완료 후 위 주소로 복귀
 
-  // 플랫폼에 따라 자동 분기 (web: localhost, iOS: 로컬 IP)
+  // 빌드 시 --dart-define=BACKEND_HOST=<IP> 로 주입
+  // 예) flutter run --dart-define=BACKEND_HOST=192.168.45.105
+  // BACKEND_HOST 미입력 시 기본값: 192.168.45.105
+  static const String _backendHost = String.fromEnvironment(
+    'BACKEND_HOST',
+    defaultValue: '192.168.45.105',
+  );
+
+  // 플랫폼에 따라 자동 분기 (web: localhost, iOS/Android: 로컬 IP)
   static const String backendBaseUrl = _isWeb
-      ? 'http://localhost:3000/api'         // AndroidStudio Chrome(web)
-      : 'http://192.168.45.105:3000/api';   // iOS용
+      ? 'http://localhost:3000/api'           // AndroidStudio Chrome(web)
+      : 'http://$_backendHost:3000/api';      // iOS / Android 실기기
 
   // ══════════════════════════════════════════════════════════
   // 토스페이먼츠 (결제위젯 v2)
