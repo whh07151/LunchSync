@@ -34,12 +34,15 @@ export class InvitationsService {
   async createInvitation(userId: string, dto: CreateInvitationDto) {
     const inviteCode = randomBytes(4).toString('hex'); // 8자리 hex
 
+    // 만료 시각: 생성 시점으로부터 24시간 후
+    const expiresAt = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+
     const { data, error } = await this.supabase.client
       .from('invitations')
       .insert({
         session_id: dto.sessionId,
         invite_code: inviteCode,
-        created_by: userId,
+        expires_at: expiresAt,
       })
       .select('id, session_id, invite_code, expires_at, created_at')
       .single();
@@ -62,7 +65,7 @@ export class InvitationsService {
   async getByCode(code: string) {
     const { data, error } = await this.supabase.client
       .from('invitations')
-      .select('id, session_id, invite_code, expires_at, created_by')
+      .select('id, session_id, invite_code, expires_at')
       .eq('invite_code', code)
       .single();
 

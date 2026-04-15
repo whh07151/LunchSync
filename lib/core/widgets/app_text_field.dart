@@ -37,6 +37,7 @@ class AppTextField extends StatelessWidget {
     this.enabled = true,    // false면 입력 불가 (회색으로 표시됨)
     this.readOnly = false,  // true면 읽기만 가능 (탭하면 onTap 실행)
     this.onTap,             // readOnly일 때 탭하면 실행할 함수
+    this.maxLines = 1,      // 입력창 최대 줄 수 (메모 등 멀티라인 입력 시 3 이상)
   });
 
   final TextEditingController? controller;
@@ -56,6 +57,7 @@ class AppTextField extends StatelessWidget {
   final bool enabled;
   final bool readOnly;
   final VoidCallback? onTap;
+  final int maxLines; // 기본 1줄, 멀티라인 입력 시 3 이상 지정
 
   @override
   Widget build(BuildContext context) {
@@ -87,6 +89,7 @@ class AppTextField extends StatelessWidget {
           onSubmitted: onSubmitted,
           inputFormatters: inputFormatters,
           maxLength: maxLength,
+          maxLines: maxLines,
           enabled: enabled,
           readOnly: readOnly,
           onTap: onTap,

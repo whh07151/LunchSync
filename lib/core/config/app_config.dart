@@ -14,6 +14,9 @@
 class AppConfig {
   AppConfig._(); // 인스턴스 생성 방지 (모든 값을 static으로만 사용)
 
+  // ignore: do_not_use_environment
+  static const bool _isWeb = bool.fromEnvironment('dart.library.html', defaultValue: false);
+
   /// 카카오 Native 앱 키 (Android/iOS)
   /// https://developers.kakao.com → 내 애플리케이션 → 앱 키 → Native 앱 키
   static const String kakaoNativeAppKey = '1a8f618f7a89644f824c091c4c9c085a';
@@ -31,7 +34,19 @@ class AppConfig {
   /// 🟢 현재: 로컬 개발 서버 (결제/주문 모듈 AWS 미배포 상태라 localhost 사용)
   /// 🔴 AWS 배포본: http://13.125.165.80:3000/api
   ///    → AWS 재배포 완료 후 위 주소로 복귀
-  static const String backendBaseUrl = 'http://localhost:3000/api';
+
+  // 빌드 시 --dart-define=BACKEND_HOST=<IP> 로 주입
+  // 예) flutter run --dart-define=BACKEND_HOST=192.168.45.105
+  // BACKEND_HOST 미입력 시 기본값: 192.168.45.105
+  static const String _backendHost = String.fromEnvironment(
+    'BACKEND_HOST',
+    defaultValue: '0.0.0.0',
+  );
+
+  // 플랫폼에 따라 자동 분기 (web: localhost, iOS/Android: 로컬 IP)
+  static const String backendBaseUrl = _isWeb
+      ? 'http://localhost:3000/api'           // AndroidStudio Chrome(web)
+      : 'http://$_backendHost:3000/api';      // iOS / Android 실기기
 
   // ══════════════════════════════════════════════════════════
   // 토스페이먼츠 (결제위젯 v2)

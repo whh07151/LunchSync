@@ -25,14 +25,24 @@ class SessionsApiService {
       };
 
   // ── POST /api/sessions ────────────────────────────────
+  // CU-09에서 입력한 세션 조건을 모두 전달.
+  // null 필드는 body에서 제외 → 백엔드/DB default 값 사용.
   Future<Session?> createSession({
     required String accessToken,
     required String name,
     String? scheduledAt,
+    int? radius,        // 식당 검색 반경 (미터)
+    int? budget,        // 1인당 예산 상한 (원)
+    int? returnMinutes, // 복귀 여유 시간 (분)
+    String? memo,       // 자유 메모
   }) async {
     try {
       final body = <String, dynamic>{'name': name};
-      if (scheduledAt != null) body['scheduledAt'] = scheduledAt;
+      if (scheduledAt != null)    body['scheduledAt']    = scheduledAt;
+      if (radius != null)         body['radius']         = radius;
+      if (budget != null)         body['budget']         = budget;
+      if (returnMinutes != null)  body['returnMinutes']  = returnMinutes;
+      if (memo != null && memo.isNotEmpty) body['memo'] = memo;
 
       final response = await http.post(
         Uri.parse('${AppConfig.backendBaseUrl}/sessions'),
@@ -101,7 +111,9 @@ class SessionsApiService {
   }
 
   // ── GET /api/sessions/:id/members ─────────────────────
-  Future<List<SessionMember>> getSessionMembers({
+  // 백엔드 응답: { totalCount, joinedCount, members[] }
+  // 배열 직접이 아닌 래퍼 객체로 반환됨 → SessionMembersResponse 사용
+  Future<SessionMembersResponse?> getSessionMembers({
     required String accessToken,
     required String sessionId,
   }) async {
@@ -113,16 +125,15 @@ class SessionsApiService {
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final list = json['data'] as List<dynamic>;
-        return list
-            .map((e) => SessionMember.fromJson(e as Map<String, dynamic>))
-            .toList();
+        // data가 { totalCount, joinedCount, members[] } 구조
+        return SessionMembersResponse.fromJson(
+            json['data'] as Map<String, dynamic>);
       }
-      return [];
+      return null;
     } catch (e) {
       // ignore: avoid_print
       print('[SessionsApiService] getSessionMembers 에러: $e');
-      return [];
+      return null;
     }
   }
 

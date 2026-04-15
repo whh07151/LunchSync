@@ -97,7 +97,7 @@ export class RestaurantsService {
       throw new Error(`메뉴 조회 실패: ${error.message}`);
     }
 
-    return (data ?? []).map((m) => ({
+    const menus = (data ?? []).map((m) => ({
       id: m.id,
       name: m.name,
       price: m.price,
@@ -105,5 +105,12 @@ export class RestaurantsService {
       description: m.description,
       imageUrl: m.image_url,
     }));
+
+    // DTO 기준: { categories[], menus[] } 구조로 반환
+    // categories: '전체' + 중복 제거된 카테고리 목록
+    const uniqueCategories = [...new Set(menus.map((m) => m.category).filter(Boolean))];
+    const categories = ['전체', ...uniqueCategories];
+
+    return { categories, menus };
   }
 }

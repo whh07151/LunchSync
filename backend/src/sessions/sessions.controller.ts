@@ -9,7 +9,7 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsString, IsOptional, IsNotEmpty } from 'class-validator';
+import { IsString, IsOptional, IsNotEmpty, IsInt, Min } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionsService } from './sessions.service';
 
@@ -34,6 +34,25 @@ class CreateSessionDto {
   @IsOptional()
   @IsString()
   scheduledAt?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  radius?: number; // 식당 검색 반경 (미터)
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  budget?: number; // 1인당 예산 상한 (원)
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  returnMinutes?: number; // 복귀 여유 시간 (분)
+
+  @IsOptional()
+  @IsString()
+  memo?: string; // 자유 메모
 }
 
 class UpdateSessionStatusDto {

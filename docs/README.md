@@ -1,150 +1,9 @@
-# LunchSync
-
-그룹 점심 조율 앱 — 식당 추천 · 투표 · 주문 · 결제를 한 흐름으로 연결합니다.
-
----
-
-## 팀 역할
-
-| 이름 | 주요 담당 |
-|---|---|
-| 우현호 | 팀장 / AI 추천엔진 / 외부 API 연동 / 카카오 로그인 / 결제 시스템 |
-| 장다연 | RAG 설계 / 식당 데이터 수집·정규화 / 추천 근거 / 운영 통계 |
-| 김지효 | 모바일 프론트 / UX / 디자인 시스템 / 화면 연결 |
-| 안태환 | 백엔드 API / POS 시뮬레이터 / 실시간 상태동기화 / QA |
-
----
-
-## 기술 스택
-
-| 영역 | 기술 |
-|---|---|
-| 모바일 앱 | Flutter + Riverpod |
-| 백엔드 | NestJS (TypeScript) |
-| DB / Auth | Supabase (PostgreSQL) |
-| 결제 | Toss Payments v2 결제위젯 |
-| 배포 | AWS (백엔드) |
-
----
-
-## 프로젝트 구조
-
-```
-capstone/
-├── lib/                        # Flutter 앱
-│   ├── core/
-│   │   ├── config/             # AppConfig (API URL, 앱 키)
-│   │   ├── theme/              # 디자인 시스템 (색상, 타이포, 간격)
-│   │   └── widgets/            # 공통 위젯 (버튼, 텍스트필드 등)
-│   ├── features/
-│   │   ├── auth/               # CU-02 카카오 로그인
-│   │   ├── home/               # CU-06 홈 대시보드
-│   │   ├── menu/               # CU-16 메뉴 목록
-│   │   ├── onboarding/         # CU-03·05 프로필·조건 설정
-│   │   ├── payment/            # CU-17·18·19 주문 검토·결제
-│   │   ├── session/            # CU-08·09·10 멤버선택·세션생성·로비
-│   │   └── splash/             # CU-01 스플래시
-│   ├── models/                 # 데이터 모델 (Session, SessionMember 등)
-│   ├── providers/              # Riverpod Provider (userProvider, cartProvider 등)
-│   └── services/               # API 서비스 (sessions, invitations, payments 등)
-│
-├── backend/
-│   └── src/
-│       ├── auth/               # JWT 인증 가드
-│       ├── invitations/        # 초대코드 생성·수락
-│       ├── orders/             # 주문 생성·관리
-│       ├── payments/           # Toss 결제 승인
-│       ├── pos/                # 점주 주문 조회·처리
-│       ├── recommendations/    # 그룹 추천 점수화
-│       ├── restaurants/        # 식당 목록·메뉴
-│       ├── sessions/           # 세션 CRUD·멤버 관리
-│       ├── supabase/           # Supabase 클라이언트 모듈
-│       ├── users/              # 유저 프로필
-│       └── votes/              # 투표·결과 확정
-│
-├── docs/
-│   ├── LUNCHSYNC_SPECIFICATION.md   # DB 스키마 + API 명세
-│   ├── LUNCHSYNC_DTO.md             # 요청/응답 DTO 상세
-│   ├── LUNCHSYNC_CODE_GUIDE.md      # 코드 구조 가이드
-│   └── LUNCHSYNC_PROGRESS.md        # 구현 진행 현황
-│
-└── web/
-    └── toss-checkout.html      # Toss 결제위젯 HTML (웹 전용)
-```
-
----
-
-## 로컬 실행
-
-### 백엔드
-
-```bash
-cd backend
-cp .env.example .env      # 팀원에게 .env 값 공유받아 채우기
-npm install
-npm run start:dev         # http://localhost:3000
-```
-
-### Flutter 앱
-
-```bash
-flutter pub get
-flutter run -d chrome     # 웹 (결제 기능 사용 가능)
-flutter run               # 연결된 기기/에뮬레이터
-```
-
----
-
-## 환경 변수 (.env)
-
-`backend/.env` — git에 포함되지 않음. `.env.example` 참고.
-
-| 변수 | 설명 |
-|---|---|
-| `SUPABASE_URL` | Supabase 프로젝트 URL |
-| `SUPABASE_ANON_KEY` | Supabase anon 키 |
-| `SUPABASE_SERVICE_ROLE_KEY` | Supabase service_role 키 (RLS 우회, 서버 전용) |
-| `JWT_SECRET` | 자체 JWT 서명 시크릿 |
-| `TOSS_SECRET_KEY` | Toss Payments 테스트 시크릿 키 |
-
----
-
-## 테스트 스크립트
-
-```bash
-# DB 시드 (최초 1회 — 테스트용 식당·메뉴·세션 데이터 삽입)
-cd backend && npx ts-node scripts/seed-test-data.ts
-
-# 결제 흐름 E2E 검증 (카카오 로그인 없이 백엔드 결제 로직 단독 검증)
-cd backend && npx ts-node scripts/test-payment-flow.ts
-```
-
----
-
-## 구현 현황
-
-| ID | 화면 | 상태 | 담당 |
-|---|---|---|---|
-| CU-01 | 스플래시/서비스 소개 | ✅ 완료 | 김지효 |
-| CU-02 | 카카오 로그인 | ✅ 완료 | 우현호 |
-| CU-03 | 기본 프로필 설정 | ✅ 완료 | 김지효 |
-| CU-05 | 기본 조건 설정 | ✅ 완료 | 김지효 |
-| CU-06 | 홈 대시보드 | ⚠️ UI완료·API미연결 | 김지효 |
-| CU-07 | 초대 링크 공유 | ✅ 완료 | 우현호 |
-| CU-08 | 멤버 선택 | ✅ 완료 | 김지효 |
-| CU-09 | 세션 생성 조건 설정 | ✅ 완료 | 우현호·김지효 |
-| CU-10 | 세션 로비 | ✅ 완료 | 안태환·김지효 |
-| CU-16 | 메뉴 목록/상세 | ⚠️ UI완료·API미연결 | 김지효 |
-| CU-17~19 | 주문·결제 | ✅ 완료 | 우현호 |
-| CU-22 | 알림함 | ❌ 미구현 | 안태환 |
-| CU-23 | 내정보/설정 | ❌ 미구현 | 김지효 |
-
 # 0414-1 머지 내용 정리
 
 **날짜:** 2026-04-14
-**브렌치:** `feat/hyunho` → `feat/jihyo` (fast-forward merge) + 버그수정/DTO정렬/CU-09 추가
-**작업자:** 우현호(백엔드/결제) + 김지효(버그수정/DTO정렬/CU-09)
-한줄요약: 초대코드·세션 생성·주문상태 버그 수정 + DB 불일치 수정 + CU-09 세션 조건 설정 화면 구현
+**브렌치:** `feat/hyunho` → `feat/jihyo` (fast-forward merge) + 버그수정/DTO정렬 추가
+**작업자:** 우현호(백엔드/결제) + 김지효(버그수정/DTO정렬)
+한줄요약: 초대코드, 세션 생성, 주문상태 에대한 버그 및 이것과 관련된 DB 불일치 수정(일부는 코드,일부는 디비 수정)
 ---
 
 ## 1. 머지 개요
@@ -157,13 +16,11 @@ cd backend && npx ts-node scripts/test-payment-flow.ts
 - `5bc4033` feat: 토스페이먼츠 v2 결제위젯 전체 연동 (CU-17/18/19, CORE-10)
 - `192d356` chore: 결제 흐름 DB seed + API E2E 테스트 스크립트 추가
 
-**김지효 추가 수정 (커밋 완료):**
-- `invitations.service.ts` — 초대 코드 즉시 만료 버그 수정 + `created_by` 불필요 컬럼 제거
+**김지효 추가 수정 (미커밋, 이 문서와 함께 커밋 예정):**
+- `invitations.service.ts` — 초대 코드 즉시 만료 버그 수정 + `created_by` 불필요 컬럼 제거 이유: 초대 생성자를 클라이언트에 내려줄 필요 없음
 - `sessions.service.ts` — DTO 응답 구조 정렬 (createdBy 객체화, memberCount, statusLabel, getSessionMembers 구조 변경)
 - `restaurants.service.ts` — 메뉴 응답 구조 정렬 (`{ categories[], menus[] }`)
-- `backend/.env` — `TOSS_SECRET_KEY` 실제 테스트 키로 교체
-- `main.dart` — 결제 복귀 시 provider 빌드 중 수정 에러 수정 (`_restoreUserFromSession` → `addPostFrameCallback`)
-- `session_create_screen.dart` — CU-09 세션 조건 설정 화면 신규 구현 (섹션 9 참고)
+- `backend/.env` — `TOSS_SECRET_KEY=test_dummy` 추가 (로컬 테스트용)
 
 ---
 
@@ -329,8 +186,8 @@ npx ts-node scripts/test-payment-flow.ts
 
 **수정 파일:**
 - `sessions/sessions.service.ts` — 주석 + `statusLabel` 매핑 수정
-    - `DECIDED: '식당 확정'` → `ORDERED: '주문 완료'`
-    - `COMPLETED: '완료'` → `DONE: '세션 종료'`
+  - `DECIDED: '식당 확정'` → `ORDERED: '주문 완료'`
+  - `COMPLETED: '완료'` → `DONE: '세션 종료'`
 - `votes/votes.service.ts` — 투표 확정 시 `status: 'DECIDED'` → `status: 'ORDERED'`
 
 ---
@@ -426,50 +283,10 @@ CREATE TABLE invitations (
 
 ---
 
-## 9. CU-09 세션 생성 조건 설정 화면 (김지효)
-
-### 신규 화면
-
-**`lib/features/session/session_create_screen.dart`**
-- CU-08 멤버 선택 → "조건 설정하기" 버튼으로 진입
-- 입력 항목: 세션 이름, 점심 시간, 반경(m), 예산(원), 복귀시간(분), 메모
-- "조건 초기화" — 반경 500m / 예산 15,000원 / 복귀 30분으로 리셋
-- "세션 만들기" — `POST /sessions` + `POST /invitations` → SessionLobbyScreen(호스트 모드) 진입
-- 단계 표시바 2단계(조건) 활성
-
-### DB 컬럼 추가
-
-```sql
-ALTER TABLE sessions ADD COLUMN radius INT;
-ALTER TABLE sessions ADD COLUMN budget INT;
-ALTER TABLE sessions ADD COLUMN return_minutes INT;
-ALTER TABLE sessions ADD COLUMN memo TEXT;
-```
-
-### 수정 파일
-
-- `backend/src/sessions/sessions.service.ts` — `CreateSessionDto` 및 insert/select/return에 신규 필드 반영
-- `backend/src/sessions/sessions.controller.ts` — DTO 유효성 검사 데코레이터 추가
-- `lib/models/session.dart` — `Session` 모델에 `radius`, `budget`, `returnMinutes`, `memo` 추가
-- `lib/services/sessions_api_service.dart` — `createSession` 파라미터 추가
-- `lib/features/home/home_screen.dart` — `onNext` 콜백 → `SessionCreateScreen` 라우팅 연결
-- `lib/core/widgets/app_text_field.dart` — `maxLines` 파라미터 추가
-
----
-
-## 10. 미연결 (추후 작업)
+## 9. 미연결 (추후 작업)
 
 | 항목 | 이유 |
 |---|---|
 | `menu_screen` → `GET /restaurants/:id/menus` | mock UUID와 seed UUID 일치하므로 연결 시 바로 동작 가능 |
 | `home_screen` → sessions/recommendations API | UI 연결 작업 필요 |
 | `member_select_screen` → `GET /users` | 백엔드 `GET /users` 엔드포인트 미구현 |
-
-## 앱 실행법
-### Localhost
-#### Chrome(web) 사용시
-1. 서버 시작: npm run start:dev (이때 터미널 위치:capstone\backend>)
-2. 플러터 실행: flutter run -d chrome --web-port 8080 (터미널 위치: capstone>)
-#### Android 실제 기기 (04/15 기준 아이폰은 서버 시작만 하면 잘 돌아감)
-1. 서버 시작: npm run start:dev (이때 터미널 위치:capstone\backend>)
-2. 플러터 실행: $IP = (ipconfig | Select-String "IPv4" | Select-Object -First 1) -replace '.*:\s*', '' -replace '\s', ''; echo $IP; flutter run --dart-define=BACKEND_HOST=$IP (터미널 위치: capstone>)
