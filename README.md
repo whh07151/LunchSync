@@ -465,3 +465,11 @@ ALTER TABLE sessions ADD COLUMN memo TEXT;
 | `home_screen` → sessions/recommendations API | UI 연결 작업 필요 |
 | `member_select_screen` → `GET /users` | 백엔드 `GET /users` 엔드포인트 미구현 |
 
+## 앱 실행법
+### Localhost
+#### Chrome(web) 사용시
+1. 서버 시작: npm run start:dev (이때 터미널 위치:capstone\backend>)
+2. 플러터 실행: flutter run -d chrome --web-port 8080 (터미널 위치: capstone>)
+#### Android 실제 기기 (04/15 기준 아이폰은 서버 시작만 하면 잘 돌아감)
+1. 서버 시작: npm run start:dev (이때 터미널 위치:capstone\backend>)
+2. 플러터 실행: $IP = (ipconfig | Select-String "IPv4" | Select-Object -First 1) -replace '.*:\s*', '' -replace '\s', ''; echo $IP; flutter run --dart-define=BACKEND_HOST=$IP (터미널 위치: capstone>)
