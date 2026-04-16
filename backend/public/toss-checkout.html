@@ -1,0 +1,223 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>LunchSync 결제</title>
+
+  <!--
+    ══════════════════════════════════════════════════════════
+    파일 역할: 토스페이먼츠 결제위젯 v2 호스트 페이지
+    ══════════════════════════════════════════════════════════
+
+    이 페이지는 Flutter 앱이 아닌 "정적 HTML" 입니다.
+    Flutter 웹은 캔버스 기반 렌더링이라 DOM 위젯을 올리기 까다로워서,
+    결제 시점에만 이 페이지로 전체 화면을 리다이렉트하고
+    결제 완료 후 Flutter 앱(8080 루트)으로 되돌아오는 방식으로 구현합니다.
+
+    기대 쿼리 파라미터:
+      orderId     : 우리 서버가 발급한 주문 UUID
+      orderName   : 주문명 (ex. "치킨마요 외 2건")
+      amount      : 결제 금액 (KRW, 정수 문자열)
+      clientKey   : 토스 클라이언트 키 (test_ck_... 또는 live_ck_...)
+      customerKey : 고객 식별자 (로그인 유저ID 또는 ANONYMOUS)
+      successUrl  : 결제 성공 시 리다이렉트될 URL (Flutter 앱 루트 + 쿼리)
+      failUrl     : 결제 실패 시 리다이렉트될 URL
+
+    Toss v2 문서:
+      https://docs.tosspayments.com/guides/v2/payment-widget/integration
+  -->
+
+  <!-- 토스페이먼츠 v2 SDK (결제위젯) — CDN 로드 -->
+  <script src="https://js.tosspayments.com/v2/standard"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, 'Apple SD Gothic Neo',
+                   'Malgun Gothic', sans-serif;
+      background: #f7f7f8;
+      color: #222;
+    }
+    .container {
+      max-width: 540px;
+      margin: 0 auto;
+      padding: 24px 16px 48px;
+    }
+    .title {
+      font-size: 20px;
+      font-weight: 700;
+      margin: 0 0 6px;
+    }
+    .order-summary {
+      background: #fff;
+      border-radius: 12px;
+      padding: 16px;
+      margin-bottom: 16px;
+      box-shadow: 0 1px 2px rgba(0,0,0,0.04);
+    }
+    .order-name {
+      color: #555;
+      font-size: 14px;
+      margin-bottom: 6px;
+      word-break: break-all;
+    }
+    .amount {
+      font-size: 22px;
+      font-weight: 800;
+      color: #FF6B2C;
+    }
+    #payment-method,
+    #agreement {
+      background: #fff;
+      border-radius: 12px;
+      margin-bottom: 16px;
+      overflow: hidden;
+    }
+    .pay-button {
+      width: 100%;
+      padding: 16px;
+      background: #FF6B2C;
+      color: #fff;
+      border: none;
+      border-radius: 12px;
+      font-size: 16px;
+      font-weight: 700;
+      cursor: pointer;
+    }
+    .pay-button:disabled {
+      background: #ccc;
+      cursor: not-allowed;
+    }
+    .error {
+      color: #d4351c;
+      font-size: 14px;
+      padding: 12px;
+      background: #fff0ee;
+      border-radius: 8px;
+      margin-bottom: 12px;
+      white-space: pre-wrap;
+    }
+    .loading {
+      text-align: center;
+      color: #777;
+      padding: 40px 0;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1 class="title">LunchSync 결제</h1>
+    <div class="order-summary">
+      <div class="order-name" id="order-name-text">-</div>
+      <div class="amount" id="amount-text">-</div>
+    </div>
+
+    <div id="error-box" class="error" style="display:none;"></div>
+
+    <!-- 토스 결제위젯이 이 안에 카드/토스페이/카카오페이/계좌이체 탭을 렌더링 -->
+    <div id="payment-method"></div>
+
+    <!-- 결제 약관 동의 영역 -->
+    <div id="agreement"></div>
+
+    <button id="payment-button" class="pay-button" disabled>
+      결제 준비 중...
+    </button>
+
+    <div id="loading" class="loading">결제위젯을 불러오는 중입니다...</div>
+  </div>
+
+  <script>
+    // ── 쿼리 파라미터 파싱 ──────────────────────────────────
+    const params = new URLSearchParams(window.location.search);
+    const orderId     = params.get('orderId');
+    const orderName   = params.get('orderName') || 'LunchSync 주문';
+    const amount      = parseInt(params.get('amount') || '0', 10);
+    const clientKey   = params.get('clientKey');
+    const customerKey = params.get('customerKey') || 'ANONYMOUS';
+    const successUrl  = params.get('successUrl');
+    const failUrl     = params.get('failUrl');
+
+    const orderNameEl = document.getElementById('order-name-text');
+    const amountEl    = document.getElementById('amount-text');
+    const errorBox    = document.getElementById('error-box');
+    const loadingEl   = document.getElementById('loading');
+    const payButton   = document.getElementById('payment-button');
+
+    orderNameEl.textContent = orderName;
+    amountEl.textContent = amount.toLocaleString('ko-KR') + '원';
+
+    function showError(msg) {
+      errorBox.style.display = 'block';
+      errorBox.textContent = msg;
+      loadingEl.style.display = 'none';
+    }
+
+    // ── 필수 파라미터 검증 ──────────────────────────────────
+    if (!orderId || !amount || !clientKey || !successUrl || !failUrl) {
+      showError(
+        '필수 파라미터가 누락되었습니다.\n' +
+        'orderId / amount / clientKey / successUrl / failUrl 를 확인하세요.'
+      );
+      throw new Error('invalid params');
+    }
+
+    // ── 토스 결제위젯 v2 초기화 + 렌더링 ────────────────────
+    // v2 패턴:
+    //   TossPayments(clientKey) → widgets({customerKey})
+    //   → setAmount → renderPaymentMethods + renderAgreement
+    //   → 버튼 클릭 시 requestPayment
+    (async function initWidget() {
+      try {
+        const tossPayments = TossPayments(clientKey);
+        const widgets = tossPayments.widgets({ customerKey });
+
+        // 결제 금액 설정 (필수 — 렌더링 전에 호출)
+        await widgets.setAmount({ currency: 'KRW', value: amount });
+
+        // 결제수단 UI + 약관 동의 UI 를 동시에 렌더링
+        await Promise.all([
+          widgets.renderPaymentMethods({
+            selector: '#payment-method',
+            variantKey: 'DEFAULT',
+          }),
+          widgets.renderAgreement({
+            selector: '#agreement',
+            variantKey: 'AGREEMENT',
+          }),
+        ]);
+
+        // 렌더링 완료 → 버튼 활성화
+        loadingEl.style.display = 'none';
+        payButton.disabled = false;
+        payButton.textContent = amount.toLocaleString('ko-KR') + '원 결제하기';
+
+        payButton.addEventListener('click', async () => {
+          try {
+            payButton.disabled = true;
+            payButton.textContent = '결제 요청 중...';
+
+            // 토스에 결제 요청 — 성공 시 successUrl 로 리다이렉트,
+            // 실패 시 failUrl 로 리다이렉트 (둘 다 Toss 가 처리)
+            await widgets.requestPayment({
+              orderId: orderId,
+              orderName: orderName,
+              successUrl: successUrl,
+              failUrl: failUrl,
+            });
+          } catch (err) {
+            // requestPayment 가 예외를 던지면 (유저 취소 등)
+            payButton.disabled = false;
+            payButton.textContent = amount.toLocaleString('ko-KR') + '원 결제하기';
+            showError('결제 요청 실패: ' + (err?.message || err));
+          }
+        });
+      } catch (err) {
+        showError('결제위젯 초기화 실패: ' + (err?.message || err));
+      }
+    })();
+  </script>
+</body>
+</html>

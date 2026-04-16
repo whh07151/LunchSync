@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/config/app_config.dart';
@@ -8,6 +9,7 @@ import '../../providers/cart_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/orders_api_service.dart';
 import 'payment_web_bridge.dart';
+import 'payment_webview_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-17 그룹 주문 검토 / 결제 시작 화면
@@ -164,36 +166,66 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
         '${widget.restaurantName} 외 ${cart.length - 1}건',
       );
 
-      // ── 5. 토스 결제위젯 HTML 로 리다이렉트 ─────────
-      // successUrl/failUrl 은 Flutter 앱 루트(/). Flutter 가
-      // main.dart 시작 시 Uri.base.queryParameters 를 확인해서
-      // 결제 성공/실패 화면으로 분기합니다.
-      final origin = PaymentWebBridge.origin();
+      // ── 5. 토스 결제위젯으로 이동 ─────────────────────
       final customerKey = user.userId ?? 'ANONYMOUS';
       final orderName = _composeOrderName(cart.length);
 
-      final successUrl = Uri.parse(origin).replace(queryParameters: {
-        'paymentStatus': 'success',
-      }).toString();
+      if (kIsWeb) {
+        // 웹: 브라우저 전체 페이지 리다이렉트
+        final origin = PaymentWebBridge.origin();
+        final successUrl = Uri.parse(origin).replace(queryParameters: {
+          'paymentStatus': 'success',
+        }).toString();
+        final failUrl = Uri.parse(origin).replace(queryParameters: {
+          'paymentStatus': 'fail',
+        }).toString();
 
-      final failUrl = Uri.parse(origin).replace(queryParameters: {
-        'paymentStatus': 'fail',
-      }).toString();
+        final checkoutUrl = Uri.parse('$origin/toss-checkout.html').replace(
+          queryParameters: {
+            'orderId': result.id,
+            'orderName': orderName,
+            'amount': result.totalPrice.toString(),
+            'clientKey': AppConfig.tossClientKey,
+            'customerKey': customerKey,
+            'successUrl': successUrl,
+            'failUrl': failUrl,
+          },
+        ).toString();
 
-      final checkoutUrl = Uri.parse('$origin/toss-checkout.html').replace(
-        queryParameters: {
-          'orderId': result.id,
-          'orderName': orderName,
-          'amount': result.totalPrice.toString(),
-          'clientKey': AppConfig.tossClientKey,
-          'customerKey': customerKey,
-          'successUrl': successUrl,
-          'failUrl': failUrl,
-        },
-      ).toString();
+        PaymentWebBridge.redirect(checkoutUrl);
+        // redirect 이후 코드는 실행되지 않음 (페이지 전환됨)
+      } else {
+        // 모바일: 인앱 WebView 로 결제 진행
+        // 백엔드 서버의 toss-checkout.html 을 사용
+        final backendOrigin = AppConfig.backendBaseUrl.replaceAll('/api', '');
+        final successUrlPrefix = '$backendOrigin/payment-success';
+        final failUrlPrefix = '$backendOrigin/payment-fail';
 
-      PaymentWebBridge.redirect(checkoutUrl);
-      // redirect 이후 코드는 실행되지 않음 (페이지 전환됨)
+        final checkoutUrl = Uri.parse('$backendOrigin/toss-checkout.html').replace(
+          queryParameters: {
+            'orderId': result.id,
+            'orderName': orderName,
+            'amount': result.totalPrice.toString(),
+            'clientKey': AppConfig.tossClientKey,
+            'customerKey': customerKey,
+            'successUrl': '$successUrlPrefix?paymentStatus=success',
+            'failUrl': '$failUrlPrefix?paymentStatus=fail',
+          },
+        ).toString();
+
+        if (!mounted) return;
+        setState(() => _isProcessing = false);
+
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => PaymentWebViewScreen(
+              checkoutUrl: checkoutUrl,
+              successUrlPrefix: successUrlPrefix,
+              failUrlPrefix: failUrlPrefix,
+            ),
+          ),
+        );
+      }
     } catch (e) {
       setState(() {
         _isProcessing = false;

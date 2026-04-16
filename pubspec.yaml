@@ -37,6 +37,7 @@ dependencies:
   flutter_riverpod: ^2.6.1
   kakao_flutter_sdk_user: ^1.9.7
   http: ^1.2.0
+  webview_flutter: ^4.13.1
 
 dev_dependencies:
   flutter_test:

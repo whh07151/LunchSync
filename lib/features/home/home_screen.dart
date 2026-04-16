@@ -5,6 +5,7 @@ import '../../core/widgets/widgets.dart';
 import '../session/member_select_screen.dart';
 import '../session/session_create_screen.dart';
 import '../session/join_session_screen.dart';
+import '../session/session_lobby_screen.dart';
 import '../menu/menu_screen.dart';
 import '../notifications/notification_screen.dart';
 import '../my_info/my_info_screen.dart';
@@ -600,8 +601,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           AppPrimaryButton(
             label: '세션 입장하기',
             height: 44, // 카드 안의 버튼은 조금 작게
-            // TODO: CU-10 세션 로비 화면 완성 후 실제 네비게이션으로 교체
-            onPressed: () {},
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SessionLobbyScreen(
+                    sessionId: _mockSession.id,
+                  ),
+                ),
+              );
+            },
           ),
         ],
       ),
