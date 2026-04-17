@@ -35,6 +35,8 @@ export interface RecommendationResult {
   category: string;
   priceRange: number;
   address: string;
+  lat: number | null;    // 지도 표시용 좌표 (없을 수 있음)
+  lng: number | null;
   score: number;
   reasons: string[];
 }
@@ -152,6 +154,8 @@ export class RecommendationsService {
         category: r.category,
         priceRange: r.price_range,
         address: r.address,
+        lat: r.lat ?? null,
+        lng: r.lng ?? null,
         score,
         reasons,
       };

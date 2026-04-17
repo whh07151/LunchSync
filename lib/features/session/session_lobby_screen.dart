@@ -8,6 +8,7 @@ import '../../core/debug/debug_toast.dart';
 import '../../models/session.dart';
 import '../../providers/user_provider.dart';
 import '../../services/sessions_api_service.dart';
+import 'recommendation_list_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 세션 로비 화면 (CU-10 간소화 버전)
@@ -138,6 +139,18 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
     _pollingTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       _loadMembers();
     });
+  }
+
+  // ── AI 추천 리스트 화면으로 이동 ────────────────────────
+  void _goToRecommendations() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RecommendationListScreen(
+          sessionId: widget.sessionId,
+          sessionName: _session?.name ?? '점심 세션',
+        ),
+      ),
+    );
   }
 
   // ── 초대코드 클립보드 복사 ─────────────────────────────
@@ -276,9 +289,23 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
                 : ListView.separated(
                     physics: const BouncingScrollPhysics(),
                     itemCount: _membersData!.members.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: AppSpacing.sm),
+                    separatorBuilder: (_, _) => const SizedBox(height: AppSpacing.sm),
                     itemBuilder: (_, i) => _buildMemberItem(_membersData!.members[i]),
                   ),
+          ),
+
+          // ── "AI 추천 보기" 버튼 (항상 노출) ────────────
+          // 멤버가 모집 중이라도 현재 조건으로 추천을 미리 확인할 수 있도록 허용.
+          // 실제 투표 시작은 팀원 담당 영역에서 처리.
+          Padding(
+            padding: const EdgeInsets.only(
+              top: AppSpacing.sm,
+              bottom: AppSpacing.md,
+            ),
+            child: AppPrimaryButton(
+              label: 'AI 추천 보기',
+              onPressed: _goToRecommendations,
+            ),
           ),
         ],
       ),

@@ -38,6 +38,10 @@ dependencies:
   kakao_flutter_sdk_user: ^1.9.7
   http: ^1.2.0
   webview_flutter: ^4.13.1
+  # GPS 위치 조회 — Android/iOS/Web 모두 지원 (브라우저 geolocation API 자동 사용)
+  geolocator: ^13.0.2
+  # 외부 앱/URL 실행 — 네이버·카카오맵 길찾기로 넘길 때 사용
+  url_launcher: ^6.3.1
 
 dev_dependencies:
   flutter_test:

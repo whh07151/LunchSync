@@ -3,6 +3,11 @@
     <!-- 인터넷 권한: 카카오 API 통신에 필요 -->
     <uses-permission android:name="android.permission.INTERNET" />
 
+    <!-- GPS 위치 권한: 홈 화면 카카오맵에서 "내 위치" 핀 표시용 -->
+    <!-- fine: 정확한 GPS 좌표 / coarse: 네트워크 기반 대략적 좌표 -->
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+
     <application
         android:label="capstone"
         android:name="${applicationName}"

@@ -8,6 +8,8 @@ import '../../providers/session_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/sessions_api_service.dart';
 import '../../services/invitations_api_service.dart';
+import '../../services/crawl_api_service.dart';
+import '../../services/geolocation_service.dart';
 import 'session_lobby_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -66,6 +68,8 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
 
   static const _sessionsApi    = SessionsApiService();
   static const _invitationsApi = InvitationsApiService();
+  static const _crawlApi       = CrawlApiService();
+  static const _geoService     = GeolocationService();
 
   @override
   void initState() {
@@ -177,7 +181,13 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
       return;
     }
 
-    // ── 5. 세션 생성 완료 → sessionProvider 초기화 후 로비 진입 ──
+    // ── 5. 주변 식당 크롤링 트리거 (비동기, 실패해도 흐름에 영향 없음) ──
+    // 호스트의 GPS를 기준으로 반경 내 실제 식당을 DB에 채운다.
+    // 추천 엔진은 이 데이터를 기반으로 점수화.
+    // 결과를 기다리지 않고 fire-and-forget — 로비 진입 후 백그라운드 완료.
+    _triggerCrawlInBackground(token: token, radiusMeters: radius);
+
+    // ── 6. 세션 생성 완료 → sessionProvider 초기화 후 로비 진입 ──
     // selectedMembers는 이미 역할을 다했으므로 초기화
     ref.read(sessionProvider.notifier).clearSession();
 
@@ -190,6 +200,26 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
         ),
       ),
     );
+  }
+
+  // ── 주변 식당 크롤링을 백그라운드로 실행 ──────────────
+  // GPS 권한 거부 / 에뮬레이터 미설정 시 조용히 스킵.
+  // 성공하면 주변 실제 식당 데이터가 DB에 채워져 추천 엔진에서 활용됨.
+  void _triggerCrawlInBackground({
+    required String token,
+    int? radiusMeters,
+  }) {
+    // async 함수를 await 없이 호출 → fire-and-forget
+    () async {
+      final pos = await _geoService.getCurrentPosition();
+      if (pos == null) return; // GPS 실패 — 기존 식당으로 폴백
+      await _crawlApi.crawlRestaurants(
+        accessToken: token,
+        lat: pos.latitude,
+        lng: pos.longitude,
+        radius: radiusMeters ?? _kDefaultRadius,
+      );
+    }();
   }
 
   // ── 에러 스낵바 헬퍼 ─────────────────────────────────

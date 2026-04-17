@@ -16,6 +16,7 @@ import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PosModule } from './pos/pos.module';
 import { CrawlModule } from './crawl/crawl.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: NestJS 루트 모듈
@@ -84,6 +85,9 @@ import { CrawlModule } from './crawl/crawl.module';
 
     // 식당 크롤링 (카카오 + 네이버)
     CrawlModule,
+
+    // CU-22 알림함 (주문/투표 이벤트 기반 알림)
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

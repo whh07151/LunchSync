@@ -33,6 +33,104 @@ class CreateOrderItem {
       };
 }
 
+/// 주문 목록 항목 (GET /orders/today 응답)
+///
+/// 목록에서는 item 정보를 반환하지 않음 → 상세는 getOrderById로.
+class OrderSummaryDto {
+  const OrderSummaryDto({
+    required this.id,
+    required this.sessionId,
+    required this.status,
+    required this.totalPrice,
+    required this.createdAt,
+  });
+
+  final String id;
+  final String sessionId;
+  final String status;    // PENDING | PAID | PREPARING | READY | COMPLETED | CANCELLED
+  final int totalPrice;
+  final String createdAt; // ISO 8601 문자열
+
+  factory OrderSummaryDto.fromJson(Map<String, dynamic> json) {
+    return OrderSummaryDto(
+      id: json['id'] as String,
+      sessionId: json['sessionId'] as String,
+      status: json['status'] as String,
+      totalPrice: (json['totalPrice'] as num).toInt(),
+      createdAt: json['createdAt'] as String? ?? '',
+    );
+  }
+}
+
+/// 주문 상세 항목 (order_items[] 한 줄)
+class OrderItemDetailDto {
+  const OrderItemDetailDto({
+    required this.id,
+    required this.menuItemId,
+    required this.menuName,
+    required this.quantity,
+    required this.price,
+  });
+
+  final String id;
+  final String menuItemId;
+  final String? menuName;
+  final int quantity;
+  final int price;
+
+  factory OrderItemDetailDto.fromJson(Map<String, dynamic> json) {
+    return OrderItemDetailDto(
+      id: json['id'] as String,
+      menuItemId: json['menuItemId'] as String,
+      menuName: json['menuName'] as String?,
+      quantity: (json['quantity'] as num).toInt(),
+      price: (json['price'] as num).toInt(),
+    );
+  }
+}
+
+/// 주문 상세 (GET /orders/:id 응답)
+class OrderDetailDto {
+  const OrderDetailDto({
+    required this.id,
+    required this.sessionId,
+    required this.userId,
+    required this.status,
+    required this.totalPrice,
+    required this.items,
+    this.paymentKey,
+    this.createdAt,
+    this.updatedAt,
+  });
+
+  final String id;
+  final String sessionId;
+  final String userId;
+  final String status;
+  final int totalPrice;
+  final String? paymentKey;
+  final String? createdAt;
+  final String? updatedAt;
+  final List<OrderItemDetailDto> items;
+
+  factory OrderDetailDto.fromJson(Map<String, dynamic> json) {
+    final itemsRaw = json['items'] as List<dynamic>? ?? [];
+    return OrderDetailDto(
+      id: json['id'] as String,
+      sessionId: json['sessionId'] as String,
+      userId: json['userId'] as String,
+      status: json['status'] as String,
+      totalPrice: (json['totalPrice'] as num).toInt(),
+      paymentKey: json['paymentKey'] as String?,
+      createdAt: json['createdAt'] as String?,
+      updatedAt: json['updatedAt'] as String?,
+      items: itemsRaw
+          .map((e) => OrderItemDetailDto.fromJson(e as Map<String, dynamic>))
+          .toList(),
+    );
+  }
+}
+
 /// 주문 생성 API 응답
 class CreateOrderResult {
   const CreateOrderResult({
@@ -111,6 +209,55 @@ class OrdersApiService {
     } catch (e) {
       // ignore: avoid_print
       print('[OrdersApiService] createOrder 에러: $e');
+      return null;
+    }
+  }
+
+  // ── GET /api/orders/today — 오늘 내 주문 목록 ─────────
+  Future<List<OrderSummaryDto>> getTodayOrders({
+    required String accessToken,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/orders/today'),
+        headers: _headers(accessToken),
+      );
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final list = json['data'] as List<dynamic>;
+        return list
+            .map((e) => OrderSummaryDto.fromJson(e as Map<String, dynamic>))
+            .toList();
+      }
+      return [];
+    } catch (e) {
+      // ignore: avoid_print
+      print('[OrdersApiService] getTodayOrders 에러: $e');
+      return [];
+    }
+  }
+
+  // ── GET /api/orders/:id — 주문 상세 (폴링 대상) ──────
+  // 주문 추적 화면에서 3초 간격 폴링으로 상태 변화를 감지하는 데 사용.
+  Future<OrderDetailDto?> getOrderById({
+    required String accessToken,
+    required String orderId,
+  }) async {
+    try {
+      final response = await http.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/orders/$orderId'),
+        headers: _headers(accessToken),
+      );
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        return OrderDetailDto.fromJson(json['data'] as Map<String, dynamic>);
+      }
+      return null;
+    } catch (e) {
+      // ignore: avoid_print
+      print('[OrdersApiService] getOrderById 에러: $e');
       return null;
     }
   }

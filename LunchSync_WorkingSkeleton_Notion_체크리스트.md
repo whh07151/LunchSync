@@ -897,6 +897,7 @@
 - [ ] 버그/막힘 기록
 - [ ] carry-over 정리
 
+
 ---
 
 
@@ -905,3 +906,4 @@
 - `TalkFile_lunchsync_all_features_reference_wireframes.pdf.pdf`: 전체 서비스 종단 흐름, 손님앱·점주앱·POS 웹 화면 범위
 - `TalkFile_lunchsync_detailed_feature_breakdown_v3.pdf.pdf`: Working Skeleton 통과 기준 6개, 팀 역할표, CU/OW/POS/CORE 세부 기능 및 완료 기준
 - `LunchSync_WorkingSkeleton_일차별역할분배_3주.xlsx`: 21일 실행 계획을 일차별 역할 분배로 재정리한 운영용 파일
+

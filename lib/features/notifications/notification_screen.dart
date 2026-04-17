@@ -1,168 +1,128 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/debug/debug_toast.dart';
+import '../../providers/user_provider.dart';
+import '../../services/notifications_api_service.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-22 알림함 화면
 //
-// 와이어프레임 기준 구성 요소:
-//   - 상단 앱바: "알림" 타이틀 + "전체 읽음" 버튼
+// 와이어프레임 기준 구성:
+//   - 상단 앱바: "알림" 타이틀 + "전체 읽음" 버튼 (미읽음 있을 때만)
 //   - 알림 카드 목록: 타입별 아이콘 + 제목 + 메시지 + 시간
-//   - 읽지 않은 알림: 왼쪽 파란 점 + 배경 강조
-//   - 읽은 알림: 기본 배경
-//   - 빈 상태: "새 알림이 없어요" 안내
+//   - 미읽음: 배경 강조 + 오른쪽 파란 점
+//   - 빈 상태: "새 알림이 없어요"
 //
-// 알림 4종 (명세서 기준):
-//   ORDER_RECEIVED  — 점주에게 주문이 들어왔을 때
-//   ORDER_ACCEPTED  — 점주가 주문을 수락했을 때
-//   ORDER_DONE      — 조리 완료, 수령 요청
-//   VOTE_RESULT     — 투표 결과 확정
+// 연동 API:
+//   GET   /api/notifications              — 목록 (최신 50개)
+//   PATCH /api/notifications/:id/read     — 단건 읽음
+//   PATCH /api/notifications/read-all     — 전체 읽음
 //
-// 동작 흐름:
-//   홈 상단 알림 아이콘 탭 → 이 화면(push)
-//   알림 카드 탭 → 읽음 처리 (상태 변경)
-//   "전체 읽음" 탭 → 모든 알림 읽음 처리
-//
-// TODO: API 연동 시 교체 지점:
-//   _mockNotifications → GET /notifications 응답으로 교체
-//   _markAsRead()      → PATCH /notifications/:id/read 호출
-//   _markAllAsRead()   → PATCH /notifications/read-all 호출 (또는 개별 반복)
+// 알림 타입 4종 (서버 type 값과 매핑):
+//   ORDER_RECEIVED / ORDER_ACCEPTED / ORDER_DONE / VOTE_RESULT
 // ══════════════════════════════════════════════════════════
 
-// ── 알림 타입 enum ────────────────────────────────────────
-// DB의 type VARCHAR(50) 값과 1:1 대응
-enum NotificationType {
-  orderReceived,  // ORDER_RECEIVED
-  orderAccepted,  // ORDER_ACCEPTED
-  orderDone,      // ORDER_DONE
-  voteResult,     // VOTE_RESULT
-}
-
-// ── 알림 데이터 모델 ──────────────────────────────────────
-// GET /notifications 응답의 notifications 배열 한 항목에 대응
-class NotificationItem {
-  const NotificationItem({
-    required this.id,
-    required this.type,
-    required this.title,
-    required this.message,
-    required this.createdAtLabel,
-    this.isRead = false,
-  });
-
-  final String id;
-  final NotificationType type;
-  final String title;
-  final String message;
-  final String createdAtLabel; // "방금 전", "20분 전" 등 서버에서 계산해서 내려줌
-  final bool isRead;
-
-  // 읽음 상태 변경 시 새 객체 반환 (불변 패턴)
-  NotificationItem copyWith({bool? isRead}) {
-    return NotificationItem(
-      id: id,
-      type: type,
-      title: title,
-      message: message,
-      createdAtLabel: createdAtLabel,
-      isRead: isRead ?? this.isRead,
-    );
-  }
-}
-
-
-class NotificationScreen extends StatefulWidget {
+class NotificationScreen extends ConsumerStatefulWidget {
   const NotificationScreen({super.key});
 
   @override
-  State<NotificationScreen> createState() => _NotificationScreenState();
+  ConsumerState<NotificationScreen> createState() =>
+      _NotificationScreenState();
 }
 
-class _NotificationScreenState extends State<NotificationScreen> {
+class _NotificationScreenState extends ConsumerState<NotificationScreen> {
+  static const _api = NotificationsApiService();
 
-  // ── Mock 알림 데이터 ──────────────────────────────────────
-  // TODO: API 연동 시 — initState에서 GET /notifications 호출로 교체
-  // 알림 4종을 모두 포함해서 데모 시 보여줄 수 있도록 구성
-  late List<NotificationItem> _notifications = [
-    const NotificationItem(
-      id: 'notif_001',
-      type: NotificationType.orderAccepted,
-      title: '주문이 수락되었습니다',
-      message: '한솥도시락에서 주문을 수락했습니다. 약 15분 후 완료 예정이에요.',
-      createdAtLabel: '방금 전',
-      isRead: false,
-    ),
-    const NotificationItem(
-      id: 'notif_002',
-      type: NotificationType.voteResult,
-      title: '투표 결과가 나왔습니다',
-      message: '개발팀 점심 세션에서 한솥도시락이 선택되었습니다.',
-      createdAtLabel: '20분 전',
-      isRead: false,
-    ),
-    const NotificationItem(
-      id: 'notif_003',
-      type: NotificationType.orderDone,
-      title: '조리가 완료되었습니다',
-      message: '주문하신 음식이 준비됐어요. 지금 수령하러 가세요!',
-      createdAtLabel: '어제',
-      isRead: true,
-    ),
-    const NotificationItem(
-      id: 'notif_004',
-      type: NotificationType.orderReceived,
-      title: '새 주문이 들어왔습니다',
-      message: '개발팀 4명이 도시락을 주문했습니다.',
-      createdAtLabel: '어제',
-      isRead: true,
-    ),
-  ];
+  List<NotificationDto>? _notifications;
+  bool _isLoading = true;
 
-  // ── 읽지 않은 알림 수 계산 ────────────────────────────────
-  // 상단 "전체 읽음" 버튼 표시 여부와 배지 카운트에 사용
-  int get _unreadCount => _notifications.where((n) => !n.isRead).length;
+  // 미읽음 개수 — "전체 읽음" 버튼 표시 여부에 사용
+  int get _unreadCount =>
+      _notifications?.where((n) => !n.isRead).length ?? 0;
 
-  // ── 생명주기: 화면 초기화 ─────────────────────────────────
   @override
   void initState() {
     super.initState();
-    DebugToast.show(context, 'CU-22');
-  }
-
-  // ── 알림 단건 읽음 처리 ──────────────────────────────────
-  // 카드 탭 시 호출
-  // TODO: API 연동 시 — PATCH /notifications/:id/read 호출 추가
-  void _markAsRead(String id) {
-    setState(() {
-      _notifications = _notifications.map((n) {
-        return n.id == id ? n.copyWith(isRead: true) : n;
-      }).toList();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      DebugToast.show(context, 'CU-22');
+      _load();
     });
   }
 
-  // ── 전체 읽음 처리 ──────────────────────────────────────
-  // 상단 "전체 읽음" 버튼 탭 시 호출
-  // TODO: API 연동 시 — 각 미읽음 알림에 PATCH /notifications/:id/read 반복 호출
-  void _markAllAsRead() {
+  // ── 알림 목록 조회 ─────────────────────────────────────
+  Future<void> _load() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      if (mounted) setState(() => _isLoading = false);
+      return;
+    }
+
+    final list = await _api.getMyNotifications(accessToken: token);
+    if (!mounted) return;
+    setState(() {
+      _notifications = list;
+      _isLoading = false;
+    });
+  }
+
+  // ── 단건 읽음 처리 ─────────────────────────────────────
+  // 낙관적 업데이트: UI를 먼저 바꾸고 서버 호출 → 실패 시 롤백
+  Future<void> _markAsRead(NotificationDto item) async {
+    if (item.isRead) return; // 이미 읽음
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+
+    // UI 선반영
     setState(() {
       _notifications = _notifications
-          .map((n) => n.copyWith(isRead: true))
+          ?.map((n) => n.id == item.id ? n.copyWith(isRead: true) : n)
           .toList();
     });
+
+    final ok = await _api.markAsRead(
+      accessToken: token,
+      notificationId: item.id,
+    );
+
+    // 실패 시 롤백 (서버 상태가 불일치하지 않도록)
+    if (!ok && mounted) {
+      setState(() {
+        _notifications = _notifications
+            ?.map((n) => n.id == item.id ? n.copyWith(isRead: false) : n)
+            .toList();
+      });
+    }
   }
 
-  // ── UI 구성 ───────────────────────────────────────────────
+  // ── 전체 읽음 처리 ─────────────────────────────────────
+  Future<void> _markAllAsRead() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+
+    // UI 선반영
+    setState(() {
+      _notifications =
+          _notifications?.map((n) => n.copyWith(isRead: true)).toList();
+    });
+
+    final ok = await _api.markAllAsRead(accessToken: token);
+    if (!ok && mounted) {
+      // 실패 시 재조회해서 서버 상태와 동기화
+      _load();
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
 
-      // ── 앱바: 타이틀 + 전체 읽음 버튼 ───────────────────
+      // ── 앱바 ────────────────────────────────────────────
       appBar: AppBar(
         backgroundColor: AppColors.background,
         elevation: 0,
         leading: IconButton(
-          // 뒤로가기: 홈 화면으로 복귀
           icon: const Icon(Icons.arrow_back_ios_rounded,
               color: AppColors.textPrimary, size: 20),
           onPressed: () => Navigator.of(context).pop(),
@@ -173,7 +133,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
         ),
         centerTitle: false,
         actions: [
-          // "전체 읽음" 버튼: 읽지 않은 알림이 있을 때만 활성화
+          // 미읽음 있을 때만 "전체 읽음" 노출
           if (_unreadCount > 0)
             TextButton(
               onPressed: _markAllAsRead,
@@ -188,42 +148,42 @@ class _NotificationScreenState extends State<NotificationScreen> {
           const SizedBox(width: 4),
         ],
         bottom: PreferredSize(
-          // 앱바 아래 얇은 구분선
           preferredSize: const Size.fromHeight(1),
           child: Container(height: 1, color: AppColors.divider),
         ),
       ),
 
-      body: _notifications.isEmpty
-          ? _buildEmptyState()   // 알림 없을 때
-          : _buildNotificationList(), // 알림 있을 때
+      body: _buildBody(),
     );
   }
 
-  // ── 알림 목록 위젯 ────────────────────────────────────────
-  // 각 알림을 카드 형태로 나열
-  Widget _buildNotificationList() {
-    return ListView.separated(
-      padding: EdgeInsets.zero,
-      itemCount: _notifications.length,
-      // 알림 카드 사이 구분선
-      separatorBuilder: (context, index) =>
-          const Divider(height: 1, color: AppColors.divider),
-      itemBuilder: (context, index) {
-        return _buildNotificationCard(_notifications[index]);
-      },
+  Widget _buildBody() {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final items = _notifications ?? const <NotificationDto>[];
+    if (items.isEmpty) return _buildEmptyState();
+
+    return RefreshIndicator(
+      onRefresh: _load,
+      child: ListView.separated(
+        padding: EdgeInsets.zero,
+        itemCount: items.length,
+        separatorBuilder: (_, _) =>
+            const Divider(height: 1, color: AppColors.divider),
+        itemBuilder: (_, i) => _buildNotificationCard(items[i]),
+      ),
     );
   }
 
-  // ── 알림 카드 위젯 ────────────────────────────────────────
-  // 탭하면 읽음 처리됨
-  Widget _buildNotificationCard(NotificationItem item) {
+  // ── 알림 카드 위젯 ────────────────────────────────────
+  Widget _buildNotificationCard(NotificationDto item) {
     final isUnread = !item.isRead;
 
     return InkWell(
-      onTap: () => _markAsRead(item.id),
+      onTap: () => _markAsRead(item),
       child: Container(
-        // 읽지 않은 알림은 연한 주황 배경으로 강조
         color: isUnread
             ? Theme.of(context).colorScheme.primary.withAlpha(12)
             : AppColors.background,
@@ -234,18 +194,16 @@ class _NotificationScreenState extends State<NotificationScreen> {
         child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-
-            // ── 알림 타입 아이콘 ────────────────────────
-            _buildTypeIcon(item.type, isUnread),
+            // 타입 아이콘
+            _buildTypeIcon(item.type),
 
             const SizedBox(width: AppSpacing.md),
 
-            // ── 알림 내용 텍스트 ────────────────────────
+            // 본문
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
-                  // 제목 + 시간 한 줄
                   Row(
                     children: [
                       Expanded(
@@ -253,26 +211,22 @@ class _NotificationScreenState extends State<NotificationScreen> {
                           item.title,
                           style: AppTextStyles.bodyMedium.copyWith(
                             fontWeight: isUnread
-                                ? FontWeight.w600  // 미읽음: 굵게
-                                : FontWeight.w400, // 읽음: 보통
+                                ? FontWeight.w600
+                                : FontWeight.w400,
                             color: AppColors.textPrimary,
                           ),
                         ),
                       ),
                       const SizedBox(width: AppSpacing.sm),
-                      // 시간 레이블 (서버에서 내려온 "방금 전", "20분 전" 등)
                       Text(
-                        item.createdAtLabel,
+                        _formatRelativeTime(item.createdAt),
                         style: AppTextStyles.bodySmall.copyWith(
                           color: AppColors.textSecondary,
                         ),
                       ),
                     ],
                   ),
-
                   const SizedBox(height: 4),
-
-                  // 알림 메시지
                   Text(
                     item.message,
                     style: AppTextStyles.bodySmall.copyWith(
@@ -284,7 +238,7 @@ class _NotificationScreenState extends State<NotificationScreen> {
               ),
             ),
 
-            // ── 읽지 않음 파란 점 배지 ──────────────────
+            // 미읽음 점
             if (isUnread) ...[
               const SizedBox(width: AppSpacing.sm),
               Container(
@@ -303,37 +257,13 @@ class _NotificationScreenState extends State<NotificationScreen> {
     );
   }
 
-  // ── 알림 타입 아이콘 위젯 ─────────────────────────────────
-  // 타입에 따라 아이콘과 배경색이 달라짐
-  Widget _buildTypeIcon(NotificationType type, bool isUnread) {
-    // 타입별 아이콘 및 색상 정의
-    final IconData icon;
-    final Color color;
-
-    switch (type) {
-      case NotificationType.orderReceived:
-        // 주문 접수: 영수증 아이콘, 초록색
-        icon = Icons.receipt_long_rounded;
-        color = const Color(0xFF4CAF50);
-      case NotificationType.orderAccepted:
-        // 주문 수락: 체크 아이콘, 파란색
-        icon = Icons.check_circle_outline_rounded;
-        color = const Color(0xFF2196F3);
-      case NotificationType.orderDone:
-        // 조리 완료: 식기 아이콘, 주황색 (앱 primary)
-        icon = Icons.restaurant_rounded;
-        color = Theme.of(context).colorScheme.primary;
-      case NotificationType.voteResult:
-        // 투표 결과: 트로피 아이콘, 황금색
-        icon = Icons.emoji_events_rounded;
-        color = const Color(0xFFFFC107);
-    }
-
+  // ── 타입별 아이콘 + 색 배지 ──────────────────────────
+  Widget _buildTypeIcon(String type) {
+    final (icon, color) = _typeIconAndColor(type);
     return Container(
       width: 44,
       height: 44,
       decoration: BoxDecoration(
-        // 아이콘 배경: 해당 색의 연한 버전
         color: color.withAlpha(25),
         borderRadius: BorderRadius.circular(AppRadius.card),
       ),
@@ -341,8 +271,46 @@ class _NotificationScreenState extends State<NotificationScreen> {
     );
   }
 
-  // ── 빈 상태 위젯 ─────────────────────────────────────────
-  // 알림이 하나도 없을 때 표시
+  (IconData, Color) _typeIconAndColor(String type) {
+    switch (type) {
+      case 'ORDER_RECEIVED':
+        return (Icons.receipt_long_rounded, const Color(0xFF4CAF50));
+      case 'ORDER_ACCEPTED':
+        return (Icons.check_circle_outline_rounded, const Color(0xFF2196F3));
+      case 'ORDER_DONE':
+        return (
+          Icons.restaurant_rounded,
+          Theme.of(context).colorScheme.primary
+        );
+      case 'VOTE_RESULT':
+        return (Icons.emoji_events_rounded, const Color(0xFFFFC107));
+      default:
+        return (Icons.notifications_rounded, AppColors.textSecondary);
+    }
+  }
+
+  // ── createdAt(ISO 8601) → "방금 전", "20분 전" 등 ────
+  // 서버가 raw timestamp만 주므로 클라이언트에서 상대 시간 계산.
+  String _formatRelativeTime(String iso) {
+    final dt = DateTime.tryParse(iso);
+    if (dt == null) return '';
+
+    final diff = DateTime.now().difference(dt);
+
+    if (diff.inMinutes < 1) return '방금 전';
+    if (diff.inMinutes < 60) return '${diff.inMinutes}분 전';
+    if (diff.inHours < 24) return '${diff.inHours}시간 전';
+    if (diff.inDays < 7) return '${diff.inDays}일 전';
+
+    // 일주일 이상: YYYY-MM-DD
+    final local = dt.toLocal();
+    final y = local.year.toString().padLeft(4, '0');
+    final m = local.month.toString().padLeft(2, '0');
+    final d = local.day.toString().padLeft(2, '0');
+    return '$y-$m-$d';
+  }
+
+  // ── 빈 상태 위젯 ──────────────────────────────────────
   Widget _buildEmptyState() {
     return Center(
       child: Column(
