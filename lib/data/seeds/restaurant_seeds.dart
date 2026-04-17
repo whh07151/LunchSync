@@ -39,7 +39,7 @@ class RestaurantSeed {
 /// 식당 시드 데이터 목록
 const List<RestaurantSeed> restaurantSeeds = [
   RestaurantSeed(
-    id: 'rest_001',
+    id: 'bbbbbbbb-0000-4000-8000-000000000001',
     name: '한솥도시락',
     category: '한식',
     priceRange: '4,500~7,000원',
@@ -52,7 +52,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '여럿이 앉아서 먹기엔 좌석이 부족할 수 있음',
   ),
   RestaurantSeed(
-    id: 'rest_002',
+    id: 'bbbbbbbb-0000-4000-8000-000000000002',
     name: '김밥천국',
     category: '분식',
     priceRange: '3,500~6,500원',
@@ -65,7 +65,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '점심 피크 시간에는 대기가 길 수 있음',
   ),
   RestaurantSeed(
-    id: 'rest_003',
+    id: 'bbbbbbbb-0000-4000-8000-000000000003',
     name: '스시로',
     category: '일식',
     priceRange: '12,000~20,000원',
@@ -78,7 +78,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '예산이 빠듯하거나 매운 음식을 원할 때',
   ),
   RestaurantSeed(
-    id: 'rest_004',
+    id: 'bbbbbbbb-0000-4000-8000-000000000004',
     name: '맘스터치',
     category: '양식',
     priceRange: '5,000~8,500원',
@@ -91,7 +91,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '한식이나 건강식을 원하는 분에게는 비추',
   ),
   RestaurantSeed(
-    id: 'rest_005',
+    id: 'bbbbbbbb-0000-4000-8000-000000000005',
     name: '순남시래기',
     category: '한식',
     priceRange: '8,000~11,000원',
@@ -104,7 +104,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '자극적인 맛을 원하거나 빠른 식사를 원할 때',
   ),
   RestaurantSeed(
-    id: 'rest_006',
+    id: 'bbbbbbbb-0000-4000-8000-000000000006',
     name: '홍콩반점',
     category: '중식',
     priceRange: '6,000~9,000원',
@@ -117,7 +117,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '기름진 음식을 피하고 싶을 때',
   ),
   RestaurantSeed(
-    id: 'rest_007',
+    id: 'bbbbbbbb-0000-4000-8000-000000000007',
     name: '서브웨이',
     category: '양식',
     priceRange: '6,500~9,500원',
@@ -130,7 +130,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '든든하게 배부르게 먹고 싶은 분에게는 부족할 수 있음',
   ),
   RestaurantSeed(
-    id: 'rest_008',
+    id: 'bbbbbbbb-0000-4000-8000-000000000008',
     name: '이디야커피',
     category: '카페',
     priceRange: '3,000~5,500원',
@@ -143,7 +143,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '식사 대용으로는 부족함',
   ),
   RestaurantSeed(
-    id: 'rest_009',
+    id: 'bbbbbbbb-0000-4000-8000-000000000009',
     name: '봉추찜닭',
     category: '한식',
     priceRange: '10,000~15,000원',
@@ -156,7 +156,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '혼밥하기엔 양이 많고, 매운 음식 못 드시는 분은 주의',
   ),
   RestaurantSeed(
-    id: 'rest_010',
+    id: 'bbbbbbbb-0000-4000-8000-000000000010',
     name: '역전우동',
     category: '일식',
     priceRange: '5,500~8,000원',
@@ -169,7 +169,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '밥 종류를 원하거나 매운맛을 원할 때',
   ),
   RestaurantSeed(
-    id: 'rest_011',
+    id: 'bbbbbbbb-0000-4000-8000-000000000011',
     name: '백소정',
     category: '일식',
     priceRange: '9,000~13,000원',
@@ -182,7 +182,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '느끼한 음식을 피하고 싶을 때',
   ),
   RestaurantSeed(
-    id: 'rest_012',
+    id: 'bbbbbbbb-0000-4000-8000-000000000012',
     name: '본죽',
     category: '한식',
     priceRange: '7,000~10,000원',
@@ -197,7 +197,7 @@ const List<RestaurantSeed> restaurantSeeds = [
 
   // ── 2주차 추가 식당 (rest_013 ~ rest_018) ────────────────
   RestaurantSeed(
-    id: 'rest_013',
+    id: 'bbbbbbbb-0000-4000-8000-000000000013',
     name: '교촌치킨',
     category: '양식',
     priceRange: '9,000~18,000원',
@@ -210,7 +210,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '기름진 음식을 피하거나 혼밥을 원할 때',
   ),
   RestaurantSeed(
-    id: 'rest_014',
+    id: 'bbbbbbbb-0000-4000-8000-000000000014',
     name: '하남돼지집',
     category: '한식',
     priceRange: '12,000~16,000원',
@@ -223,7 +223,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '혼밥이 어렵고, 가볍게 먹고 싶은 분에게는 과할 수 있음',
   ),
   RestaurantSeed(
-    id: 'rest_015',
+    id: 'bbbbbbbb-0000-4000-8000-000000000015',
     name: '쌈밥집',
     category: '한식',
     priceRange: '8,000~10,000원',
@@ -236,7 +236,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '자극적인 맛이나 면 요리를 원할 때',
   ),
   RestaurantSeed(
-    id: 'rest_016',
+    id: 'bbbbbbbb-0000-4000-8000-000000000016',
     name: '신전떡볶이',
     category: '분���',
     priceRange: '4,000~7,000원',
@@ -249,7 +249,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '매운 음식을 못 드시거나 건강식을 찾는 분',
   ),
   RestaurantSeed(
-    id: 'rest_017',
+    id: 'bbbbbbbb-0000-4000-8000-000000000017',
     name: '아웃백 스테이크하우스',
     category: '양���',
     priceRange: '15,000~30,000원',
@@ -262,7 +262,7 @@ const List<RestaurantSeed> restaurantSeeds = [
     avoidFor: '예산이 빠듯하거나 빠른 식사를 원할 때',
   ),
   RestaurantSeed(
-    id: 'rest_018',
+    id: 'bbbbbbbb-0000-4000-8000-000000000018',
     name: 'CoCo 이찌방야',
     category: '일식',
     priceRange: '8,000~11,000원',

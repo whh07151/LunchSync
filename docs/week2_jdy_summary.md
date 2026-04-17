@@ -85,11 +85,75 @@
 
 ---
 
+## 추가 작업: 식당��� 메뉴 분리 표시
+
+### 5. `lib/features/menu/menu_screen.dart` (기존 화면 수정)
+- **목적:** 홈 화면에서 어떤 식당을 눌러도 동일한 mock 메뉴 12개가 나���던 문제 해결
+- **원인:** `MenuScreen`이 `restaurantName`만 ��고, ��부에 하드코딩된 `_mockMenuItems`를 항상 표시
+- **수정 내용:**
+  - `restaurant_seeds.dart`, `menu_seeds.dart` import 추가
+  - `_menuItems` getter 추가: `restaurantName`으로 `restaurantSeeds`에서 식당 ID를 찾고, `menuSeeds`에서 해당 식당 메뉴만 필터링
+  - `_mapSeedCategory()` 함수 추가: MenuSeed의 카테고리 문자열('밥류','면류' 등)을 MenuCategory enum으로 변환
+  - `_filteredMenuItems`가 `_menuItems`를 참조하도록 변경
+  - 앱바 메뉴 개수 표시�� 동적으로 변경
+  - seed에 없는 식당은 기존 `_mockMenuItems` 12개를 fallback으로 표시
+- **기존 코드 영향:** 기존 `_mockMenuItems`, 주문 흐름(`OrderReviewScreen` 연결), `cartProvider` 연동 등은 변경 없음
+- **주의 (해결됨):** 프론트 seed ID와 DB UUID를 일치시켜 주문 흐름도 정상 동작하도록 수정 완료
+
+---
+
+## 추가 작업: 프론트↔DB UUID 통일 + 홈 식당 확장 + DB 시드
+
+### 6. 프론트 seed ID를 UUID로 통일
+- **restaurant_seeds.dart:** `rest_001` ~ `rest_018` → `bbbbbbbb-0000-4000-8000-000000000001` ~ `000000000018`
+- **menu_seeds.dart:** `menu_NNN_MM` → `cccccccc-0NNN-4000-8000-0000000000MM`
+- **목적:** 프론트에서 보여주는 메뉴 ID와 DB의 menu_items ID가 일치해야 주문(POST /orders)이 동작
+
+### 7. `lib/features/home/home_screen.dart` (기존 화면 수정)
+- **목적:** 홈 화면 AI 추천 식당을 3개 → 5개로 확장 (옆으로 스크롤)
+- `_mockRestaurants`에 홍콩반점, 백소정 추가
+- 기존 3개 식당의 카테고리·거리·가격 표시를 seed 데이터 기준으로 보정
+
+### 8. `backend/scripts/seed-restaurants.ts` (신규 DB 시드 스크립트)
+- **목적:** Supabase DB에 식당 18곳 + 메뉴 54건 삽입
+- 프론트 seed와 동일한 UUID 규칙 사용
+- `upsert` 방식이라 여러 번 실행해도 안전
+- 실행 방법: `cd backend && npx ts-node scripts/seed-restaurants.ts`
+- **실행 완료:** 2026-04-18 Supabase DB에 정상 삽입 확인
+
+### UUID 규칙
+```
+식당: bbbbbbbb-0000-4000-8000-000000000NNN  (NNN = 001~018)
+메뉴: cccccccc-0NNN-4000-8000-0000000000MM  (NNN = 식당번호, MM = 메뉴번호)
+```
+
+---
+
+## 팀원에게 전달 필요한 수정 사항
+
+### 메뉴 카테고리 탭 문제 — 김지효 담당
+
+**현상:** 어떤 식당을 들어가든 카테고리 탭이 항상 `전체/추천/밥류/면류/분식/음료` 6개로 고정 표시됨. 맘스터치(양식), 아웃백(양식), 이디야(디저트) 등은 해당 카테고리가 없어서 '밥류'나 '음료'에 억지로 들어가는 상태.
+
+**원인:** `lib/models/menu_item.dart`의 `MenuCategory` enum에 `western(양식)`, `dessert(디저트)` 값이 없음.
+
+**수정 필요 파일:**
+1. `lib/models/menu_item.dart` — `MenuCategory` enum에 `western('양식')`, `dessert('디저트')` 추가
+2. `lib/features/menu/menu_screen.dart` — 해당 식당에 실제로 있는 카테고리만 탭으로 표시하도록 변경 (선택사항)
+
+**수정 규모:** 10~20줄 수정, 간단한 작업
+
+**장다연 쪽 임시 처리:** `menu_screen.dart`의 `_mapSeedCategory()`에서 `'양식' → rice`, `'디저트' → drink`로 매핑 중. 위 수정이 완료되면 이 매핑도 정확하게 변경 필요.
+
+---
+
 ## 기존 구현 파일 수정 여부
 
 | 대상 | 수정 여부 |
 |---|---|
-| lib/features/* (화면) | ❌ 수정 안 함 |
+| lib/features/menu/menu_screen.dart | ✅ 식당별 메뉴 분리 표시 (seed 연결) |
+| lib/features/home/home_screen.dart | ✅ AI 추천 식당 3개→5개 확장 |
+| lib/features/* (그 외 화면) | ❌ 수정 안 함 |
 | lib/providers/* | ❌ 수정 안 함 |
 | lib/services/* | ❌ 수정 안 함 |
 | lib/models/* | ❌ 수정 안 함 |
@@ -102,19 +166,22 @@
 ## 파일 목록 전체
 
 ```
-수정 (4):
-  lib/data/seeds/restaurant_seeds.dart
-  lib/data/seeds/menu_seeds.dart
+수정 (6):
+  lib/data/seeds/restaurant_seeds.dart   ← ID를 UUID로 변경
+  lib/data/seeds/menu_seeds.dart         ← ID를 UUID로 변경
   lib/core/utils/normalizer.dart
   lib/core/constants/ui_texts.dart
+  lib/features/menu/menu_screen.dart     ← 식당별 메뉴 분리
+  lib/features/home/home_screen.dart     ← 추천 식당 5개로 확장
 
-신규 (6):
+신규 (7):
   lib/core/constants/condition_tag_map.dart
   lib/core/constants/home_recommendation_config.dart
   lib/core/constants/menu_display_config.dart
   lib/core/constants/recommendation_texts.dart
   lib/core/constants/recommendation_reason_categories.dart
   lib/core/constants/session_restaurant_config.dart
+  backend/scripts/seed-restaurants.ts     ← DB 시드 스크립트
 
 문서 (1):
   docs/week2_jdy_summary.md

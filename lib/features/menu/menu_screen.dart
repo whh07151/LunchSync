@@ -6,6 +6,8 @@ import '../../core/debug/debug_toast.dart';
 import '../../models/menu_item.dart';
 import '../../providers/cart_provider.dart';
 import '../payment/order_review_screen.dart';
+import '../../data/seeds/restaurant_seeds.dart';
+import '../../data/seeds/menu_seeds.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-16 메뉴 목록 / 장바구니 화면
@@ -194,11 +196,66 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     ),
   ];
 
+  // ── seed 데이터에서 식당 이름으로 메뉴 목록 생성 ─────────
+  // restaurantName과 일치하는 식당의 메뉴를 menu_seeds에서 가져옴
+  // 매칭되는 식당이 없으면 기존 _mockMenuItems(테스트 한식집) 사용
+  List<MenuItem> get _menuItems {
+    // restaurant_seeds에서 이름으로 식당 찾기
+    final matchingRestaurant = restaurantSeeds.where(
+      (r) => r.name == widget.restaurantName,
+    );
+
+    if (matchingRestaurant.isEmpty) return _mockMenuItems;
+
+    final restaurantId = matchingRestaurant.first.id;
+
+    // menu_seeds에서 해당 식당 메뉴만 필터링
+    final seedMenus = menuSeeds.where(
+      (m) => m.restaurantId == restaurantId,
+    ).toList();
+
+    if (seedMenus.isEmpty) return _mockMenuItems;
+
+    // MenuSeed → MenuItem 변환
+    return seedMenus.map((seed) {
+      return MenuItem(
+        id: seed.id,
+        restaurantId: seed.restaurantId,
+        name: seed.name,
+        description: seed.description,
+        price: seed.price,
+        category: _mapSeedCategory(seed.category),
+        isSoldOut: seed.isSoldOut,
+      );
+    }).toList();
+  }
+
+  // seed의 카테고리 문자열 → MenuCategory enum 변환
+  static MenuCategory _mapSeedCategory(String category) {
+    switch (category) {
+      case '밥류':
+        return MenuCategory.rice;
+      case '면류':
+        return MenuCategory.noodle;
+      case '분식':
+        return MenuCategory.snack;
+      case '음료':
+        return MenuCategory.drink;
+      case '양식':
+        return MenuCategory.rice;
+      case '디저트':
+        return MenuCategory.drink;
+      default:
+        return MenuCategory.rice;
+    }
+  }
+
   // ── 현재 카테고리에 맞게 필터링된 메뉴 목록 ─────────────
   // getter: 탭 선택 때마다 재계산
   List<MenuItem> get _filteredMenuItems {
-    if (_selectedCategory == MenuCategory.all) return _mockMenuItems;
-    return _mockMenuItems
+    final items = _menuItems;
+    if (_selectedCategory == MenuCategory.all) return items;
+    return items
         .where((item) => item.category == _selectedCategory)
         .toList();
   }
@@ -288,7 +345,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
           ),
           // 메뉴 개수 안내
           Text(
-            '메뉴 ${_mockMenuItems.length}개',
+            '메뉴 ${_menuItems.length}개',
             style: AppTextStyles.caption.copyWith(
               color: AppColors.textSecondary,
             ),
