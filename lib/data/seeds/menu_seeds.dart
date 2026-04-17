@@ -300,4 +300,210 @@ const List<MenuSeed> menuSeeds = [
     price: 7500,
     category: '밥류',
   ),
+
+  // ── rest_003: 스시로 (기존 2개 → 3개 보완) ──────────────
+  MenuSeed(
+    id: 'menu_003_03',
+    restaurantId: 'rest_003',
+    name: '새우튀김우동',
+    description: '바삭한 새우튀김과 진한 다시 육수 우동',
+    price: 12000,
+    category: '면류',
+  ),
+
+  // ── rest_005: 순남시래기 (기존 2개 → 3개 보완) ───────────
+  MenuSeed(
+    id: 'menu_005_03',
+    restaurantId: 'rest_005',
+    name: '청국장찌개',
+    description: '구수한 향이 진한 전통 청국장에 두부와 야채를 듬뿍',
+    price: 9000,
+    category: '밥류',
+  ),
+
+  // ── rest_007: 서브웨이 (기존 2개 → 3개 보완) ─────────────
+  MenuSeed(
+    id: 'menu_007_03',
+    restaurantId: 'rest_007',
+    name: '로티세리 치킨',
+    description: '부드러운 통닭 가슴살이 들어간 담백한 샌드위치',
+    price: 7900,
+    category: '양식',
+  ),
+
+  // ── rest_009: 봉추찜닭 (기존 2개 → 3개 보완) ─────────────
+  MenuSeed(
+    id: 'menu_009_03',
+    restaurantId: 'rest_009',
+    name: '간장찜닭',
+    description: '안 매운 간장 베이스 찜닭 (2~3인분)',
+    price: 22000,
+    category: '밥류',
+  ),
+
+  // ── rest_010: 역전우동 (기존 2개 → 3개 보완) ─────────────
+  MenuSeed(
+    id: 'menu_010_03',
+    restaurantId: 'rest_010',
+    name: '카레우동',
+    description: '진한 일본식 카레 소스에 쫄깃한 우동 면',
+    price: 7500,
+    category: '면류',
+  ),
+
+  // ── rest_013: 교촌치킨 ────────────────────────────────────
+  MenuSeed(
+    id: 'menu_013_01',
+    restaurantId: 'rest_013',
+    name: '교촌오리지널',
+    description: '바삭한 튀김옷에 달콤한 간장 소스를 입힌 시그니처 치킨',
+    price: 18000,
+    category: '밥류',
+  ),
+  MenuSeed(
+    id: 'menu_013_02',
+    restaurantId: 'rest_013',
+    name: '레드콤보',
+    description: '매콤한 레드 소스의 순살 치킨 + 감자 세트',
+    price: 16000,
+    category: '밥류',
+  ),
+  MenuSeed(
+    id: 'menu_013_03',
+    restaurantId: 'rest_013',
+    name: '허니콤보',
+    description: '달콤한 허니 소스를 입힌 순살 치킨',
+    price: 17000,
+    category: '밥류',
+  ),
+
+  // ── rest_014: 하남돼지집 ──────────────────────────────────
+  MenuSeed(
+    id: 'menu_014_01',
+    restaurantId: 'rest_014',
+    name: '삼겹살 (1인분)',
+    description: '두툼하게 썬 국내산 삼겹살을 숯불에 구워 먹는 메뉴',
+    price: 14000,
+    category: '밥류',
+  ),
+  MenuSeed(
+    id: 'menu_014_02',
+    restaurantId: 'rest_014',
+    name: '목살 (1인분)',
+    description: '부드러운 결이 살아있는 목살구이',
+    price: 13000,
+    category: '밥류',
+  ),
+  MenuSeed(
+    id: 'menu_014_03',
+    restaurantId: 'rest_014',
+    name: '된장찌개',
+    description: '고기와 함께 먹기 좋은 구수한 된장찌개',
+    price: 3000,
+    category: '밥류',
+  ),
+
+  // ── rest_015: 쌈밥집 ──────────────────────────────────────
+  MenuSeed(
+    id: 'menu_015_01',
+    restaurantId: 'rest_015',
+    name: '쌈밥정식',
+    description: '신선한 쌈 채소 10종과 쌈장, 밥, 국이 함께 나오는 정식',
+    price: 9000,
+    category: '밥류',
+  ),
+  MenuSeed(
+    id: 'menu_015_02',
+    restaurantId: 'rest_015',
+    name: '제육쌈밥',
+    description: '매콤한 제육볶음을 쌈에 싸서 먹는 보양 한 끼',
+    price: 10000,
+    category: '밥류',
+  ),
+  MenuSeed(
+    id: 'menu_015_03',
+    restaurantId: 'rest_015',
+    name: '두부된장쌈밥',
+    description: '두부와 된장을 곁들인 담백한 채소 쌈밥',
+    price: 8500,
+    category: '밥류',
+  ),
+
+  // ── rest_016: 신전떡볶이 ──────────────────────────────────
+  MenuSeed(
+    id: 'menu_016_01',
+    restaurantId: 'rest_016',
+    name: '신전떡볶이',
+    description: '즉석에서 볶아내는 매콤달콤 떡볶이',
+    price: 4500,
+    category: '분식',
+  ),
+  MenuSeed(
+    id: 'menu_016_02',
+    restaurantId: 'rest_016',
+    name: '순대',
+    description: '당면이 가득 찬 쫄깃한 찹쌀순대',
+    price: 4000,
+    category: '분식',
+  ),
+  MenuSeed(
+    id: 'menu_016_03',
+    restaurantId: 'rest_016',
+    name: '모듬튀김',
+    description: '고구마·김말이·오징어 등 바삭한 모듬튀김',
+    price: 5000,
+    category: '분식',
+  ),
+
+  // ── rest_017: 아웃백 스테이크하우스 ───────────────────────
+  MenuSeed(
+    id: 'menu_017_01',
+    restaurantId: 'rest_017',
+    name: '토마호크 스테이크',
+    description: '육즙 가득한 대형 토마호크 스테이크 (2인 이상)',
+    price: 49000,
+    category: '양식',
+  ),
+  MenuSeed(
+    id: 'menu_017_02',
+    restaurantId: 'rest_017',
+    name: '투움바 파스타',
+    description: '크리미한 투움바 소스에 새우와 베이컨을 올린 파스타',
+    price: 18000,
+    category: '면류',
+  ),
+  MenuSeed(
+    id: 'menu_017_03',
+    restaurantId: 'rest_017',
+    name: '런치 스테이크 세트',
+    description: '부드러운 안심 스테이크에 수프·샐러드가 포함된 런치 세트',
+    price: 22000,
+    category: '양식',
+  ),
+
+  // ── rest_018: CoCo 이찌방야 ──────────────────────────────
+  MenuSeed(
+    id: 'menu_018_01',
+    restaurantId: 'rest_018',
+    name: '비프카레',
+    description: '부드러운 소고기 덩어리가 들어간 진한 일본식 카레',
+    price: 9500,
+    category: '밥류',
+  ),
+  MenuSeed(
+    id: 'menu_018_02',
+    restaurantId: 'rest_018',
+    name: '치킨카츠카레',
+    description: '바삭한 치킨카츠를 올린 카레라이스',
+    price: 10500,
+    category: '밥류',
+  ),
+  MenuSeed(
+    id: 'menu_018_03',
+    restaurantId: 'rest_018',
+    name: '야채카레',
+    description: '감자·당근·브로콜리 등 야채가 듬뿍 들어간 순한 카레',
+    price: 8500,
+    category: '밥류',
+  ),
 ];
