@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
@@ -149,6 +150,10 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
     setState(() => _isLoading = true);
 
     // ── 3. 세션 생성 API 호출 ─────────────────────────
+    // 호스트의 현재 GPS 좌표를 세션에 함께 저장 — 추천 엔진이 이 좌표를
+    // 기준으로 반경 내 식당만 후보로 추린다. 위치 실패 시 null로 전달하면
+    // 백엔드가 반경 필터를 생략하고 DB 전체 식당을 대상으로 폴백.
+    final hostPos = await _geoService.getCurrentPosition();
     final session = await _sessionsApi.createSession(
       accessToken:   token,
       name:          name,
@@ -157,6 +162,8 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
       budget:        budget,
       returnMinutes: returnMinutes,
       memo:          memo.isEmpty ? null : memo,
+      lat:           hostPos?.latitude,
+      lng:           hostPos?.longitude,
     );
 
     if (!mounted) return;
@@ -185,7 +192,12 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
     // 호스트의 GPS를 기준으로 반경 내 실제 식당을 DB에 채운다.
     // 추천 엔진은 이 데이터를 기반으로 점수화.
     // 결과를 기다리지 않고 fire-and-forget — 로비 진입 후 백그라운드 완료.
-    _triggerCrawlInBackground(token: token, radiusMeters: radius);
+    // 위의 세션 생성 단계에서 이미 얻어둔 hostPos를 재사용해 GPS 중복 조회 방지.
+    _triggerCrawlInBackground(
+      token: token,
+      radiusMeters: radius,
+      hostPos: hostPos,
+    );
 
     // ── 6. 세션 생성 완료 → sessionProvider 초기화 후 로비 진입 ──
     // selectedMembers는 이미 역할을 다했으므로 초기화
@@ -205,13 +217,16 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
   // ── 주변 식당 크롤링을 백그라운드로 실행 ──────────────
   // GPS 권한 거부 / 에뮬레이터 미설정 시 조용히 스킵.
   // 성공하면 주변 실제 식당 데이터가 DB에 채워져 추천 엔진에서 활용됨.
+  // hostPos: 세션 생성 시 이미 얻어둔 좌표를 재사용하기 위한 파라미터.
+  //          null이면 여기서 한 번 더 조회 시도.
   void _triggerCrawlInBackground({
     required String token,
     int? radiusMeters,
+    Position? hostPos,
   }) {
     // async 함수를 await 없이 호출 → fire-and-forget
     () async {
-      final pos = await _geoService.getCurrentPosition();
+      final pos = hostPos ?? await _geoService.getCurrentPosition();
       if (pos == null) return; // GPS 실패 — 기존 식당으로 폴백
       await _crawlApi.crawlRestaurants(
         accessToken: token,

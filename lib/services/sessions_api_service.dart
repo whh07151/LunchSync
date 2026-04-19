@@ -35,6 +35,8 @@ class SessionsApiService {
     int? budget,        // 1인당 예산 상한 (원)
     int? returnMinutes, // 복귀 여유 시간 (분)
     String? memo,       // 자유 메모
+    double? lat,        // 세션 기준 위도 (추천 반경 필터용)
+    double? lng,        // 세션 기준 경도 (추천 반경 필터용)
   }) async {
     try {
       final body = <String, dynamic>{'name': name};
@@ -43,6 +45,9 @@ class SessionsApiService {
       if (budget != null)         body['budget']         = budget;
       if (returnMinutes != null)  body['returnMinutes']  = returnMinutes;
       if (memo != null && memo.isNotEmpty) body['memo'] = memo;
+      // 위치 좌표 — 둘 다 있어야 의미 있음 (한쪽만 들어와도 백엔드는 무시)
+      if (lat != null)            body['lat']            = lat;
+      if (lng != null)            body['lng']            = lng;
 
       final response = await http.post(
         Uri.parse('${AppConfig.backendBaseUrl}/sessions'),

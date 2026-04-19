@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../session/member_select_screen.dart';
@@ -16,6 +19,8 @@ import '../../providers/user_provider.dart';
 import '../../services/users_api_service.dart';
 import '../../services/sessions_api_service.dart';
 import '../../services/restaurants_api_service.dart';
+import '../../services/geolocation_service.dart';
+import '../../services/crawl_api_service.dart';
 import '../../models/session.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -62,6 +67,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   bool _isSessionsLoading = true;
   bool _isRestaurantsLoading = true;
 
+  // ── 자동 크롤링 관련 상태 ─────────────────────────────
+  // 앱 진입 + 이동 감지 기반으로 카카오 로컬 API에서 주변 식당을 DB에 동기화.
+  // 쿨다운으로 API 쿼터 과다 소모를 방지한다(카카오는 1일 10k 호출 제한).
+  StreamSubscription<Position>? _positionSub;
+  DateTime? _lastCrawlAt;       // 마지막 크롤링 성공 시각 — 쿨다운 계산용
+  static const _kCrawlCooldown   = Duration(minutes: 5);   // 동일 위치라도 5분 대기
+  static const _kCrawlRadiusM    = 1000;                   // 크롤 반경(미터)
+  static const _kCrawlMoveFilter = 500;                    // 재크롤 기준 이동 거리(미터)
+
   // ── 생명주기: 화면이 처음 만들어질 때 ──────────────────
   @override
   void initState() {
@@ -75,7 +89,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _loadUserProfile();
       _loadTodaySessions();
       _loadRecommendedRestaurants();
+      // 진입 즉시 1회 자동 크롤링 + 이동 스트림 구독
+      _startAutoCrawl();
     });
+  }
+
+  @override
+  void dispose() {
+    // 홈 화면 이탈 시 스트림 구독 해제 — 배터리/권한 UI 정리
+    _positionSub?.cancel();
+    super.dispose();
   }
 
   // ── 멤버 선택 화면(CU-08)으로 이동 ──────────────────────
@@ -133,6 +156,69 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _todaySessions = sessions;
       _isSessionsLoading = false;
     });
+  }
+
+  // ── 자동 크롤링 시작 ────────────────────────────────────
+  // 앱을 켠 시점부터 홈 화면에 머무는 동안 사용자 위치 기준으로
+  // 주변 식당을 DB에 지속적으로 동기화.
+  //
+  // 동작 순서:
+  //   1. 진입 즉시 1회 스냅샷 → 크롤링 트리거
+  //   2. 위치 스트림 구독(500m 이상 이동 시 이벤트) → 쿨다운 통과 시 재크롤링
+  //
+  // 쿨다운:
+  //   - 동일 위치에서 연속 호출 방지 (5분)
+  //   - 카카오 로컬 API는 1일 10k 호출 제한이라 과다 호출 시 쿼터 소진 위험
+  void _startAutoCrawl() {
+    // 1) 진입 시 1회 스냅샷 기반 크롤링
+    () async {
+      final pos = await const GeolocationService().getCurrentPosition();
+      if (pos != null) await _triggerCrawlIfCooled(pos);
+    }();
+
+    // 2) 이동 감지 스트림 구독 — 500m 이상 이동 시에만 이벤트 발행
+    _positionSub = const GeolocationService()
+        .positionStream(distanceFilterMeters: _kCrawlMoveFilter)
+        .listen(
+          (pos) {
+            // async 함수를 await 없이 호출해 스트림 콜백은 즉시 반환
+            _triggerCrawlIfCooled(pos);
+          },
+          onError: (_) {
+            // 스트림 에러는 GeolocationService에서 이미 로깅됨 — UI 무시
+          },
+        );
+  }
+
+  // ── 쿨다운 통과 시에만 크롤링 API 호출 ──────────────────
+  // API 쿼터 보호 장치. 마지막 성공 시각에서 _kCrawlCooldown 이내면 스킵.
+  Future<void> _triggerCrawlIfCooled(Position pos) async {
+    final now = DateTime.now();
+    if (_lastCrawlAt != null &&
+        now.difference(_lastCrawlAt!) < _kCrawlCooldown) {
+      return; // 쿨다운 중
+    }
+
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return; // 로그아웃 상태 — 크롤 권한 없음
+
+    // 요청 완료를 기다리지 않고 먼저 시각을 갱신 — 중복 호출 방지용
+    _lastCrawlAt = now;
+
+    final result = await const CrawlApiService().crawlRestaurants(
+      accessToken: token,
+      lat: pos.latitude,
+      lng: pos.longitude,
+      radius: _kCrawlRadiusM,
+    );
+
+    // 크롤 실패 시 다음 이벤트에 재시도 가능하도록 시각 복구
+    if (result == null) {
+      _lastCrawlAt = null;
+    } else if (mounted) {
+      // 성공 — 새 식당이 DB에 들어왔을 수 있으므로 홈 추천 섹션 재조회
+      _loadRecommendedRestaurants();
+    }
   }
 
   // ── AI 추천 식당 조회 ────────────────────────────────────

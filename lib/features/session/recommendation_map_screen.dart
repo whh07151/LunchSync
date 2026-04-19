@@ -1,5 +1,8 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../core/theme/theme.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../core/widgets/kakao_map/kakao_map_widget.dart';
@@ -42,21 +45,63 @@ class RecommendationMapScreen extends ConsumerStatefulWidget {
 
 class _RecommendationMapScreenState
     extends ConsumerState<RecommendationMapScreen> {
+  // ── 내 위치 상태 ──────────────────────────────────────
+  // 스트림에서 새 좌표가 올 때마다 갱신되어 지도 파란 원이 따라 움직임.
   KakaoMapPin? _myLocationPin;
+
+  // ── 실시간 위치 스트림 구독 핸들 ───────────────────────
+  // 화면 dispose 시 반드시 cancel() — 누락 시 백그라운드에서 GPS가 계속 돌아
+  // 배터리/권한 UI가 이상해질 수 있음.
+  StreamSubscription<Position>? _positionSub;
 
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       DebugToast.show(context, 'CU-15');
-      _loadMyLocation();
+      // 1) 즉시 한 번 스냅샷 조회 — 지도 진입 직후 바로 파란 원을 띄우기 위함
+      //    (스트림 첫 이벤트까지 수 초 걸릴 수 있어 UX 공백 방지)
+      _loadInitialLocation();
+      // 2) 이후 이동 시마다 실시간 갱신
+      _subscribeLocationUpdates();
     });
   }
 
-  // GPS 현재 위치 조회 — 실패해도 지도는 식당 핀 평균 위치에 자동 중심
-  Future<void> _loadMyLocation() async {
+  @override
+  void dispose() {
+    // 스트림 구독 해제 — Flutter 프레임워크가 위젯을 제거할 때 호출됨.
+    _positionSub?.cancel();
+    super.dispose();
+  }
+
+  // ── 초기 1회 스냅샷 ─────────────────────────────────────
+  // 스트림은 이동 감지(distanceFilter)에 의존하므로, 책상 위처럼 움직임이 없으면
+  // 첫 이벤트가 한참 뒤에야 오는 경우가 있음. 진입 직후 한 번 직접 조회해 즉시 표시.
+  Future<void> _loadInitialLocation() async {
     final pos = await const GeolocationService().getCurrentPosition();
     if (!mounted || pos == null) return;
+    _applyPosition(pos);
+  }
+
+  // ── 실시간 위치 스트림 구독 ────────────────────────────
+  // GeolocationService가 권한/서비스 상태를 내부에서 검증하고, 실패 시 빈 스트림을
+  // 돌려주므로 여기서는 onData만 처리하면 됨.
+  void _subscribeLocationUpdates() {
+    _positionSub = const GeolocationService()
+        .positionStream(distanceFilterMeters: 10)
+        .listen(
+          (pos) {
+            if (!mounted) return;
+            _applyPosition(pos);
+          },
+          onError: (_) {
+            // 스트림 에러는 서비스 레이어에서 이미 로깅됨 — UI는 무시
+          },
+        );
+  }
+
+  // ── 좌표 → 내 위치 핀 반영 공통 처리 ──────────────────
+  void _applyPosition(Position pos) {
     setState(() {
       _myLocationPin = KakaoMapPin(
         name: '내 위치',
