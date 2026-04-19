@@ -115,6 +115,8 @@ class RestaurantsApiService {
   }
 
   // ── GET /api/restaurants/:id/menus ────────────────────
+  // 백엔드 응답 구조: data: { categories: [...], menus: [...] }
+  // (배열이 아니라 래퍼 객체라서 data.menus를 꺼내서 매핑)
   Future<List<MenuItemDto>> getMenus({
     required String accessToken,
     required String restaurantId,
@@ -128,7 +130,8 @@ class RestaurantsApiService {
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final list = json['data'] as List<dynamic>;
+        final data = json['data'] as Map<String, dynamic>? ?? const {};
+        final list = data['menus'] as List<dynamic>? ?? const [];
         return list
             .map((e) => MenuItemDto.fromJson(e as Map<String, dynamic>))
             .toList();

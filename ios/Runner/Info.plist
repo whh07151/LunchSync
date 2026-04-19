@@ -60,6 +60,11 @@
 		<string>kakaotalk</string>
 	</array>
 
+	<!-- GPS 위치 권한: 홈 화면 카카오맵에서 "내 위치" 핀 표시용 -->
+	<!-- WhenInUse: 앱 사용 중에만 위치 허용 (Always는 요청하지 않음) -->
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>추천 식당과의 거리를 보여드리기 위해 현재 위치가 필요합니다.</string>
+
 	<!-- CFBundleURLTypes: kakao{앱키}://oauth 형태의 딥링크를 이 앱이 처리 -->
 	<key>CFBundleURLTypes</key>
 	<array>

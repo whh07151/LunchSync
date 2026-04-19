@@ -40,7 +40,7 @@ class AppConfig {
   // BACKEND_HOST 미입력 시 기본값: 192.168.45.105
   static const String _backendHost = String.fromEnvironment(
     'BACKEND_HOST',
-    defaultValue: '0.0.0.0',
+    defaultValue: '10.0.2.2',
   );
 
   // 플랫폼에 따라 자동 분기 (web: localhost, iOS/Android: 로컬 IP)

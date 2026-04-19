@@ -1,0 +1,54 @@
+# ╔══════════════════════════════════════════════════════════════╗
+# ║  deploy-backend.yml                                        ║
+# ║  GitHub Actions 워크플로우 — 백엔드 자동 배포               ║
+# ║  main 또는 temp 브랜치에 backend/ 변경 push 시              ║
+# ║  EC2 서버에 자동으로 배포합니다.                             ║
+# ╚══════════════════════════════════════════════════════════════╝
+
+name: Deploy Backend to EC2
+
+# ── 트리거: main, temp 브랜치에 backend/ 코드 변경 시 ──
+on:
+  push:
+    branches:
+      - main
+      - temp
+    paths:
+      - 'backend/**'
+
+jobs:
+  deploy:
+    name: 백엔드 빌드 & 배포
+    runs-on: ubuntu-latest
+
+    steps:
+      # 1단계: 코드 체크아웃
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      # 2단계: SSH로 EC2 접속 후 배포 실행
+      - name: EC2 배포
+        uses: appleboy/ssh-action@v1
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USERNAME }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          script: |
+            echo "===== 배포 시작 ====="
+
+            # 백엔드 디렉토리로 이동
+            cd /home/ubuntu/LunchSync/backend
+
+            # 최신 코드 pull
+            git -C /home/ubuntu/LunchSync pull origin ${{ github.ref_name }}
+
+            # 의존성 설치 (새 패키지 추가된 경우)
+            npm install --production=false
+
+            # NestJS 빌드
+            npm run build
+
+            # pm2로 서버 재시작
+            pm2 restart lunchsync-backend
+
+            echo "===== 배포 완료 ====="

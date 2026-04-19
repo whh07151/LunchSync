@@ -23,6 +23,8 @@ export interface CreateSessionDto {
   budget?: number;        // 1인당 예산 상한 (단위: 원, 예: 15000)
   returnMinutes?: number; // 복귀 여유 시간 (단위: 분, 예: 30)
   memo?: string;          // 세션 메모 (선택, 자유 입력)
+  lat?: number;           // 세션 기준 위도 (호스트 세션 생성 시점 GPS)
+  lng?: number;           // 세션 기준 경도 (호스트 세션 생성 시점 GPS)
 }
 
 export interface UpdateSessionStatusDto {
@@ -62,11 +64,14 @@ export class SessionsService {
     if (dto.budget != null)  insertData.budget          = dto.budget;
     if (dto.returnMinutes != null) insertData.return_minutes = dto.returnMinutes;
     if (dto.memo)            insertData.memo            = dto.memo;
+    // 세션 기준 좌표 — 추천 엔진이 반경 필터에 사용
+    if (dto.lat != null)     insertData.lat             = dto.lat;
+    if (dto.lng != null)     insertData.lng             = dto.lng;
 
     const { data: session, error } = await this.supabase.client
       .from('sessions')
       .insert(insertData)
-      .select('id, name, status, created_by, scheduled_at, radius, budget, return_minutes, memo, created_at')
+      .select('id, name, status, created_by, scheduled_at, radius, budget, return_minutes, memo, lat, lng, created_at')
       .single();
 
     if (error || !session) {
@@ -94,6 +99,8 @@ export class SessionsService {
       budget: session.budget,
       returnMinutes: session.return_minutes,
       memo: session.memo,
+      lat: session.lat,
+      lng: session.lng,
       memberCount: 1,
       createdBy: creator ? { id: creator.id, name: creator.name } : { id: userId, name: null },
     };
@@ -160,7 +167,7 @@ export class SessionsService {
   async getSessionById(sessionId: string) {
     const { data, error } = await this.supabase.client
       .from('sessions')
-      .select('id, name, status, created_by, winner_restaurant_id, scheduled_at, radius, budget, return_minutes, memo, created_at')
+      .select('id, name, status, created_by, winner_restaurant_id, scheduled_at, radius, budget, return_minutes, memo, lat, lng, created_at')
       .eq('id', sessionId)
       .single();
 
@@ -185,6 +192,8 @@ export class SessionsService {
       budget: data.budget,
       returnMinutes: data.return_minutes,
       memo: data.memo,
+      lat: data.lat,
+      lng: data.lng,
       createdAt: data.created_at,
       createdBy: creator ? { id: creator.id, name: creator.name } : { id: data.created_by, name: null },
     };

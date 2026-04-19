@@ -1,48 +1,45 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:geolocator/geolocator.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../session/member_select_screen.dart';
 import '../session/session_create_screen.dart';
 import '../session/join_session_screen.dart';
-import '../menu/menu_screen.dart';
+import '../session/session_lobby_screen.dart';
+import '../restaurant/restaurant_detail_screen.dart';
+import '../orders/order_list_screen.dart';
 import '../notifications/notification_screen.dart';
 import '../my_info/my_info_screen.dart';
 import '../auth/login_screen.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/users_api_service.dart';
+import '../../services/sessions_api_service.dart';
+import '../../services/restaurants_api_service.dart';
+import '../../services/geolocation_service.dart';
+import '../../services/crawl_api_service.dart';
+import '../../models/session.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-06 홈 대시보드 화면
 //
-// [연결 예정 데이터]
-//   - lib/data/seeds/restaurant_seeds.dart → _mockRestaurants 교체
-//   - lib/core/constants/ui_texts.dart (RecommendTexts) → 추천 근거 문구
-//   - lib/core/constants/ui_texts.dart (DetailTexts) → 식당 정보 레이블
-//   - lib/core/utils/normalizer.dart → 카테고리/가격대 정규화
-//   - lib/models/restaurant.dart → _MockRestaurant 클래스 교체
-//   - lib/models/tag.dart → 태그 기반 필터/추천 표시
-//
-// 와이어프레임 기준 구성 요소:
-//   - 상단 앱바: 앱 로고(왼쪽) + 알림 아이콘(오른쪽)
-//   - 인사말 헤더: 사용자 이름 + 오늘 날짜
-//   - 빠른 실행 CTA 4개:
-//       점심 만들기 / 친구 초대 / 최근 이력 / 알림
-//   - 오늘의 세션 섹션: 현재 진행 중인 점심 세션 카드
-//   - AI 추천 식당 섹션: 조건 기반 추천 식당 카드 3개
+// 구성 (와이어프레임 기준):
+//   - 상단 앱바: 앱 로고 + 알림 아이콘
+//   - 인사말 헤더: 사용자 이름 + 소속
+//   - 빠른 실행 CTA 4개: 점심 만들기 / 코드로 참가 / 최근 이력 / 알림
+//   - 오늘의 세션 섹션: 오늘 참여 중인 세션 카드
+//   - AI 추천 식당 섹션: 식당 카드 가로 스크롤 (지도 없음)
 //   - 하단 탭바 5개: 홈 / 점심세션 / 주문현황 / 내역 / 내정보
 //
-// 데이터 전략:
-//   - 사용자 이름/소속: GET /api/users/me 로 DB에서 직접 조회 → userProvider 갱신
-//   - 세션/추천 식당: 안태환 담당 API 완성 전까지 Mock 유지
-//     → API 완성 후 _mockSession, _mockRestaurants 교체
+// 📌 지도는 홈에 없음. CU-15(지도/리스트 토글) 화면에서만 표시 (와이어프레임 기준).
 //
-// 동작 흐름:
-//   이전 화면(기본 조건 설정, CU-05) → 이 화면 (온보딩 완료)
-//   → initState에서 GET /users/me 호출 → userProvider 최신화
-//   → 하단 탭으로 다른 섹션 이동 가능
-//   → CTA 버튼으로 주요 플로우 바로 진입 가능
+// 연동:
+//   - GET /api/users/me               → userProvider
+//   - GET /api/sessions/today         → _todaySessions
+//   - GET /api/restaurants?limit=10   → _recommendedRestaurants
 // ══════════════════════════════════════════════════════════
 
 // ConsumerStatefulWidget: Riverpod의 userProvider를 읽기 위해 사용
@@ -60,6 +57,25 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   // 기본값: 0 (홈 탭)
   int _currentTabIndex = 0;
 
+  // ── 홈 데이터 상태 (백엔드 API 응답 저장소) ───────────────
+  // 로딩 중에는 null, 조회 완료 후 실제 값으로 채움
+  // Session 리스트 첫 번째 항목을 "오늘의 세션"으로 사용
+  List<Session>? _todaySessions;
+  List<RestaurantDto>? _recommendedRestaurants;
+
+  // 각 섹션 로딩 상태 — UI에서 스켈레톤/스피너 표시용
+  bool _isSessionsLoading = true;
+  bool _isRestaurantsLoading = true;
+
+  // ── 자동 크롤링 관련 상태 ─────────────────────────────
+  // 앱 진입 + 이동 감지 기반으로 카카오 로컬 API에서 주변 식당을 DB에 동기화.
+  // 쿨다운으로 API 쿼터 과다 소모를 방지한다(카카오는 1일 10k 호출 제한).
+  StreamSubscription<Position>? _positionSub;
+  DateTime? _lastCrawlAt;       // 마지막 크롤링 성공 시각 — 쿨다운 계산용
+  static const _kCrawlCooldown   = Duration(minutes: 5);   // 동일 위치라도 5분 대기
+  static const _kCrawlRadiusM    = 1000;                   // 크롤 반경(미터)
+  static const _kCrawlMoveFilter = 500;                    // 재크롤 기준 이동 거리(미터)
+
   // ── 생명주기: 화면이 처음 만들어질 때 ──────────────────
   @override
   void initState() {
@@ -71,7 +87,18 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // 첫 프레임 렌더링 완료 후 실행.
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadUserProfile();
+      _loadTodaySessions();
+      _loadRecommendedRestaurants();
+      // 진입 즉시 1회 자동 크롤링 + 이동 스트림 구독
+      _startAutoCrawl();
     });
+  }
+
+  @override
+  void dispose() {
+    // 홈 화면 이탈 시 스트림 구독 해제 — 배터리/권한 UI 정리
+    _positionSub?.cancel();
+    super.dispose();
   }
 
   // ── 멤버 선택 화면(CU-08)으로 이동 ──────────────────────
@@ -110,55 +137,109 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
   }
 
-  // ── Mock 데이터: 오늘의 세션 ────────────────────────────
-  // TODO: API 연동 시 (안태환) — GET /sessions/today 응답으로 교체
-  // null이면 "오늘 세션 없음" 상태를 표시함
-  static const _mockSession = _MockSession(
-    id: 'session_001',
-    name: '개발팀 점심',
-    status: '멤버 모집 중',       // 세션 상태: 모집 중 / 투표 중 / 주문 완료 등
-    memberCount: 3,              // 현재 참여 인원
-    maxMemberCount: 8,           // 최대 인원
-    scheduledTime: '오후 12:00', // 예정 시간
-  );
+  // ── 오늘의 세션 조회 ────────────────────────────────────
+  // GET /api/sessions/today — 오늘 날짜에 내가 참여하거나 만든 세션 목록
+  // 첫 번째 항목을 홈 화면 "오늘의 세션" 카드로 노출.
+  // 세션이 없으면 null로 두고 "시작하기" 유도 상태를 표시.
+  Future<void> _loadTodaySessions() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      if (mounted) setState(() => _isSessionsLoading = false);
+      return;
+    }
 
-  // ── Mock 데이터: AI 추천 식당 목록 ──────────────────────
-  // TODO: API 연동 시 (안태환) — GET /restaurants/recommend 응답으로 교체
-  // 사용자의 기본 조건(반경/예산/속도)을 기반으로 필터링된 결과를 받게 됨
-  // ── [SEED 연결 포인트] ──────────────────────────────────
-  // → restaurant_seeds.dart의 restaurantSeeds로 교체
-  // → Restaurant 모델 + Tag 모델로 전환
-  // → RecommendTexts에서 추천 근거 문구 가져오기
-  // → normalizeCategory()로 카테고리 표시 통일
-  static const List<_MockRestaurant> _mockRestaurants = [
-    _MockRestaurant(
-      name: '한솥도시락',
-      category: '한식 · 도시락',
-      distance: '도보 3분',
-      priceRange: '6,500원~',
-      rating: 4.2,
-      reviewCount: 128,
-      isOpen: true,
-    ),
-    _MockRestaurant(
-      name: '김밥천국',
-      category: '분식',
-      distance: '도보 5분',
-      priceRange: '4,000원~',
-      rating: 4.0,
-      reviewCount: 256,
-      isOpen: true,
-    ),
-    _MockRestaurant(
-      name: '맘스터치',
-      category: '패스트푸드',
-      distance: '도보 7분',
-      priceRange: '7,500원~',
-      rating: 4.5,
-      reviewCount: 89,
-      isOpen: true,
-    ),
-  ];
+    final sessions = await const SessionsApiService()
+        .getTodaySessions(accessToken: token);
+
+    if (!mounted) return;
+    setState(() {
+      _todaySessions = sessions;
+      _isSessionsLoading = false;
+    });
+  }
+
+  // ── 자동 크롤링 시작 ────────────────────────────────────
+  // 앱을 켠 시점부터 홈 화면에 머무는 동안 사용자 위치 기준으로
+  // 주변 식당을 DB에 지속적으로 동기화.
+  //
+  // 동작 순서:
+  //   1. 진입 즉시 1회 스냅샷 → 크롤링 트리거
+  //   2. 위치 스트림 구독(500m 이상 이동 시 이벤트) → 쿨다운 통과 시 재크롤링
+  //
+  // 쿨다운:
+  //   - 동일 위치에서 연속 호출 방지 (5분)
+  //   - 카카오 로컬 API는 1일 10k 호출 제한이라 과다 호출 시 쿼터 소진 위험
+  void _startAutoCrawl() {
+    // 1) 진입 시 1회 스냅샷 기반 크롤링
+    () async {
+      final pos = await const GeolocationService().getCurrentPosition();
+      if (pos != null) await _triggerCrawlIfCooled(pos);
+    }();
+
+    // 2) 이동 감지 스트림 구독 — 500m 이상 이동 시에만 이벤트 발행
+    _positionSub = const GeolocationService()
+        .positionStream(distanceFilterMeters: _kCrawlMoveFilter)
+        .listen(
+          (pos) {
+            // async 함수를 await 없이 호출해 스트림 콜백은 즉시 반환
+            _triggerCrawlIfCooled(pos);
+          },
+          onError: (_) {
+            // 스트림 에러는 GeolocationService에서 이미 로깅됨 — UI 무시
+          },
+        );
+  }
+
+  // ── 쿨다운 통과 시에만 크롤링 API 호출 ──────────────────
+  // API 쿼터 보호 장치. 마지막 성공 시각에서 _kCrawlCooldown 이내면 스킵.
+  Future<void> _triggerCrawlIfCooled(Position pos) async {
+    final now = DateTime.now();
+    if (_lastCrawlAt != null &&
+        now.difference(_lastCrawlAt!) < _kCrawlCooldown) {
+      return; // 쿨다운 중
+    }
+
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return; // 로그아웃 상태 — 크롤 권한 없음
+
+    // 요청 완료를 기다리지 않고 먼저 시각을 갱신 — 중복 호출 방지용
+    _lastCrawlAt = now;
+
+    final result = await const CrawlApiService().crawlRestaurants(
+      accessToken: token,
+      lat: pos.latitude,
+      lng: pos.longitude,
+      radius: _kCrawlRadiusM,
+    );
+
+    // 크롤 실패 시 다음 이벤트에 재시도 가능하도록 시각 복구
+    if (result == null) {
+      _lastCrawlAt = null;
+    } else if (mounted) {
+      // 성공 — 새 식당이 DB에 들어왔을 수 있으므로 홈 추천 섹션 재조회
+      _loadRecommendedRestaurants();
+    }
+  }
+
+  // ── AI 추천 식당 조회 ────────────────────────────────────
+  // GET /api/restaurants?limit=10 — 기본 식당 목록(추후 추천 엔진 결과로 교체)
+  // CORE-07 추천 점수화 엔진 완성 전까지는 단순 최신순 목록을 사용.
+  Future<void> _loadRecommendedRestaurants() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      if (mounted) setState(() => _isRestaurantsLoading = false);
+      return;
+    }
+
+    final list = await const RestaurantsApiService()
+        .getRestaurants(accessToken: token, limit: 10);
+
+    if (!mounted) return;
+    setState(() {
+      _recommendedRestaurants = list;
+      _isRestaurantsLoading = false;
+    });
+  }
 
   // ── UI 구성 ─────────────────────────────────────────────
   @override
@@ -250,8 +331,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         // 1번 탭: 점심세션 — TODO: CU-09 세션 생성/CU-10 세션 로비 완성 후 교체
         _buildPlaceholderTab('점심세션', Icons.restaurant_menu_rounded),
 
-        // 2번 탭: 주문현황 — TODO: CU-20 주문/예약 추적 완성 후 교체
-        _buildPlaceholderTab('주문현황', Icons.receipt_long_rounded),
+        // 2번 탭: 주문현황 — OrderListScreen (오늘 내 주문 목록)
+        const OrderListScreen(),
 
         // 3번 탭: 내역 — TODO: 주문 이력 화면 완성 후 교체
         _buildPlaceholderTab('내역', Icons.history_rounded),
@@ -334,7 +415,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // ── AI 추천 식당 섹션 ────────────────────────────
           _buildSectionTitle('AI 추천 식당'),
           const SizedBox(height: AppSpacing.sm),
-          // 가로 스크롤 식당 카드 목록 (화면 너비를 넘어도 가로로 스크롤)
+
+          // 가로 스크롤 식당 카드 목록
+          // (와이어프레임: 홈에는 지도 X. 지도는 CU-15 "지도/리스트 토글"에서만)
           _buildRestaurantList(),
 
           // 하단 여백 (하단 탭바와 겹치지 않도록)
@@ -521,13 +604,73 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   // ── 오늘의 세션 카드 위젯 ──────────────────────────────────
-  // 진행 중인 세션이 있으면 세션 정보 카드를, 없으면 "시작하기" 유도 카드를 표시
+  // 상태별 표시:
+  //   ① 로딩 중        → 스피너 카드
+  //   ② 세션 없음      → "점심 만들기" CTA 유도 카드
+  //   ③ 세션 존재      → 첫 번째 세션 정보 카드 + 입장 버튼
   Widget _buildTodaySession() {
-    // TODO: API 연동 시 (안태환) — _mockSession을 null로 두면 빈 상태 표시
-    // 현재는 항상 Mock 세션을 표시
+    // ① 로딩 상태
+    if (_isSessionsLoading) {
+      return const AppHighlightCard(
+        child: SizedBox(
+          height: 100,
+          child: Center(child: CircularProgressIndicator()),
+        ),
+      );
+    }
+
+    final sessions = _todaySessions ?? const <Session>[];
+
+    // ② 오늘 세션 없음 → 만들기 유도 카드
+    if (sessions.isEmpty) {
+      return AppHighlightCard(
+        onTap: _goToMemberSelect,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              '오늘 예정된 세션이 없어요',
+              style: AppTextStyles.bodyMedium.copyWith(
+                fontWeight: FontWeight.w600,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              '점심 세션을 만들어 친구를 초대해보세요',
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm + 4),
+            AppPrimaryButton(
+              label: '점심 만들기',
+              height: 44,
+              onPressed: _goToMemberSelect,
+            ),
+          ],
+        ),
+      );
+    }
+
+    // ③ 실제 세션 렌더링 — 첫 번째 세션을 메인으로 노출
+    final session = sessions.first;
+    // statusLabel이 있으면 한글 레이블 우선, 없으면 내부 enum 문자열
+    final statusText = session.statusLabel ?? session.status;
+    // scheduledAt은 ISO 8601 문자열 → 시:분만 추출. null이면 '시간 미정'
+    final scheduledText = _formatScheduledTime(session.scheduledAt);
+    // memberCount는 목록 응답에서만 제공. 없으면 "- 명"
+    final memberText = session.memberCount != null
+        ? '${session.memberCount}명 참여'
+        : '참여 인원 확인 중';
+
     return AppHighlightCard(
-      // TODO: CU-10 세션 로비 화면 완성 후 해당 화면으로 이동
-      onTap: () {},
+      onTap: () {
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => SessionLobbyScreen(sessionId: session.id),
+          ),
+        );
+      },
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -546,8 +689,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   borderRadius: BorderRadius.circular(AppRadius.chip),
                 ),
                 child: Text(
-                  // TODO: API 연동 시 — 실제 세션 상태로 교체
-                  _mockSession.status,
+                  statusText,
                   style: AppTextStyles.caption.copyWith(
                     color: Colors.white,
                     fontWeight: FontWeight.w600,
@@ -560,12 +702,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               // 세션 이름
               Expanded(
                 child: Text(
-                  // TODO: API 연동 시 — 실제 세션 이름으로 교체
-                  _mockSession.name,
+                  session.name,
                   style: AppTextStyles.bodyMedium.copyWith(
                     fontWeight: FontWeight.w600,
                   ),
-                  overflow: TextOverflow.ellipsis, // 길면 ... 처리
+                  overflow: TextOverflow.ellipsis,
                 ),
               ),
             ],
@@ -576,21 +717,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // ── 세션 상세 정보 ───────────────────────────
           Row(
             children: [
-              // 멤버 수 아이콘 + 텍스트
-              _buildSessionInfoItem(
-                Icons.people_rounded,
-                // TODO: API 연동 시 — 실제 인원 데이터로 교체
-                '${_mockSession.memberCount}/${_mockSession.maxMemberCount}명 참여',
-              ),
-
+              _buildSessionInfoItem(Icons.people_rounded, memberText),
               const SizedBox(width: AppSpacing.md),
-
-              // 예정 시간 아이콘 + 텍스트
-              _buildSessionInfoItem(
-                Icons.access_time_rounded,
-                // TODO: API 연동 시 — 실제 예정 시간으로 교체
-                _mockSession.scheduledTime,
-              ),
+              _buildSessionInfoItem(Icons.access_time_rounded, scheduledText),
             ],
           ),
 
@@ -599,13 +728,33 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // ── "세션 입장하기" 버튼 ─────────────────────
           AppPrimaryButton(
             label: '세션 입장하기',
-            height: 44, // 카드 안의 버튼은 조금 작게
-            // TODO: CU-10 세션 로비 화면 완성 후 실제 네비게이션으로 교체
-            onPressed: () {},
+            height: 44,
+            onPressed: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => SessionLobbyScreen(sessionId: session.id),
+                ),
+              );
+            },
           ),
         ],
       ),
     );
+  }
+
+  // ── scheduledAt ISO 문자열 → "오후 12:00" 형태 포맷 ───────
+  // 백엔드가 null을 줄 수도 있어서 안전하게 처리.
+  String _formatScheduledTime(String? isoString) {
+    if (isoString == null || isoString.isEmpty) return '시간 미정';
+    final dt = DateTime.tryParse(isoString);
+    if (dt == null) return '시간 미정';
+    final local = dt.toLocal();
+    final hour = local.hour;
+    final minute = local.minute.toString().padLeft(2, '0');
+    // 12시간제 + 오전/오후 표기 (한국식)
+    final isAfternoon = hour >= 12;
+    final display12 = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
+    return '${isAfternoon ? "오후" : "오전"} $display12:$minute';
   }
 
   // 세션 정보 항목 하나 (아이콘 + 텍스트 조합)
@@ -629,7 +778,43 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   // ── AI 추천 식당 가로 스크롤 목록 위젯 ──────────────────────
   // 식당 카드를 가로로 스크롤하며 볼 수 있는 리스트
+  // 상태별 표시: 로딩 / 빈 상태 / 리스트
   Widget _buildRestaurantList() {
+    // 로딩 중
+    if (_isRestaurantsLoading) {
+      return const SizedBox(
+        height: 176,
+        child: Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    final restaurants = _recommendedRestaurants ?? const <RestaurantDto>[];
+
+    // 추천 결과 없음
+    if (restaurants.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.screenHorizontal,
+        ),
+        child: Container(
+          height: 120,
+          width: double.infinity,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Text(
+            '추천할 식당이 없어요',
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ),
+      );
+    }
+
     return SizedBox(
       // TODO: 수치 확정 시 수정 — 식당 카드 영역 높이 (현재 176px)
       height: 176,
@@ -637,36 +822,41 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         // scrollDirection.horizontal: 가로 방향으로 스크롤
         scrollDirection: Axis.horizontal,
         physics: const BouncingScrollPhysics(),
-        // 양 끝 여백: 화면 좌우 여백과 동일하게 맞춤
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.screenHorizontal,
         ),
-        itemCount: _mockRestaurants.length,
-        // separatedBuilder: 각 아이템 사이에 구분 간격을 넣음
+        itemCount: restaurants.length,
         separatorBuilder: (context, index) => const SizedBox(width: AppSpacing.sm + 4),
         itemBuilder: (context, index) {
-          return _buildRestaurantCard(_mockRestaurants[index]);
+          return _buildRestaurantCard(restaurants[index]);
         },
       ),
     );
   }
 
-  // 식당 카드 위젯 하나 (이름 / 카테고리 / 거리 / 가격 / 별점)
-  Widget _buildRestaurantCard(_MockRestaurant restaurant) {
+  // 식당 카드 위젯 하나 (이름 / 카테고리 / 가격)
+  // RestaurantDto는 priceRange(int) / address / lat / lng만 제공.
+  // rating, 거리, 리뷰 수는 백엔드에 아직 없어서 카드 레이아웃 간소화.
+  Widget _buildRestaurantCard(RestaurantDto restaurant) {
     final primary = Theme.of(context).colorScheme.primary;
 
+    // 가격 레이블: 정수면 "X,XXX원~", null이면 "가격 미정"
+    final priceLabel = restaurant.priceRange != null
+        ? '${_formatWithComma(restaurant.priceRange!)}원~'
+        : '가격 미정';
+
     return AppCard(
-      // 식당 카드 탭 → CU-16 메뉴 목록 화면으로 이동
-      // TODO: CU-13 식당 상세 화면(장다연 담당) 완성 후 CU-13 → CU-16 순서로 변경
-      //       현재는 CU-13을 생략하고 바로 메뉴 화면으로 진입 (데모용)
+      // 식당 카드 탭 → CU-13 식당 상세 화면으로 이동
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => MenuScreen(restaurantName: restaurant.name),
+            builder: (_) => RestaurantDetailScreen(
+              restaurantId: restaurant.id,
+              initialName: restaurant.name,
+            ),
           ),
         );
       },
-      // TODO: 수치 확정 시 수정 — 식당 카드 가로 크기 (현재 150px)
       padding: const EdgeInsets.all(AppSpacing.sm + 4),
       child: SizedBox(
         width: 150,
@@ -674,12 +864,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
 
-            // ── 식당 이미지 영역 ─────────────────────────
-            // TODO: API 연동 시 — 실제 식당 이미지 URL로 교체 (Image.network)
+            // ── 식당 이미지 영역 (placeholder) ─────────────
             Container(
               height: 72,
               decoration: BoxDecoration(
-                color: primary.withAlpha(15), // 이미지 없을 때 연한 주황 배경
+                color: primary.withAlpha(15),
                 borderRadius: BorderRadius.circular(AppRadius.small),
               ),
               child: Center(
@@ -695,7 +884,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
             // ── 식당 이름 ────────────────────────────────
             Text(
-              // TODO: API 연동 시 — 실제 식당 이름으로 교체
               restaurant.name,
               style: AppTextStyles.bodyMedium.copyWith(
                 fontWeight: FontWeight.w600,
@@ -707,46 +895,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
             // ── 카테고리 ─────────────────────────────────
             Text(
-              // TODO: API 연동 시 — 실제 카테고리로 교체
-              restaurant.category,
+              restaurant.category ?? '카테고리 미정',
               style: AppTextStyles.bodySmall,
               overflow: TextOverflow.ellipsis,
             ),
 
-            const Spacer(), // 남은 공간을 차지해서 하단 정보를 카드 아래로 밀어냄
+            const Spacer(),
 
-            // ── 거리 + 별점 ──────────────────────────────
-            Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                // 거리
-                Text(
-                  // TODO: API 연동 시 — 실제 거리 계산값으로 교체
-                  restaurant.distance,
-                  style: AppTextStyles.caption,
-                ),
-                // 별점
-                Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(Icons.star_rounded, size: 12, color: primary),
-                    const SizedBox(width: 2),
-                    Text(
-                      // TODO: API 연동 시 — 실제 별점으로 교체
-                      restaurant.rating.toStringAsFixed(1),
-                      style: AppTextStyles.caption.copyWith(
-                        fontWeight: FontWeight.w600,
-                        color: AppColors.textPrimary,
-                      ),
-                    ),
-                  ],
-                ),
-              ],
+            // ── 가격대 ───────────────────────────────────
+            Text(
+              priceLabel,
+              style: AppTextStyles.caption.copyWith(
+                fontWeight: FontWeight.w600,
+                color: AppColors.textPrimary,
+              ),
             ),
           ],
         ),
       ),
     );
+  }
+
+  // ── 정수 → "12,345" 형태 천단위 콤마 포맷 ──────────────
+  String _formatWithComma(int value) {
+    final s = value.toString();
+    final buffer = StringBuffer();
+    for (int i = 0; i < s.length; i++) {
+      // 오른쪽 끝에서 3자리마다 쉼표 삽입
+      if (i > 0 && (s.length - i) % 3 == 0) buffer.write(',');
+      buffer.write(s[i]);
+    }
+    return buffer.toString();
   }
 
   // ── 하단 탭바 위젯 ──────────────────────────────────────────
@@ -843,42 +1022,3 @@ class _NavTab {
   final String label;
 }
 
-// Mock 세션 데이터 구조
-// TODO: API 연동 시 — lib/models/session.dart 같은 별도 모델 파일로 이전
-class _MockSession {
-  const _MockSession({
-    required this.id,             // 세션 고유 ID
-    required this.name,           // 세션 이름 (예: "개발팀 점심")
-    required this.status,         // 세션 상태 (모집 중 / 투표 중 / 주문 완료)
-    required this.memberCount,    // 현재 참여 인원
-    required this.maxMemberCount, // 최대 수용 인원
-    required this.scheduledTime,  // 예정 시간 (예: "오후 12:00")
-  });
-  final String id;
-  final String name;
-  final String status;
-  final int memberCount;
-  final int maxMemberCount;
-  final String scheduledTime;
-}
-
-// Mock 식당 데이터 구조
-// TODO: API 연동 시 — lib/models/restaurant.dart 같은 별도 모델 파일로 이전
-class _MockRestaurant {
-  const _MockRestaurant({
-    required this.name,        // 식당 이름
-    required this.category,    // 음식 카테고리 (예: "한식 · 도시락")
-    required this.distance,    // 도보 거리 (예: "도보 3분")
-    required this.priceRange,  // 가격대 (예: "6,500원~")
-    required this.rating,      // 별점 (0.0~5.0)
-    required this.reviewCount, // 리뷰 수
-    required this.isOpen,      // 현재 영업 중 여부
-  });
-  final String name;
-  final String category;
-  final String distance;
-  final String priceRange;
-  final double rating;
-  final int reviewCount;
-  final bool isOpen;
-}

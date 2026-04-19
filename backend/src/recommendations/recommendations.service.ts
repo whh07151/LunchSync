@@ -1,14 +1,17 @@
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CORE-07 그룹 추천 점수화 엔진 + CORE-08 중복 회피
 //
 // 추천 로직:
-//   1. 세션 멤버 전원의 프로필(budget, speed, allergies, dislikes) 수집
-//   2. 식당 목록에서 그룹 조건 기반 점수 계산
-//   3. 최근 7일 식사 이력과 겹치는 식당 감점
-//   4. 점수 높은 순으로 정렬하여 반환
+//   1. 세션(lat/lng/radius) 조회 — 기준 좌표와 검색 반경 확보
+//   2. 세션 멤버 전원의 프로필(budget, speed, allergies, dislikes) 수집
+//   3. 식당 목록에서 반경 내 후보만 1차 추림 (Haversine 거리)
+//      - 세션에 lat/lng가 없으면 필터 생략 → 기존 동작 폴백
+//   4. 그룹 조건(예산/알레르기/비선호) 기반 점수 계산
+//   5. 최근 7일 식사 이력과 겹치는 식당 감점
+//   6. 점수 높은 순으로 정렬하여 반환
 // ══════════════════════════════════════════════════════════
 
 interface MemberProfile {
@@ -25,8 +28,10 @@ interface Restaurant {
   category: string;
   price_range: number;
   address: string;
-  lat: number;
-  lng: number;
+  // 좌표는 DB에서 null일 수 있음(과거 데이터).
+  // 반경 필터 단계에서 null은 후보에서 제외된다.
+  lat: number | null;
+  lng: number | null;
 }
 
 export interface RecommendationResult {
@@ -35,17 +40,34 @@ export interface RecommendationResult {
   category: string;
   priceRange: number;
   address: string;
+  lat: number | null;    // 지도 표시용 좌표 (없을 수 있음)
+  lng: number | null;
   score: number;
   reasons: string[];
 }
 
 @Injectable()
 export class RecommendationsService {
+  private readonly logger = new Logger(RecommendationsService.name);
+
   constructor(private readonly supabase: SupabaseService) {}
 
   // ── 그룹 추천 메인 로직 ───────────────────────────────
   async getRecommendations(sessionId: string): Promise<RecommendationResult[]> {
-    // 1. 세션 멤버 목록 조회
+    // 1. 세션 정보 조회 — 기준 좌표(lat/lng) + 검색 반경(radius)
+    //    lat/lng가 null이면 반경 필터를 생략하고 DB 전체 식당을 대상으로 폴백.
+    const { data: session } = await this.supabase.client
+      .from('sessions')
+      .select('lat, lng, radius')
+      .eq('id', sessionId)
+      .single();
+
+    const centerLat: number | null = session?.lat ?? null;
+    const centerLng: number | null = session?.lng ?? null;
+    // radius 단위: 미터. 미지정 시 기본 1000m.
+    const radiusMeters: number = session?.radius ?? 1000;
+
+    // 2. 세션 멤버 목록 조회
     const { data: members } = await this.supabase.client
       .from('session_members')
       .select('user_id')
@@ -54,7 +76,7 @@ export class RecommendationsService {
     const memberIds = members?.map((m) => m.user_id) ?? [];
     if (memberIds.length === 0) return [];
 
-    // 2. 멤버 프로필 수집
+    // 3. 멤버 프로필 수집
     const { data: profiles } = await this.supabase.client
       .from('users')
       .select('id, budget, speed, allergies, dislikes')
@@ -68,14 +90,37 @@ export class RecommendationsService {
       dislikes: p.dislikes ?? [],
     }));
 
-    // 3. 전체 식당 목록 조회
-    const { data: restaurants } = await this.supabase.client
+    // 4. 전체 식당 목록 조회 후 반경 내로 1차 필터링
+    //    PostGIS 없이 서비스 레이어에서 Haversine으로 거리 계산.
+    //    식당 수가 많아질 경우 DB에 bounding box 쿼리를 넣는 최적화 여지 있음.
+    const { data: allRestaurants } = await this.supabase.client
       .from('restaurants')
       .select('id, name, category, price_range, address, lat, lng');
 
-    if (!restaurants || restaurants.length === 0) return [];
+    if (!allRestaurants || allRestaurants.length === 0) return [];
 
-    // 4. 최근 7일 식사 이력 조회 (CORE-08 중복 회피)
+    const restaurants: Restaurant[] =
+      centerLat != null && centerLng != null
+        ? allRestaurants.filter((r: Restaurant) => {
+            // 좌표 없는 식당은 거리 판정이 불가능 → 후보에서 제외
+            if (r.lat == null || r.lng == null) return false;
+            return (
+              haversineMeters(centerLat, centerLng, r.lat, r.lng) <=
+              radiusMeters
+            );
+          })
+        : allRestaurants;
+
+    // 디버그: 반경 필터 결과 추적
+    this.logger.log(
+      `[추천 디버그] session=${sessionId} center=(${centerLat},${centerLng}) ` +
+        `radius=${radiusMeters}m 전체식당=${allRestaurants.length} ` +
+        `반경내=${restaurants.length}`,
+    );
+
+    if (restaurants.length === 0) return [];
+
+    // 5. 최근 7일 식사 이력 조회 (CORE-08 중복 회피)
     const weekAgo = new Date();
     weekAgo.setDate(weekAgo.getDate() - 7);
 
@@ -92,7 +137,7 @@ export class RecommendationsService {
       }
     });
 
-    // 5. 각 식당별 점수 계산
+    // 6. 각 식당별 점수 계산
     const scored = restaurants.map((r: Restaurant) => {
       let score = 100;
       const reasons: string[] = [];
@@ -152,14 +197,40 @@ export class RecommendationsService {
         category: r.category,
         priceRange: r.price_range,
         address: r.address,
+        lat: r.lat ?? null,
+        lng: r.lng ?? null,
         score,
         reasons,
       };
     });
 
-    // 6. 점수 높은 순 정렬
+    // 7. 점수 높은 순 정렬
     scored.sort((a, b) => b.score - a.score);
 
     return scored.slice(0, 10); // 상위 10개
   }
+}
+
+// ── Haversine 거리 계산 (단위: 미터) ─────────────────────
+// 두 위경도 좌표 사이의 지표면 거리를 구한다.
+// 정확도는 지구 반지름을 6371km로 가정하는 한도 내에서 수십 미터 수준 오차.
+// 점심 반경(수백 m ~ 수 km)용으로는 충분히 정확.
+function haversineMeters(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const R = 6371000; // 지구 반지름 (미터)
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) *
+      Math.cos(toRad(lat2)) *
+      Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }

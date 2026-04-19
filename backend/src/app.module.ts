@@ -1,5 +1,7 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
+import { ServeStaticModule } from '@nestjs/serve-static';
+import { join } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SupabaseModule } from './supabase/supabase.module';
@@ -13,6 +15,8 @@ import { VotesModule } from './votes/votes.module';
 import { OrdersModule } from './orders/orders.module';
 import { PaymentsModule } from './payments/payments.module';
 import { PosModule } from './pos/pos.module';
+import { CrawlModule } from './crawl/crawl.module';
+import { NotificationsModule } from './notifications/notifications.module';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: NestJS 루트 모듈
@@ -35,6 +39,15 @@ import { PosModule } from './pos/pos.module';
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+    }),
+
+    // 정적 파일 서빙 (toss-checkout.html 등)
+    // 모바일 앱에서 인앱 WebView로 결제 페이지 접근 시 사용
+    // __dirname = dist/ → '../public' = backend/public
+    ServeStaticModule.forRoot({
+      rootPath: join(__dirname, '..', '..', 'public'),
+      serveRoot: '/',
+      exclude: ['/api/(.*)'],
     }),
 
     // Supabase 클라이언트 전역 제공
@@ -69,6 +82,12 @@ import { PosModule } from './pos/pos.module';
 
     // 점주앱/POS (OW-10, POS-08/09/13)
     PosModule,
+
+    // 식당 크롤링 (카카오 + 네이버)
+    CrawlModule,
+
+    // CU-22 알림함 (주문/투표 이벤트 기반 알림)
+    NotificationsModule,
   ],
   controllers: [AppController],
   providers: [AppService],

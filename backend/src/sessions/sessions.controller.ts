@@ -9,7 +9,15 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsString, IsOptional, IsNotEmpty, IsInt, Min } from 'class-validator';
+import {
+  IsString,
+  IsOptional,
+  IsNotEmpty,
+  IsInt,
+  IsNumber,
+  Min,
+  Max,
+} from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionsService } from './sessions.service';
 
@@ -53,6 +61,22 @@ class CreateSessionDto {
   @IsOptional()
   @IsString()
   memo?: string; // 자유 메모
+
+  // ── 세션 기준 좌표 ────────────────────────────────────
+  // 호스트가 세션을 생성한 시점의 GPS 좌표.
+  // 추천 엔진이 이 값을 중심으로 radius 미터 내의 식당만 후보로 채택한다.
+  // 선택 항목 — 전달되지 않으면 추천 서비스가 반경 필터 없이 폴백.
+  @IsOptional()
+  @IsNumber()
+  @Min(-90)
+  @Max(90)
+  lat?: number; // 위도 (-90 ~ 90)
+
+  @IsOptional()
+  @IsNumber()
+  @Min(-180)
+  @Max(180)
+  lng?: number; // 경도 (-180 ~ 180)
 }
 
 class UpdateSessionStatusDto {

@@ -46,6 +46,10 @@ app.*.map.json
 
 # 앱 키 등 민감한 설정 파일 — 절대 커밋하지 말 것 ->좆까 야수의 심장으로 한다
 
+# 보안 키 파일 — 절대 커밋 금지
+*.pem
+*.key
+
 # Claude Code 메모리/설정 파일
 .claude/
 CLAUDE.md
