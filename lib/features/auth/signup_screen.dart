@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../services/auth_api_service.dart';
 import '../../providers/user_provider.dart';
+import 'email_otp_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 이메일+비밀번호 회원가입 화면
@@ -117,10 +118,21 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
       return;
     }
 
-    // ── 성공: Riverpod 저장 후 nextStep으로 이동 ──
+    // ── 성공: Riverpod 저장 후 OTP 화면으로 이동 ──
+    // OTP 화면이 검증 성공/건너뛰기 시점에 widget.onSignupSuccess 를 직접 호출 →
+    // main.dart 의 _handleLoginSuccess 가 nextStep 기준으로 라우팅.
     await ref.read(userProvider.notifier).setUser(result.response!);
     if (!mounted) return;
-    widget.onSignupSuccess(nextStep: result.response!.nextStep);
+
+    Navigator.of(context).pushReplacement(
+      MaterialPageRoute(
+        builder: (_) => EmailOtpScreen(
+          email: email,
+          nextStep: result.response!.nextStep,
+          onComplete: widget.onSignupSuccess,
+        ),
+      ),
+    );
   }
 
   void _showError(String message) {

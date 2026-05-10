@@ -6,6 +6,8 @@ import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { JwtStrategy } from './jwt.strategy';
 import { JwtAuthGuard } from './jwt-auth.guard';
+import { EmailOtpController } from './email-otp.controller';
+import { EmailOtpService } from './email-otp.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 인증 모듈
@@ -26,8 +28,8 @@ import { JwtAuthGuard } from './jwt-auth.guard';
       }),
     }),
   ],
-  controllers: [AuthController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard],
+  controllers: [AuthController, EmailOtpController],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, EmailOtpService],
   // JwtModule도 export — PosModule 의 PosAuthService 가 JwtService 를 주입받기 위함
   exports: [JwtAuthGuard, JwtModule],
 })
