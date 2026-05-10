@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+button {
+  font-family: inherit;
+}
+
+/* 호출 보드 풀스크린 모드 — 어두운 네이비 배경 */
+.board-fullscreen {
+  background-color: #0b1226;
+  color: #ffffff;
+}
+
+/* 스크롤바 */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+::-webkit-scrollbar-thumb {
+  background: #d6d6d6;
+  border-radius: 4px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #bdbdbd;
+}
+
+/* iOS 입력 줌 방지 */
+input,
+textarea,
+select {
+  font-size: 14px;
+}

@@ -1,0 +1,21 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install *)",
+      "Bash(npx tsc *)",
+      "Bash(echo \"EXIT=$?\")",
+      "Bash(npx next *)",
+      "Bash(curl -s -o /dev/null -w \"login=%{http_code}\\\\n\" http://localhost:3001/login)",
+      "Bash(curl -s -o /dev/null -w \"dashboard=%{http_code}\\\\n\" http://localhost:3001/dashboard)",
+      "Bash(curl -s -o /dev/null -w \"kitchen=%{http_code}\\\\n\" http://localhost:3001/kitchen)",
+      "Bash(curl -s -o /dev/null -w \"board=%{http_code}\\\\n\" http://localhost:3001/board)",
+      "Bash(curl -s -o /dev/null -w \"stats=%{http_code}\\\\n\" http://localhost:3001/stats)",
+      "Bash(curl -s -o /dev/null -w \"seats=%{http_code}\\\\n\" http://localhost:3001/seats)",
+      "Bash(curl -s -o /dev/null -w \"/=%{http_code}\\\\n\" http://localhost:3001/)",
+      "Bash(curl -s -o /dev/null -w \"orders=%{http_code}\\\\n\" http://localhost:3001/orders)",
+      "Bash(curl -s -o /dev/null -w \"menu=%{http_code}\\\\n\" http://localhost:3001/menu)",
+      "Bash(curl -s -o /dev/null -w \"reservations=%{http_code}\\\\n\" http://localhost:3001/reservations)",
+      "Bash(curl -s -o /dev/null -w \"payments=%{http_code}\\\\n\" http://localhost:3001/payments)"
+    ]
+  }
+}
