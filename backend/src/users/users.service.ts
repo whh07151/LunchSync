@@ -30,7 +30,9 @@ export class UsersService {
   async getMe(userId: string) {
     const { data, error } = await this.supabase.client
       .from('users')
-      .select('id, name, org, profile_image, radius, budget, speed, role, allergies, dislikes')
+      .select(
+        'id, name, org, profile_image, radius, budget, speed, role, status, auth_provider, email, phone_number, business_name, business_number, allergies, dislikes',
+      )
       .eq('id', userId)
       .single();
 
@@ -48,6 +50,13 @@ export class UsersService {
       budget: data.budget,
       speed: data.speed,
       role: data.role,
+      // 회원가입/인증 결정(2026-05-07) 추가 필드
+      status: data.status,
+      authProvider: data.auth_provider,
+      email: data.email,
+      phoneNumber: data.phone_number,
+      businessName: data.business_name,
+      businessNumber: data.business_number,
       allergies: data.allergies ?? [],
       dislikes: data.dislikes ?? [],
     };

@@ -22,6 +22,12 @@ class UserProfile {
     this.budget,
     this.speed,
     this.role,
+    this.status,
+    this.authProvider,
+    this.email,
+    this.phoneNumber,
+    this.businessName,
+    this.businessNumber,
     this.allergies = const [],
     this.dislikes = const [],
   });
@@ -34,6 +40,13 @@ class UserProfile {
   final int? budget;           // 예산 조건
   final String? speed;         // 속도 조건
   final String? role;          // CUSTOMER | OWNER
+  // 회원가입/인증 결정(2026-05-07) 추가 필드
+  final String? status;          // PENDING | APPROVED | REJECTED
+  final String? authProvider;    // KAKAO | EMAIL | PHONE
+  final String? email;
+  final String? phoneNumber;
+  final String? businessName;    // OWNER 가게 상호
+  final String? businessNumber;  // OWNER 사업자등록번호
   final List<String> allergies; // 알레르기 목록 (CU-04)
   final List<String> dislikes;  // 비선호 음식 목록 (CU-04)
 
@@ -48,6 +61,12 @@ class UserProfile {
       budget: json['budget'] as int?,
       speed: json['speed'] as String?,
       role: json['role'] as String?,
+      status: json['status'] as String?,
+      authProvider: json['authProvider'] as String?,
+      email: json['email'] as String?,
+      phoneNumber: json['phoneNumber'] as String?,
+      businessName: json['businessName'] as String?,
+      businessNumber: json['businessNumber'] as String?,
       allergies: (json['allergies'] as List<dynamic>?)?.cast<String>() ?? [],
       dislikes: (json['dislikes'] as List<dynamic>?)?.cast<String>() ?? [],
     );

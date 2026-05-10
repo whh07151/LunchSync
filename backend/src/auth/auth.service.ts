@@ -1,16 +1,30 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  UnauthorizedException,
+} from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcrypt';
 import { SupabaseService } from '../supabase/supabase.service';
 
 // ══════════════════════════════════════════════════════════
-// 파일 역할: 카카오 로그인 비즈니스 로직
+// 파일 역할: 인증 비즈니스 로직 — 카카오 + 이메일 + (추후) 휴대폰
 //
-// 전체 흐름:
-//   1. Flutter에서 카카오 access token을 받음
-//   2. 카카오 API 호출해서 kakao_id / nickname / profile_image 조회
-//   3. Supabase users 테이블에서 kakao_id로 기존 유저 조회
-//   4. 없으면 신규 유저 INSERT (name = 카카오 닉네임, role = CUSTOMER)
-//   5. 자체 JWT 발급 후 반환
+// 지원 가입/로그인 경로:
+//   1. 카카오 OAuth   — kakaoLogin()
+//   2. 이메일+비번    — emailSignup() / emailLogin()
+//   3. (추후) 휴대폰  — phoneVerify() — Firebase Phone Auth 통합 시 추가
+//
+// 공통 출력:
+//   AuthResult { accessToken, isNewUser, nextStep, user }
+//   user.role  : CUSTOMER | OWNER
+//   user.status: PENDING | APPROVED | REJECTED  (OWNER 승인제용)
+//
+// OWNER 승인 흐름:
+//   1. emailSignup() with role='OWNER' → status='PENDING' INSERT
+//   2. 운영자가 Supabase 콘솔에서 status='APPROVED' 직접 변경
+//   3. 다음 로그인 시 status가 응답에 포함 → Flutter가 사장 화면 진입 결정
 // ══════════════════════════════════════════════════════════
 
 // 카카오 /v2/user/me API 응답 타입 (필요한 필드만 정의)
@@ -30,25 +44,35 @@ export interface AuthResult {
   isNewUser: boolean;  // true: 신규(온보딩 필요), false: 기존(홈으로 바로) — 하위 호환용
 
   /// Flutter가 다음에 보여줄 화면을 서버가 결정해서 내려줌 (서버 드리븐 네비게이션)
-  /// "PROFILE_SETUP"   → CU-03: 온보딩 미시작 (신규 유저 또는 이름만 있는 상태)
+  /// "PROFILE_SETUP"   → CU-03: 온보딩 미시작
   /// "CONDITION_SETUP" → CU-05: CU-03 완료 후 앱 종료, 조건 설정 재진입
   /// "HOME"            → 온보딩 완전 완료, 홈 대시보드로 바로 진입
-  nextStep: 'PROFILE_SETUP' | 'CONDITION_SETUP' | 'HOME';
+  /// "OWNER_PENDING"   → OWNER 가입 후 승인 대기 중 (사장 화면 진입 차단)
+  /// "OWNER_HOME"      → OWNER 승인 완료, 사장 화면으로 바로 진입
+  nextStep: 'PROFILE_SETUP' | 'CONDITION_SETUP' | 'HOME' | 'OWNER_PENDING' | 'OWNER_HOME';
 
   user: {
     id: string;
     name: string;
     profileImage: string | null;
-    role: string; // 유저 역할 (CUSTOMER | OWNER 등)
+    role: 'CUSTOMER' | 'OWNER';
+    status: 'PENDING' | 'APPROVED' | 'REJECTED';
   };
 }
 
 @Injectable()
 export class AuthService {
+  // bcrypt salt rounds — 10이 일반 권장값 (해시 한 번에 약 100ms)
+  private readonly BCRYPT_SALT_ROUNDS = 10;
+
   constructor(
     private readonly supabase: SupabaseService,
     private readonly jwtService: JwtService,
   ) {}
+
+  // ════════════════════════════════════════════════════════
+  // 1) 카카오 로그인/회원가입
+  // ════════════════════════════════════════════════════════
 
   // ── 카카오 로그인/회원가입 처리 ──────────────────────────
   // Flutter → POST /auth/kakao { kakaoAccessToken } 처리
@@ -61,47 +85,48 @@ export class AuthService {
     const profileImage = kakaoUser.kakao_account?.profile?.profile_image_url ?? null;
 
     // ── 2단계: Supabase에서 기존 유저 조회 ──────────────────
-    // org / budget / speed: nextStep 판별에 필요 (온보딩 진행 상태 확인)
+    // role/status: 사장 승인 흐름 분기에 필요
     const { data: existingUser } = await this.supabase.client
       .from('users')
-      .select('id, name, profile_image, org, budget, speed')
+      .select('id, name, profile_image, org, budget, speed, role, status')
       .eq('kakao_id', kakaoId)
       .single();
 
-    // ── 3단계: 신규 유저면 INSERT ─────────────────────────
     let userId: string;
     let userName: string;
+    let userRole: 'CUSTOMER' | 'OWNER';
+    let userStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
     let isNewUser: boolean;
     let nextStep: AuthResult['nextStep'];
 
     if (existingUser) {
-      // 기존 유저: 온보딩 진행 상태에 따라 nextStep 결정
+      // ── 기존 유저: role/status 기반으로 nextStep 결정 ──
       userId = existingUser.id;
       userName = existingUser.name;
+      userRole = (existingUser.role as 'CUSTOMER' | 'OWNER') ?? 'CUSTOMER';
+      userStatus = (existingUser.status as 'PENDING' | 'APPROVED' | 'REJECTED') ?? 'APPROVED';
       isNewUser = false;
 
-      if (!existingUser.org) {
-        // org가 없음 → CU-03(프로필 설정)을 완료하지 않은 상태
-        nextStep = 'PROFILE_SETUP';
-      } else if (existingUser.budget == null || !existingUser.speed) {
-        // org는 있으나 budget/speed 없음 → CU-03 완료, CU-05 미완료
-        // (앱을 CU-03 완료 직후 종료한 경우)
-        nextStep = 'CONDITION_SETUP';
-      } else {
-        // 온보딩 완전 완료 → 홈으로 바로
-        nextStep = 'HOME';
-      }
+      nextStep = this.resolveNextStepForExistingUser(
+        userRole,
+        userStatus,
+        existingUser.org,
+        existingUser.budget,
+        existingUser.speed,
+      );
     } else {
-      // 신규 유저: 카카오 닉네임으로 기본 레코드 생성
-      // 이름/소속/반경 등 상세 정보는 온보딩(CU-03, CU-05)에서 PATCH /users/me로 업데이트
+      // ── 신규 카카오 가입자: CUSTOMER로 INSERT ──
+      // 카카오로 신규 가입할 때는 항상 CUSTOMER. OWNER 가입은 이메일 가입에서만.
       const { data: newUser, error } = await this.supabase.client
         .from('users')
         .insert({
           kakao_id: kakaoId,
-          name: nickname,       // 온보딩 전 임시 이름 (카카오 닉네임)
+          name: nickname,
           profile_image: profileImage,
           role: 'CUSTOMER',
-          radius: '500m',       // 온보딩 전 기본값
+          status: 'APPROVED',     // 카카오는 본인확인 완료 → 즉시 활성화
+          auth_provider: 'KAKAO',
+          radius: '500m',
         })
         .select('id, name')
         .single();
@@ -112,13 +137,13 @@ export class AuthService {
 
       userId = newUser.id;
       userName = newUser.name;
+      userRole = 'CUSTOMER';
+      userStatus = 'APPROVED';
       isNewUser = true;
-      nextStep = 'PROFILE_SETUP'; // 신규 유저는 항상 CU-03부터 시작
+      nextStep = 'PROFILE_SETUP'; // 신규 손님은 항상 CU-03부터
     }
 
-    // ── 4단계: 자체 JWT 발급 ─────────────────────────────
-    // JWT payload에 user_id를 넣어두면 이후 모든 API에서
-    // Authorization 헤더만 있으면 누구인지 알 수 있음
+    // ── 3단계: 자체 JWT 발급 ─────────────────────────────
     const accessToken = this.jwtService.sign({ sub: userId });
 
     return {
@@ -129,9 +154,179 @@ export class AuthService {
         id: userId,
         name: userName,
         profileImage,
-        role: 'CUSTOMER', // 손님앱 로그인은 항상 CUSTOMER
+        role: userRole,
+        status: userStatus,
       },
     };
+  }
+
+  // ════════════════════════════════════════════════════════
+  // 2) 이메일 회원가입
+  // ════════════════════════════════════════════════════════
+
+  // ── 이메일+비밀번호로 회원가입 ────────────────────────
+  // role: CUSTOMER 또는 OWNER 선택. OWNER는 status=PENDING으로 저장됨.
+  //
+  // 흐름:
+  //   1. 이메일 중복 체크
+  //   2. 비밀번호 bcrypt 해시
+  //   3. INSERT (role/status 분기)
+  //   4. JWT 발급
+  //
+  // [캡스톤 단순화] 이메일 OTP 본인확인은 추후 추가. 지금은 즉시 가입 완료.
+  async emailSignup(params: {
+    email: string;
+    password: string;
+    name: string;
+    role: 'CUSTOMER' | 'OWNER';
+    businessName?: string;     // role=OWNER일 때만
+    businessNumber?: string;   // role=OWNER일 때만
+  }): Promise<AuthResult> {
+    const { email, password, name, role, businessName, businessNumber } = params;
+
+    // ── OWNER 가입 시 가게 정보 필수 검증 ──
+    if (role === 'OWNER' && (!businessName || !businessNumber)) {
+      throw new BadRequestException('OWNER 가입 시 상호명과 사업자등록번호가 필요합니다.');
+    }
+
+    // ── 1단계: 이메일 중복 체크 ───────────────────────────
+    const { data: existing } = await this.supabase.client
+      .from('users')
+      .select('id')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (existing) {
+      throw new ConflictException('이미 가입된 이메일입니다.');
+    }
+
+    // ── 2단계: 비밀번호 해시 ─────────────────────────────
+    const passwordHash = await bcrypt.hash(password, this.BCRYPT_SALT_ROUNDS);
+
+    // ── 3단계: 유저 INSERT ───────────────────────────────
+    // CUSTOMER → status=APPROVED (즉시 활성화)
+    // OWNER    → status=PENDING (운영자 승인 대기)
+    const status: 'APPROVED' | 'PENDING' = role === 'OWNER' ? 'PENDING' : 'APPROVED';
+
+    const { data: newUser, error } = await this.supabase.client
+      .from('users')
+      .insert({
+        email,
+        password_hash: passwordHash,
+        name,
+        role,
+        status,
+        auth_provider: 'EMAIL',
+        radius: '500m',
+        business_name: businessName ?? null,
+        business_number: businessNumber ?? null,
+      })
+      .select('id, name, role, status')
+      .single();
+
+    if (error || !newUser) {
+      throw new Error(`회원가입 실패: ${error?.message}`);
+    }
+
+    // ── 4단계: JWT 발급 ──────────────────────────────────
+    const accessToken = this.jwtService.sign({ sub: newUser.id });
+
+    // ── nextStep 결정 ────────────────────────────────────
+    // OWNER 가입 직후 → 항상 OWNER_PENDING (승인 대기 안내 화면)
+    // CUSTOMER 가입 직후 → PROFILE_SETUP (이름은 입력했지만 소속/조건 미입력)
+    const nextStep: AuthResult['nextStep'] =
+      role === 'OWNER' ? 'OWNER_PENDING' : 'PROFILE_SETUP';
+
+    return {
+      accessToken,
+      isNewUser: true,
+      nextStep,
+      user: {
+        id: newUser.id,
+        name: newUser.name,
+        profileImage: null,
+        role: newUser.role as 'CUSTOMER' | 'OWNER',
+        status: newUser.status as 'PENDING' | 'APPROVED' | 'REJECTED',
+      },
+    };
+  }
+
+  // ════════════════════════════════════════════════════════
+  // 3) 이메일 로그인
+  // ════════════════════════════════════════════════════════
+
+  // ── 이메일+비밀번호 로그인 ──────────────────────────────
+  // 비밀번호 불일치 / 미존재 모두 같은 메시지로 응답 (계정 존재 여부 노출 방지)
+  async emailLogin(email: string, password: string): Promise<AuthResult> {
+    const { data: user } = await this.supabase.client
+      .from('users')
+      .select(
+        'id, name, profile_image, password_hash, role, status, org, budget, speed',
+      )
+      .eq('email', email)
+      .maybeSingle();
+
+    if (!user || !user.password_hash) {
+      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다.');
+    }
+
+    // ── 비밀번호 검증 ──
+    const isValid = await bcrypt.compare(password, user.password_hash);
+    if (!isValid) {
+      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다.');
+    }
+
+    const userRole = (user.role as 'CUSTOMER' | 'OWNER') ?? 'CUSTOMER';
+    const userStatus = (user.status as 'PENDING' | 'APPROVED' | 'REJECTED') ?? 'APPROVED';
+
+    const nextStep = this.resolveNextStepForExistingUser(
+      userRole,
+      userStatus,
+      user.org,
+      user.budget,
+      user.speed,
+    );
+
+    const accessToken = this.jwtService.sign({ sub: user.id });
+
+    return {
+      accessToken,
+      isNewUser: false,
+      nextStep,
+      user: {
+        id: user.id,
+        name: user.name,
+        profileImage: user.profile_image,
+        role: userRole,
+        status: userStatus,
+      },
+    };
+  }
+
+  // ════════════════════════════════════════════════════════
+  // 공통 헬퍼
+  // ════════════════════════════════════════════════════════
+
+  // ── 기존 유저 로그인 시 nextStep 결정 로직 ──────────────
+  // role/status/온보딩 진행상태를 종합해 다음 화면을 결정.
+  private resolveNextStepForExistingUser(
+    role: 'CUSTOMER' | 'OWNER',
+    status: 'PENDING' | 'APPROVED' | 'REJECTED',
+    org: string | null | undefined,
+    budget: number | null | undefined,
+    speed: string | null | undefined,
+  ): AuthResult['nextStep'] {
+    // ── OWNER 분기 ──
+    // 승인 대기/거부 상태면 무조건 안내 화면. 승인 완료면 사장 홈으로.
+    if (role === 'OWNER') {
+      if (status !== 'APPROVED') return 'OWNER_PENDING';
+      return 'OWNER_HOME';
+    }
+
+    // ── CUSTOMER 분기: 기존 온보딩 진행 상태 로직 그대로 ──
+    if (!org) return 'PROFILE_SETUP';
+    if (budget == null || !speed) return 'CONDITION_SETUP';
+    return 'HOME';
   }
 
   // ── 카카오 API 호출: 유저 정보 조회 ─────────────────────
