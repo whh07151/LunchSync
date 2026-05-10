@@ -5,6 +5,8 @@ import '../../core/theme/theme.dart';
 import '../../providers/user_provider.dart';
 import '../../services/pos_api_service.dart';
 import '../auth/login_screen.dart';
+import 'menu_management_screen.dart';
+import 'sales_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 사장님 홈 화면 (OWNER_HOME)
@@ -176,7 +178,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
       children: [
         _buildHomeTab(),
         _buildOrdersTab(),
-        _buildPlaceholderTab('메뉴 관리', Icons.menu_book_rounded),
+        const MenuManagementScreen(),
         _buildPlaceholderTab('내정보', Icons.person_rounded),
       ],
     );
@@ -410,7 +412,9 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
       _OwnerAction(
         icon: Icons.bar_chart_rounded,
         label: '매출',
-        onTap: () => _showComingSoon('매출 통계'),
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const SalesScreen()),
+        ),
       ),
       _OwnerAction(
         icon: Icons.point_of_sale_rounded,

@@ -4,6 +4,8 @@ import { PosController } from './pos.controller';
 import { PosService } from './pos.service';
 import { PosAuthController } from './pos-auth.controller';
 import { PosAuthService } from './pos-auth.service';
+import { PosMenusController } from './pos-menus.controller';
+import { PosMenusService } from './pos-menus.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 점주앱/POS 모듈
@@ -23,7 +25,7 @@ import { PosAuthService } from './pos-auth.service';
 
 @Module({
   imports: [AuthModule],
-  controllers: [PosController, PosAuthController],
-  providers: [PosService, PosAuthService],
+  controllers: [PosController, PosAuthController, PosMenusController],
+  providers: [PosService, PosAuthService, PosMenusService],
 })
 export class PosModule {}
