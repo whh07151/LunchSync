@@ -28,6 +28,7 @@ class UserProfile {
     this.phoneNumber,
     this.businessName,
     this.businessNumber,
+    this.restaurantId,
     this.allergies = const [],
     this.dislikes = const [],
   });
@@ -47,6 +48,7 @@ class UserProfile {
   final String? phoneNumber;
   final String? businessName;    // OWNER 가게 상호
   final String? businessNumber;  // OWNER 사업자등록번호
+  final String? restaurantId;    // OWNER가 운영하는 restaurants.id (운영자가 콘솔에서 매핑)
   final List<String> allergies; // 알레르기 목록 (CU-04)
   final List<String> dislikes;  // 비선호 음식 목록 (CU-04)
 
@@ -67,6 +69,7 @@ class UserProfile {
       phoneNumber: json['phoneNumber'] as String?,
       businessName: json['businessName'] as String?,
       businessNumber: json['businessNumber'] as String?,
+      restaurantId: json['restaurantId'] as String?,
       allergies: (json['allergies'] as List<dynamic>?)?.cast<String>() ?? [],
       dislikes: (json['dislikes'] as List<dynamic>?)?.cast<String>() ?? [],
     );

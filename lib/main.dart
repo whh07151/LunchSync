@@ -126,8 +126,8 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
       final profile = await const UsersApiService().getMe(token);
 
       if (profile != null) {
-        // 토큰 유효 → state에 최신 정보 반영
-        ref.read(userProvider.notifier).setFromProfile(profile);
+        // 토큰 유효 → state에 최신 정보 반영 (restaurantId prefs 동기화 위해 await)
+        await ref.read(userProvider.notifier).setFromProfile(profile);
         _autoLoginNextStep = _resolveAutoLoginNextStep(profile);
       } else {
         // 토큰 만료/무효 → 정리 후 로그인 화면으로

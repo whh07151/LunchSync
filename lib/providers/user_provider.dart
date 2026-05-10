@@ -39,6 +39,7 @@ class _PrefKeys {
   static const userProfile  = 'ls_user_profile';
   static const userRole     = 'ls_user_role';
   static const userStatus   = 'ls_user_status';
+  static const restaurantId = 'ls_user_restaurant_id';
 }
 
 
@@ -52,6 +53,7 @@ class UserState {
     this.profileImage,
     this.role,
     this.status,
+    this.restaurantId,
   });
 
   final String? accessToken;  // LunchSync JWT (API 요청 시 사용)
@@ -65,6 +67,10 @@ class UserState {
 
   /// 'PENDING' | 'APPROVED' | 'REJECTED' (OWNER 승인 차단 판단용)
   final String? status;
+
+  /// OWNER 가 운영하는 restaurants.id (운영자가 Supabase 콘솔에서 매핑).
+  /// NULL 이면 사장 홈에서 "매장 매핑 대기" 안내 표시.
+  final String? restaurantId;
 
   /// 로그인된 상태인지 여부
   bool get isLoggedIn => accessToken != null;
@@ -83,6 +89,7 @@ class UserState {
     String? profileImage,
     String? role,
     String? status,
+    String? restaurantId,
   }) {
     return UserState(
       accessToken: accessToken ?? this.accessToken,
@@ -92,6 +99,7 @@ class UserState {
       profileImage: profileImage ?? this.profileImage,
       role: role ?? this.role,
       status: status ?? this.status,
+      restaurantId: restaurantId ?? this.restaurantId,
     );
   }
 }
@@ -132,14 +140,24 @@ class UserNotifier extends Notifier<UserState> {
   // ── DB 프로필 조회 후 상태 갱신 ──────────────────────────
   // UsersApiService.getMe() 성공 후 호출.
   // 기존 accessToken은 유지하고 DB 최신값으로 덮어씀.
-  void setFromProfile(UserProfile profile) {
+  // restaurantId는 운영자가 콘솔에서 매핑한 결과를 즉시 반영하기 위해 매번 동기화.
+  Future<void> setFromProfile(UserProfile profile) async {
     state = state.copyWith(
       name: profile.name,
       org: profile.org,
       profileImage: profile.profileImage,
       role: profile.role,
       status: profile.status,
+      restaurantId: profile.restaurantId,
     );
+
+    // restaurantId 변경분 영속화 (다음 자동 로그인 시 즉시 사용)
+    final prefs = await SharedPreferences.getInstance();
+    if (profile.restaurantId != null && profile.restaurantId!.isNotEmpty) {
+      await prefs.setString(_PrefKeys.restaurantId, profile.restaurantId!);
+    } else {
+      await prefs.remove(_PrefKeys.restaurantId);
+    }
   }
 
   // ── 결제 왕복 후 sessionStorage 에서 복원 ─────────────────
@@ -180,6 +198,7 @@ class UserNotifier extends Notifier<UserState> {
       profileImage: prefs.getString(_PrefKeys.userProfile),
       role: prefs.getString(_PrefKeys.userRole),
       status: prefs.getString(_PrefKeys.userStatus),
+      restaurantId: prefs.getString(_PrefKeys.restaurantId),
     );
     return true;
   }
@@ -195,6 +214,7 @@ class UserNotifier extends Notifier<UserState> {
     await prefs.remove(_PrefKeys.userProfile);
     await prefs.remove(_PrefKeys.userRole);
     await prefs.remove(_PrefKeys.userStatus);
+    await prefs.remove(_PrefKeys.restaurantId);
   }
 }
 

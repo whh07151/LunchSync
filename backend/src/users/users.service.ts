@@ -31,7 +31,7 @@ export class UsersService {
     const { data, error } = await this.supabase.client
       .from('users')
       .select(
-        'id, name, org, profile_image, radius, budget, speed, role, status, auth_provider, email, phone_number, business_name, business_number, allergies, dislikes',
+        'id, name, org, profile_image, radius, budget, speed, role, status, auth_provider, email, phone_number, business_name, business_number, restaurant_id, allergies, dislikes',
       )
       .eq('id', userId)
       .single();
@@ -57,6 +57,8 @@ export class UsersService {
       phoneNumber: data.phone_number,
       businessName: data.business_name,
       businessNumber: data.business_number,
+      // OWNER ↔ 운영 식당 매핑 (NULL이면 아직 매장 미연결 — 운영자가 콘솔에서 매핑)
+      restaurantId: data.restaurant_id,
       allergies: data.allergies ?? [],
       dislikes: data.dislikes ?? [],
     };
