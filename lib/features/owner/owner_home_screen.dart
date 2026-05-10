@@ -49,6 +49,10 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
   bool _isLoading = false;
   String? _loadError;
 
+  /// 현재 PATCH 진행 중인 주문 ID — 중복 클릭 방지 + 버튼 로딩 표시.
+  /// null 이면 아무 주문도 처리 중이 아님.
+  String? _processingOrderId;
+
   Timer? _pollTimer;
 
   @override
@@ -526,6 +530,10 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
   Widget _buildOrderCard(PosOrder order) {
     final statusColor = _statusColor(order.status);
     final statusLabel = _statusLabel(order.status);
+    final nextLabel = _nextStatusLabel(order.status);
+    final canAdvance = _nextStatus(order.status) != null;
+    final canCancel = _isCancellable(order.status);
+    final isProcessing = _processingOrderId == order.id;
 
     return Container(
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -534,58 +542,291 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
         borderRadius: BorderRadius.circular(AppRadius.card),
         border: Border.all(color: AppColors.border),
       ),
-      child: Row(
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Container(
-            padding:
-                const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-            decoration: BoxDecoration(
-              color: statusColor.withAlpha(28),
-              borderRadius: BorderRadius.circular(8),
-            ),
-            child: Text(
-              statusLabel,
-              style: AppTextStyles.caption.copyWith(
-                color: statusColor,
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  order.orderNumber ??
-                      '#${order.id.substring(0, order.id.length.clamp(0, 6))}',
-                  style: AppTextStyles.bodyMedium.copyWith(
-                    color: AppColors.textPrimary,
+          // ── 상단: 상태 배지 + 주문 정보 + 합계 ─────────────
+          Row(
+            children: [
+              Container(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                decoration: BoxDecoration(
+                  color: statusColor.withAlpha(28),
+                  borderRadius: BorderRadius.circular(8),
+                ),
+                child: Text(
+                  statusLabel,
+                  style: AppTextStyles.caption.copyWith(
+                    color: statusColor,
                     fontWeight: FontWeight.w700,
                   ),
                 ),
-                if (order.itemsSummary != null) ...[
-                  const SizedBox(height: 2),
-                  Text(
-                    order.itemsSummary!,
-                    style: AppTextStyles.caption.copyWith(
-                      color: AppColors.textSecondary,
+              ),
+              const SizedBox(width: 12),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      order.orderNumber ??
+                          '#${order.id.substring(0, order.id.length.clamp(0, 6))}',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        color: AppColors.textPrimary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    if (order.customerName != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        order.customerName!,
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                    if (order.itemsSummary != null) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        order.itemsSummary!,
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+              Text(
+                '${_formatWon(order.totalAmount)}원',
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w800,
+                ),
+              ),
+            ],
+          ),
+
+          // ── 하단: 액션 버튼 (전이 가능한 상태일 때만) ───────
+          if (canAdvance || canCancel) ...[
+            const SizedBox(height: 10),
+            Row(
+              children: [
+                if (canCancel)
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: isProcessing
+                          ? null
+                          : () => _onCancelOrderTap(order),
+                      icon: const Icon(Icons.close_rounded, size: 16),
+                      label: const Text('취소'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.error,
+                        side: BorderSide(color: AppColors.error.withAlpha(80)),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
                     ),
                   ),
-                ],
+                if (canCancel && canAdvance) const SizedBox(width: 8),
+                if (canAdvance)
+                  Expanded(
+                    flex: 2,
+                    child: ElevatedButton.icon(
+                      onPressed: isProcessing
+                          ? null
+                          : () => _onAdvanceStatusTap(order),
+                      icon: isProcessing
+                          ? const SizedBox(
+                              width: 14,
+                              height: 14,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                    Colors.white),
+                              ),
+                            )
+                          : const Icon(Icons.arrow_forward_rounded, size: 16),
+                      label: Text(nextLabel),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: Theme.of(context).colorScheme.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 8),
+                      ),
+                    ),
+                  ),
               ],
             ),
-          ),
-          Text(
-            '${_formatWon(order.totalAmount)}원',
-            style: AppTextStyles.bodyMedium.copyWith(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w800,
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── 상태 전이 액션 ──────────────────────────────────────
+  // PAID → PREPARING → READY → COMPLETED 단계만 허용.
+  // PATCH /pos/orders/:id/status 호출 후 즉시 _fetchAll() 로 반영
+  // (10초 폴링 사이클 기다리지 않도록).
+  Future<void> _onAdvanceStatusTap(PosOrder order) async {
+    final next = _nextStatus(order.status);
+    if (next == null) return;
+
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+
+    setState(() => _processingOrderId = order.id);
+
+    final ok = await const PosApiService().updateOrderStatus(
+      accessToken: token,
+      orderId: order.id,
+      status: next,
+    );
+
+    if (!mounted) return;
+    setState(() => _processingOrderId = null);
+
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('${_statusLabel(next)} 처리됐어요'),
+          duration: const Duration(seconds: 1),
+        ),
+      );
+      await _fetchAll();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('상태 변경에 실패했어요. 다시 시도해 주세요.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  // ── 주문 취소 액션 ──────────────────────────────────────
+  // 사유는 선택. 사유 입력 다이얼로그 표시 → 확인 시 cancelOrder 호출.
+  Future<void> _onCancelOrderTap(PosOrder order) async {
+    final reason = await _showCancelReasonDialog();
+    if (reason == null) return; // 사용자가 취소 다이얼로그 닫음
+
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+
+    setState(() => _processingOrderId = order.id);
+
+    final ok = await const PosApiService().cancelOrder(
+      accessToken: token,
+      orderId: order.id,
+      reason: reason.isEmpty ? null : reason,
+    );
+
+    if (!mounted) return;
+    setState(() => _processingOrderId = null);
+
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('주문이 취소됐어요'),
+          duration: Duration(seconds: 1),
+        ),
+      );
+      await _fetchAll();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('주문 취소에 실패했어요. 다시 시도해 주세요.'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  // ── 취소 사유 입력 다이얼로그 ────────────────────────────
+  // 자주 쓰는 사유 4종 칩 + 자유 입력. 빈 사유도 허용 (선택 입력).
+  // null 반환 = 사용자가 다이얼로그 닫음(작업 취소).
+  Future<String?> _showCancelReasonDialog() async {
+    final controller = TextEditingController();
+    const presetReasons = ['재료 소진', '조리 불가', '잘못된 주문', '손님 요청'];
+
+    return showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('주문 취소'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: presetReasons
+                  .map((r) => ActionChip(
+                        label: Text(r),
+                        onPressed: () {
+                          controller.text = r;
+                        },
+                      ))
+                  .toList(),
             ),
+            const SizedBox(height: 12),
+            TextField(
+              controller: controller,
+              decoration: const InputDecoration(
+                labelText: '취소 사유 (선택)',
+                hintText: '직접 입력하거나 위 버튼 선택',
+                border: OutlineInputBorder(),
+              ),
+              maxLines: 2,
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('닫기'),
+          ),
+          FilledButton(
+            onPressed: () =>
+                Navigator.of(dialogContext).pop(controller.text.trim()),
+            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+            child: const Text('취소 처리'),
           ),
         ],
       ),
     );
+  }
+
+  // ── 상태 전이 규칙 (LSPOS src/lib/utils/status.ts 의 nextStatus 와 동일) ───
+  String? _nextStatus(String current) {
+    switch (current) {
+      case 'PAID':
+        return 'PREPARING';
+      case 'PREPARING':
+        return 'READY';
+      case 'READY':
+        return 'COMPLETED';
+      default:
+        // PENDING(결제 전), COMPLETED(서빙 완료), CANCELLED 는 전이 불가
+        return null;
+    }
+  }
+
+  /// 다음 단계 버튼에 표시할 라벨 ("조리 시작", "조리 완료", "픽업 완료")
+  String _nextStatusLabel(String current) {
+    switch (current) {
+      case 'PAID':
+        return '조리 시작';
+      case 'PREPARING':
+        return '조리 완료';
+      case 'READY':
+        return '픽업 완료';
+      default:
+        return '';
+    }
+  }
+
+  /// 취소 가능 여부 — PAID/PREPARING 만 취소 허용 (이미 픽업 완료된 주문은 환불 절차 별도)
+  bool _isCancellable(String current) {
+    return current == 'PAID' || current == 'PREPARING';
   }
 
   // ── 주문 상태 라벨/색상 (LSPOS의 STATUS_LABEL 한글 정렬과 동일) ───
