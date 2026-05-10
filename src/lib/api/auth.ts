@@ -1,9 +1,17 @@
 import { apiRequest } from "@/lib/api/client";
 import type { AuthResult } from "@/lib/types";
 
+// ══════════════════════════════════════════════════════════
+// 파일 역할: POS 단말 인증 API 클라이언트
+//
+// 엔드포인트 (백엔드 매핑):
+//   POST /auth/kakao             — 카카오 SSO (보존, 미사용 — 사장앱 흐름용)
+//   POST /pos/login/:restaurantId — POS 단말 로그인 (LSPOS 통합 2026-05-12)
+// ══════════════════════════════════════════════════════════
+
 // POST /auth/kakao — LUNCHSYNC_DTO.md §2
-// POS 로그인 방식이 백엔드 합의 미정이라 우선 카카오 토큰 흐름을 그대로 사용.
-// 점포 ID/PW 발급으로 변경되면 여기 함수 시그니처만 교체.
+// POS 로그인 흐름은 loginPOS() 로 옮겨갔고, 본 함수는 카카오 SSO 가 도입될
+// 가능성에 대비해 보존만 해둠. 현재 로그인 화면에서는 호출하지 않음.
 export async function loginWithKakao(
   kakaoAccessToken: string
 ): Promise<AuthResult> {
@@ -11,5 +19,27 @@ export async function loginWithKakao(
     method: "POST",
     auth: false,
     body: { kakaoAccessToken },
+  });
+}
+
+/// POS 로그인 응답 — 백엔드 PosAuthService.login 결과와 매칭.
+export interface PosLoginResult {
+  accessToken: string;
+  restaurantId: string;
+  restaurantName: string | null;
+  terminalName: string | null;
+}
+
+/// POST /pos/login/:restaurantId — POS 단말 로그인.
+/// 식당 고유번호가 백엔드 restaurants 테이블에 등록되어 있어야 발급 성공.
+/// 성공 시 client.ts 가 이후 모든 요청에 Bearer 헤더 자동 주입.
+export async function loginPOS(
+  restaurantId: string,
+  terminalName?: string
+): Promise<PosLoginResult> {
+  return apiRequest<PosLoginResult>(`/pos/login/${restaurantId}`, {
+    method: "POST",
+    auth: false,
+    body: terminalName ? { terminalName } : {},
   });
 }

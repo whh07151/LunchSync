@@ -3,6 +3,8 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/hooks/useAuth";
+import { loginPOS } from "@/lib/api/auth";
+import { ApiError } from "@/lib/api/client";
 
 // pos_memo.md §2 / §3 — POS 로그인은 사장앱에서 발급된 고유번호(restaurant_id)
 // 단일 입력. 회원가입 없음. 정식 인증 엔드포인트는 백엔드 합의 후 추가.
@@ -23,16 +25,53 @@ export default function LoginPage() {
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // POS 로그인 공통 처리 — 백엔드(POST /pos/login/:restaurantId) 호출 후 토큰 저장.
+  // 백엔드가 꺼져있거나 식당이 등록되지 않은 경우엔 토큰 없이 localStorage 만 채우는
+  // 폴백으로 동작하여 UI 미리보기는 가능 (기존 동작 보존).
+  const performLogin = async (id: string, terminalName: string) => {
+    setBusy(true);
+    setError(null);
+    try {
+      try {
+        const result = await loginPOS(id, terminalName || undefined);
+        login({
+          restaurantId: result.restaurantId,
+          accessToken: result.accessToken,
+          user: {
+            id: "pos-terminal",
+            name: result.restaurantName ?? terminalName ?? "POS 단말",
+            role: "POS",
+          },
+        });
+        router.replace("/dashboard");
+        return;
+      } catch (apiErr) {
+        // 404(식당 미등록) 또는 네트워크 오류 → UI 미리보기 폴백
+        // 그 외 4xx/5xx 는 사용자에게 메시지 노출
+        if (apiErr instanceof ApiError && apiErr.status !== 404 && apiErr.code !== "NETWORK_ERROR") {
+          setError(apiErr.message);
+          return;
+        }
+        // 폴백: 토큰 없이 진입 (백엔드 합의 전 흐름과 동일)
+        login({
+          restaurantId: id,
+          user: {
+            id: "pos-terminal",
+            name: terminalName || "POS 단말",
+            role: "POS",
+          },
+        });
+        router.replace("/dashboard");
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "로그인 실패");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   const enterDemo = () => {
-    login({
-      restaurantId: DEMO.restaurantId,
-      user: {
-        id: "pos-terminal-demo",
-        name: DEMO.name,
-        role: "POS",
-      },
-    });
-    router.replace("/dashboard");
+    void performLogin(DEMO.restaurantId, DEMO.name);
   };
 
   const submit = (e: FormEvent) => {
@@ -47,22 +86,7 @@ export default function LoginPage() {
       setError("고유번호 형식이 올바르지 않습니다.");
       return;
     }
-    setBusy(true);
-    try {
-      login({
-        restaurantId: id,
-        user: {
-          id: "pos-terminal",
-          name: name.trim() || "POS 단말",
-          role: "POS",
-        },
-      });
-      router.replace("/dashboard");
-    } catch (err) {
-      setError(err instanceof Error ? err.message : "로그인 실패");
-    } finally {
-      setBusy(false);
-    }
+    void performLogin(id, name.trim());
   };
 
   return (
