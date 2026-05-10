@@ -33,6 +33,7 @@ export interface PosOrderResponse {
   totalPrice: number;
   totalAmount: number; // alias — Flutter PosOrder.totalAmount 호환
   paymentKey: string | null;
+  paymentMethod: string | null; // TOSS | CARD | CASH | SIMULATE | null
   createdAt: string;
   updatedAt: string;
   orderNumber: string;
@@ -56,7 +57,7 @@ export class PosService {
     let qb = this.supabase.client
       .from('orders')
       .select(`
-        id, session_id, user_id, restaurant_id, status, total_price, payment_key,
+        id, session_id, user_id, restaurant_id, status, total_price, payment_key, payment_method,
         created_at, updated_at,
         users(id, name, org),
         order_items(id, quantity, price, menu_items(id, name))
@@ -93,6 +94,7 @@ export class PosService {
         totalPrice: o.total_price,
         totalAmount: o.total_price, // alias
         paymentKey: o.payment_key ?? null,
+        paymentMethod: o.payment_method ?? null,
         createdAt: o.created_at,
         updatedAt: o.updated_at,
         orderNumber: this.formatOrderNumber(o.id),
@@ -106,7 +108,9 @@ export class PosService {
     });
   }
 
-  // ── POS-08: 결제 상태별 통계 ──────────────────────────
+  // ── POS-08: 결제 상태별 통계 + 결제수단별 매출 ────────
+  // 매출은 PAID 이상(PAID/PREPARING/READY/COMPLETED) 상태에서만 누적.
+  // CANCELLED 는 합산 제외.
   async getPaymentStats(restaurantId: string) {
     const orders = await this.getOrdersByRestaurant(restaurantId);
 
@@ -119,16 +123,57 @@ export class PosService {
       completed: 0,
       cancelled: 0,
       totalRevenue: 0,
+      // 결제수단별 매출 분리 (2026-05-13 추가, 백엔드 협의 #9b)
+      tossRevenue: 0,
+      cardRevenue: 0,
+      cashRevenue: 0,
+      simulateRevenue: 0,
     };
 
     for (const order of orders) {
+      let countAsRevenue = false;
       switch (order.status) {
-        case 'PENDING': stats.pending++; break;
-        case 'PAID': stats.paid++; stats.totalRevenue += order.totalPrice; break;
-        case 'PREPARING': stats.preparing++; stats.totalRevenue += order.totalPrice; break;
-        case 'READY': stats.ready++; stats.totalRevenue += order.totalPrice; break;
-        case 'COMPLETED': stats.completed++; stats.totalRevenue += order.totalPrice; break;
-        case 'CANCELLED': stats.cancelled++; break;
+        case 'PENDING':
+          stats.pending++;
+          break;
+        case 'PAID':
+          stats.paid++;
+          countAsRevenue = true;
+          break;
+        case 'PREPARING':
+          stats.preparing++;
+          countAsRevenue = true;
+          break;
+        case 'READY':
+          stats.ready++;
+          countAsRevenue = true;
+          break;
+        case 'COMPLETED':
+          stats.completed++;
+          countAsRevenue = true;
+          break;
+        case 'CANCELLED':
+          stats.cancelled++;
+          break;
+      }
+
+      if (countAsRevenue) {
+        stats.totalRevenue += order.totalPrice;
+        switch (order.paymentMethod) {
+          case 'TOSS':
+            stats.tossRevenue += order.totalPrice;
+            break;
+          case 'CARD':
+            stats.cardRevenue += order.totalPrice;
+            break;
+          case 'CASH':
+            stats.cashRevenue += order.totalPrice;
+            break;
+          case 'SIMULATE':
+          default:
+            stats.simulateRevenue += order.totalPrice;
+            break;
+        }
       }
     }
 

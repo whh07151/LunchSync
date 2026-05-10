@@ -69,6 +69,8 @@ export class OrdersService {
 
     // 3. orders 테이블 INSERT
     // restaurant_id 는 NOT NULL 제약이 있어 반드시 포함해야 함
+    // payment_method: 사용자가 선택한 결제수단 그대로 저장 → 매출 통계 분리에 사용
+    const paymentMethod = this.normalizePaymentMethod(dto.paymentMethod);
     const { data: order, error: orderError } = await this.supabase.client
       .from('orders')
       .insert({
@@ -77,6 +79,7 @@ export class OrdersService {
         restaurant_id: restaurantId,
         total_price: totalPrice,
         status: 'PENDING',
+        payment_method: paymentMethod,
       })
       .select('id, status, total_price, created_at')
       .single();
@@ -114,6 +117,17 @@ export class OrdersService {
       items: orderItems,
       createdAt: order.created_at,
     };
+  }
+
+  // ── 결제수단 정규화 ────────────────────────────────
+  // 클라이언트가 보낸 다양한 표기를 DB ENUM(TOSS/CARD/CASH/SIMULATE) 으로 매핑.
+  // 모르는 값은 SIMULATE 로 기본 처리 (캡스톤 시연 안전 폴백).
+  private normalizePaymentMethod(raw?: string): 'TOSS' | 'CARD' | 'CASH' | 'SIMULATE' {
+    const v = (raw ?? '').toUpperCase();
+    if (v === 'TOSS' || v === 'TRANSFER' || v === 'KAKAOPAY' || v === 'BANK') return 'TOSS';
+    if (v === 'CARD') return 'CARD';
+    if (v === 'CASH') return 'CASH';
+    return 'SIMULATE';
   }
 
   // ── CORE-10: 결제 처리 레이어 ─────────────────────────

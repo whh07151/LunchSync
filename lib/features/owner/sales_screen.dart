@@ -95,6 +95,8 @@ class _SalesScreenState extends ConsumerState<SalesScreen> {
                   children: [
                     _buildRevenueCard(),
                     const SizedBox(height: AppSpacing.md),
+                    _buildPaymentMethodBreakdown(),
+                    const SizedBox(height: AppSpacing.md),
                     _buildStatusGrid(),
                     const SizedBox(height: AppSpacing.md),
                     _buildHint(),
@@ -181,6 +183,92 @@ class _SalesScreenState extends ConsumerState<SalesScreen> {
     );
   }
 
+  // ── 결제수단별 매출 카드 ─────────────────────────────
+  // TOSS / CARD / CASH / SIMULATE 분리 — 0원이면 회색 처리.
+  Widget _buildPaymentMethodBreakdown() {
+    final s = _stats;
+    final total = s?.totalRevenue ?? 0;
+    final entries = <_MethodEntry>[
+      _MethodEntry('토스', s?.tossRevenue ?? 0, Icons.smartphone_rounded),
+      _MethodEntry('카드(매장)', s?.cardRevenue ?? 0, Icons.credit_card_rounded),
+      _MethodEntry('현금', s?.cashRevenue ?? 0, Icons.payments_outlined),
+      _MethodEntry('시뮬', s?.simulateRevenue ?? 0, Icons.science_outlined),
+    ];
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('결제수단별',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w700,
+              )),
+          const SizedBox(height: 10),
+          ...entries.map((e) => _buildMethodRow(e, total)),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMethodRow(_MethodEntry e, int total) {
+    final ratio = total > 0 ? e.amount / total : 0.0;
+    final isZero = e.amount == 0;
+    final color = isZero
+        ? AppColors.textSecondary
+        : Theme.of(context).colorScheme.primary;
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 4),
+      child: Row(
+        children: [
+          Icon(e.icon,
+              size: 18,
+              color: isZero ? AppColors.iconInactive : color),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 70,
+            child: Text(
+              e.label,
+              style: AppTextStyles.caption.copyWith(
+                color: isZero ? AppColors.textSecondary : AppColors.textPrimary,
+              ),
+            ),
+          ),
+          Expanded(
+            child: ClipRRect(
+              borderRadius: BorderRadius.circular(4),
+              child: LinearProgressIndicator(
+                value: ratio.clamp(0.0, 1.0),
+                minHeight: 6,
+                backgroundColor: AppColors.divider,
+                valueColor: AlwaysStoppedAnimation<Color>(color),
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          SizedBox(
+            width: 92,
+            child: Text(
+              '${_formatWon(e.amount)}원',
+              textAlign: TextAlign.right,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: isZero ? AppColors.textSecondary : AppColors.textPrimary,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildStatusGrid() {
     final s = _stats;
     final cells = [
@@ -257,7 +345,7 @@ class _SalesScreenState extends ConsumerState<SalesScreen> {
           const SizedBox(width: 8),
           Expanded(
             child: Text(
-              '일/주/월 분리 + 결제수단별 매출은 다음 단계에서 추가됩니다.',
+              '누적 매출 기준입니다. 일/주/월 분리는 다음 단계에서 추가됩니다.',
               style: AppTextStyles.caption
                   .copyWith(color: AppColors.textSecondary),
             ),
@@ -284,4 +372,11 @@ class _StatusCell {
   final int count;
   final IconData icon;
   final Color color;
+}
+
+class _MethodEntry {
+  const _MethodEntry(this.label, this.amount, this.icon);
+  final String label;
+  final int amount;
+  final IconData icon;
 }

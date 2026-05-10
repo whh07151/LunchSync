@@ -65,7 +65,7 @@ class PosOrder {
 /// 식당 결제 상태 통계 — 사장 홈 요약 카드용
 ///
 /// 백엔드 GET /api/pos/restaurants/:id/stats 응답 매핑.
-/// 명세상 결제 상태별 카운트 + 합계 매출 형태로 제공됨.
+/// 결제 상태별 카운트 + 합계 매출 + 결제수단별 매출(2026-05-13 추가) 제공.
 class PosStats {
   const PosStats({
     required this.pendingCount,
@@ -75,6 +75,10 @@ class PosStats {
     required this.completedCount,
     required this.cancelledCount,
     required this.totalRevenue,
+    this.tossRevenue = 0,
+    this.cardRevenue = 0,
+    this.cashRevenue = 0,
+    this.simulateRevenue = 0,
   });
 
   final int pendingCount;
@@ -84,6 +88,12 @@ class PosStats {
   final int completedCount;
   final int cancelledCount;
   final int totalRevenue;
+
+  // 결제수단별 매출 (백엔드 협의 #9b 반영)
+  final int tossRevenue;
+  final int cardRevenue;
+  final int cashRevenue;
+  final int simulateRevenue;
 
   /// 사장 홈 "대기 중" 카드 = PENDING + PAID (결제는 됐지만 아직 조리 전)
   int get waitingCount => pendingCount + paidCount;
@@ -105,6 +115,10 @@ class PosStats {
       totalRevenue: (json['totalRevenue'] as num?)?.toInt() ??
           (json['revenue'] as num?)?.toInt() ??
           0,
+      tossRevenue: (json['tossRevenue'] as num?)?.toInt() ?? 0,
+      cardRevenue: (json['cardRevenue'] as num?)?.toInt() ?? 0,
+      cashRevenue: (json['cashRevenue'] as num?)?.toInt() ?? 0,
+      simulateRevenue: (json['simulateRevenue'] as num?)?.toInt() ?? 0,
     );
   }
 
