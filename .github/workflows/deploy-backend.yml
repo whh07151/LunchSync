@@ -73,20 +73,15 @@ jobs:
             echo "npm: $(npm -v)"
             echo "----- NPM INSTALL -----"
             npm install 2>&1 | tail -20
-            echo "----- TSC BUILD (verbose+diagnostics) -----"
+            echo "----- BUILD (nest build, output captured) -----"
             rm -rf dist
-            # stdout/stderr 양쪽 모두 캡처 (SSH 가 stderr 를 가리는 경우 대비)
-            npx tsc -p tsconfig.build.json \
-              --listEmittedFiles \
-              --diagnostics \
-              --pretty false \
-              > /tmp/tsc.log 2>&1
-            TSC_EXIT=$?
-            echo "tsc exit code: $TSC_EXIT"
-            echo "----- TSC 출력 (last 80 lines) -----"
-            tail -80 /tmp/tsc.log
-            if [ $TSC_EXIT -ne 0 ]; then
-              echo "❌ TSC 빌드 실패 (exit $TSC_EXIT)"
+            npm run build > /tmp/build.log 2>&1
+            BUILD_EXIT=$?
+            echo "build exit code: $BUILD_EXIT"
+            echo "----- BUILD 출력 (last 80 lines) -----"
+            tail -80 /tmp/build.log || true
+            if [ $BUILD_EXIT -ne 0 ]; then
+              echo "❌ build 실패 (exit $BUILD_EXIT)"
               exit 1
             fi
             echo "----- DIST 산출물 -----"

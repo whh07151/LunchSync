@@ -1,13 +1,8 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
-
-// helmet 은 v8 부터 ESM 기본 export. NestJS 11 + Node 18 미만 환경에서
-// `import helmet from 'helmet'` 이 런타임 크래시를 일으킬 수 있어 CJS require 로
-// 로드한다 (NestExpressApplication.use 가 받는 미들웨어 시그니처는 동일).
-// eslint-disable-next-line @typescript-eslint/no-require-imports
-const helmet = require('helmet') as (opts?: object) => unknown;
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: NestJS 앱 진입점 (서버 시작 + 보안 미들웨어)
