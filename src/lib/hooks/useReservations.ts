@@ -1,23 +1,57 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  createReservation as apiCreateReservation,
+  deleteReservation as apiDeleteReservation,
+  listReservations as apiListReservations,
+  updateReservationStatus as apiUpdateStatus,
+} from "@/lib/api/reservations";
+import type {
+  CreateReservationPayload,
+  ReservationStatus,
+  RemoteReservation,
+} from "@/lib/api/reservations";
 
-// pos_memo §6-3, §8-2 — 웨이팅 / 예약 관리.
-// 백엔드 모델 미구현 → localStorage. 백엔드 합의 후 API 교체.
+// ══════════════════════════════════════════════════════════
+// 파일 역할: 예약/웨이팅 상태 관리 훅
+//
+// 동작 방식 (2026-05-14 백엔드 연동):
+//   - mount 시 GET /pos/reservations/:restaurantId 시도 → 백엔드 모드 진입.
+//   - 실패 시 localStorage 폴백.
+//   - 모든 mutation 은 백엔드 우선 호출, 실패 시 로컬에만 반영.
+//
+// 외부 시그니처는 기존 예약 페이지가 그대로 사용하도록 유지.
+// ══════════════════════════════════════════════════════════
 
 const STORAGE_KEY = (rid: string) => `ls_pos_reservations_${rid}`;
 
+export type { ReservationStatus };
 export type ReservationKind = "WAITING" | "RESERVATION";
 
+// 기존 페이지 호환용 — useReservations 외부 시그니처는 Reservation 인터페이스 유지
 export interface Reservation {
   id: string;
   kind: ReservationKind;
   customerName: string;
   partySize: number;
-  scheduledAt?: string; // RESERVATION 만 (예약 시각)
+  scheduledAt?: string;
   note?: string;
   createdAt: string;
-  status: "OPEN" | "SEATED" | "CANCELLED";
+  status: ReservationStatus;
+}
+
+function toReservation(r: RemoteReservation): Reservation {
+  return {
+    id: r.id,
+    kind: r.kind,
+    customerName: r.customerName,
+    partySize: r.partySize,
+    scheduledAt: r.scheduledAt ?? undefined,
+    note: r.note ?? undefined,
+    status: r.status,
+    createdAt: r.createdAt,
+  };
 }
 
 function newId(): string {
@@ -30,22 +64,42 @@ function newId(): string {
 export function useReservations(restaurantId: string | null) {
   const [list, setList] = useState<Reservation[]>([]);
   const [ready, setReady] = useState(false);
+  const usingBackendRef = useRef(false);
 
+  // ── 초기 로드 ─────────────────────────────────────────
   useEffect(() => {
-    if (!restaurantId || typeof window === "undefined") {
+    if (!restaurantId) {
       setReady(true);
       return;
     }
-    try {
-      const raw = window.localStorage.getItem(STORAGE_KEY(restaurantId));
-      if (raw) {
-        const parsed = JSON.parse(raw) as Reservation[];
-        if (Array.isArray(parsed)) setList(parsed);
+    let cancelled = false;
+    (async () => {
+      const remote = await apiListReservations(restaurantId);
+      if (cancelled) return;
+      if (remote !== null) {
+        usingBackendRef.current = true;
+        setList(remote.map(toReservation));
+        setReady(true);
+        return;
       }
-    } catch {
-      // ignore
-    }
-    setReady(true);
+      // localStorage 폴백
+      usingBackendRef.current = false;
+      if (typeof window !== "undefined") {
+        try {
+          const raw = window.localStorage.getItem(STORAGE_KEY(restaurantId));
+          if (raw) {
+            const parsed = JSON.parse(raw) as Reservation[];
+            if (Array.isArray(parsed)) setList(parsed);
+          }
+        } catch {
+          // ignore
+        }
+      }
+      setReady(true);
+    })();
+    return () => {
+      cancelled = true;
+    };
   }, [restaurantId]);
 
   const persist = useCallback(
@@ -55,17 +109,33 @@ export function useReservations(restaurantId: string | null) {
       try {
         window.localStorage.setItem(
           STORAGE_KEY(restaurantId),
-          JSON.stringify(next)
+          JSON.stringify(next),
         );
       } catch {
         // ignore
       }
     },
-    [restaurantId]
+    [restaurantId],
   );
 
   const add = useCallback(
-    (input: Omit<Reservation, "id" | "createdAt" | "status">) => {
+    async (input: Omit<Reservation, "id" | "createdAt" | "status">) => {
+      if (usingBackendRef.current && restaurantId) {
+        const payload: CreateReservationPayload = {
+          kind: input.kind,
+          customerName: input.customerName,
+          partySize: input.partySize,
+          scheduledAt: input.scheduledAt,
+          note: input.note,
+        };
+        const remote = await apiCreateReservation(restaurantId, payload);
+        if (remote) {
+          const r = toReservation(remote);
+          persist([...list, r]);
+          return r;
+        }
+      }
+      // 로컬 폴백
       const r: Reservation = {
         ...input,
         id: newId(),
@@ -75,19 +145,34 @@ export function useReservations(restaurantId: string | null) {
       persist([...list, r]);
       return r;
     },
-    [persist, list]
+    [persist, list, restaurantId],
   );
 
   const updateStatus = useCallback(
-    (id: string, status: Reservation["status"]) => {
+    async (id: string, status: ReservationStatus) => {
+      if (usingBackendRef.current) {
+        const remote = await apiUpdateStatus(id, status);
+        if (remote) {
+          persist(
+            list.map((r) => (r.id === id ? toReservation(remote) : r)),
+          );
+          return;
+        }
+      }
       persist(list.map((r) => (r.id === id ? { ...r, status } : r)));
     },
-    [persist, list]
+    [persist, list],
   );
 
   const remove = useCallback(
-    (id: string) => persist(list.filter((r) => r.id !== id)),
-    [persist, list]
+    async (id: string) => {
+      if (usingBackendRef.current) {
+        const ok = await apiDeleteReservation(id);
+        if (!ok) return; // 백엔드 실패 시 변경 없음
+      }
+      persist(list.filter((r) => r.id !== id));
+    },
+    [persist, list],
   );
 
   const stats = useMemo(() => {
