@@ -75,8 +75,10 @@ jobs:
             sleep 4
             echo "----- PM2 STATUS -----"
             pm2 status lunchsync-backend || true
-            echo "----- PM2 LOGS (LAST 40) -----"
-            pm2 logs lunchsync-backend --lines 40 --nostream || true
+            echo "----- PM2 LOGS OUT (LAST 30) -----"
+            pm2 logs lunchsync-backend --lines 30 --nostream --out || true
+            echo "----- PM2 LOGS ERR (LAST 50) -----"
+            pm2 logs lunchsync-backend --lines 50 --nostream --err || true
             echo "----- HEALTHCHECK -----"
             curl -sf --max-time 5 http://localhost:3000/api/health \
               && echo "HEALTHCHECK OK" \
