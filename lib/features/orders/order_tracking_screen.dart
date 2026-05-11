@@ -1,11 +1,13 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/orders_api_service.dart';
+import '../../services/sessions_api_service.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-20 주문 추적 화면
@@ -43,6 +45,10 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
   OrderDetailDto? _order;
   bool _isLoading = true;
   Timer? _poller;
+
+  // 더치페이 명세서를 위한 세션 멤버 수 (sessionId 로 조회)
+  // null = 미조회 / 0 = 조회 실패 / 1+ = 멤버 수
+  int? _memberCount;
 
   @override
   void initState() {
@@ -100,6 +106,24 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
         (detail.status == 'COMPLETED' || detail.status == 'CANCELLED')) {
       _poller?.cancel();
     }
+
+    // 세션 멤버 수 조회 (한 번만) — 더치페이 명세서 계산용
+    if (detail != null && _memberCount == null) {
+      _loadMemberCount(token, detail.sessionId);
+    }
+  }
+
+  // ── 세션 멤버 수 조회 (더치페이 계산) ───────────────────
+  // 멤버가 1명이면 명세서 미노출 (혼자 먹은 주문이므로 N분의1 의미 없음).
+  Future<void> _loadMemberCount(String token, String sessionId) async {
+    final result = await const SessionsApiService().getSessionMembers(
+      accessToken: token,
+      sessionId: sessionId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _memberCount = result?.members.length ?? 0;
+    });
   }
 
   @override
@@ -162,6 +186,12 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
               ),
             ],
           ),
+
+          // ── 더치페이 명세서 (2명 이상 세션일 때만) ─────────
+          if (_memberCount != null && _memberCount! > 1) ...[
+            const SizedBox(height: AppSpacing.md),
+            _buildDutchPayCard(order.totalPrice, _memberCount!),
+          ],
 
           const SizedBox(height: AppSpacing.md),
 
@@ -388,5 +418,85 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
       buffer.write(s[i]);
     }
     return buffer.toString();
+  }
+
+  // ── 더치페이 명세서 카드 ──────────────────────────────
+  // 총금액 / 인원수 = 1인당 금액 (정수 올림)
+  // "메시지 복사" 버튼 → 카카오톡 등 외부 앱에 붙여넣기 가능
+  //
+  // 디자인 가이드 (유사 앱 조사 결과):
+  //   배민 1위 페인 "내 부담액 모름" 직격 → 결제 직후 인당 금액을 명확히 노출
+  Widget _buildDutchPayCard(int totalPrice, int memberCount) {
+    final perPerson = (totalPrice / memberCount).ceil();
+    final primary = Theme.of(context).colorScheme.primary;
+    final message =
+        '점심 더치페이 안내\n총 ${_formatComma(totalPrice)}원 / $memberCount명\n'
+        '1인당 ${_formatComma(perPerson)}원\n'
+        '(LunchSync에서 자동 계산)';
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: primary.withAlpha(15),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: primary.withAlpha(60)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.calculate_rounded, size: 18, color: primary),
+              const SizedBox(width: 6),
+              Text(
+                '더치페이 자동 계산',
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Text(
+                '$memberCount명이 똑같이 나누면',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+              Text(
+                '1인당 ${_formatComma(perPerson)}원',
+                style: AppTextStyles.heading3.copyWith(color: primary),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          SizedBox(
+            width: double.infinity,
+            child: OutlinedButton.icon(
+              onPressed: () async {
+                await Clipboard.setData(ClipboardData(text: message));
+                if (!mounted) return;
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text('더치페이 메시지가 복사됐어요.'),
+                    duration: Duration(seconds: 2),
+                  ),
+                );
+              },
+              icon: const Icon(Icons.chat_bubble_outline_rounded, size: 16),
+              label: const Text('카톡에 보내기'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: primary,
+                side: BorderSide(color: primary.withAlpha(120)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 }

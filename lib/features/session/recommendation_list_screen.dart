@@ -5,6 +5,7 @@ import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/recommendations_api_service.dart';
+import '../../services/sessions_api_service.dart';
 import '../restaurant/restaurant_detail_screen.dart';
 import '../restaurant/restaurant_comparison_screen.dart';
 import 'recommendation_map_screen.dart';
@@ -156,7 +157,7 @@ class _RecommendationListScreenState
       body: SafeArea(
         child: _buildBody(),
       ),
-      // 비교 모드일 때만 하단에 "비교하기" CTA 노출
+      // 비교 모드면 비교 CTA, 아니면 "투표 시작" CTA 노출 (호스트만 의미 있음)
       bottomNavigationBar: _isCompareMode
           ? SafeArea(
               child: Padding(
@@ -168,8 +169,61 @@ class _RecommendationListScreenState
                 ),
               ),
             )
-          : null,
+          : SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.all(AppSpacing.md),
+                child: AppPrimaryButton(
+                  label: _isStartingVote ? '투표 시작 중...' : '투표 시작하기',
+                  onPressed: _isStartingVote ? null : _startVoting,
+                ),
+              ),
+            ),
     );
+  }
+
+  // 투표 상태 전이 진행 중인지 — 중복 클릭 방지
+  bool _isStartingVote = false;
+
+  // ── 투표 시작 — PATCH /sessions/:id/status { status: 'VOTING' } ──
+  // 백엔드가 호스트 권한을 검증. 호스트가 아니면 403/400 응답이 오므로 UI 에서
+  // 별도 권한 가드는 두지 않음 (호스트 정보를 캐시하지 않는 정책).
+  Future<void> _startVoting() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('로그인 정보가 없습니다.')),
+      );
+      return;
+    }
+
+    setState(() => _isStartingVote = true);
+
+    final ok = await const SessionsApiService().updateSessionStatus(
+      accessToken: token,
+      sessionId: widget.sessionId,
+      status: 'VOTING',
+    );
+
+    if (!mounted) return;
+    setState(() => _isStartingVote = false);
+
+    if (ok) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: const Text('투표가 시작됐어요! 멤버 모두에게 알림이 갈 거예요.'),
+          duration: const Duration(seconds: 2),
+          backgroundColor: Theme.of(context).colorScheme.primary,
+        ),
+      );
+      // 시연 흐름: 로비로 복귀 후 상태 갱신
+      Navigator.of(context).pop();
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('투표 시작에 실패했어요. 호스트만 시작할 수 있어요.'),
+        ),
+      );
+    }
   }
 
   Widget _buildBody() {

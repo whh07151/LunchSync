@@ -124,12 +124,18 @@ export class SessionsController {
   }
 
   // ── PATCH /api/sessions/:id/status ────────────────────
+  // 보안 패치: 호스트 검증 + 상태 전이 매트릭스 검증
   @Patch(':id/status')
   async updateSessionStatus(
+    @Req() req: { user: { userId: string } },
     @Param('id') id: string,
     @Body() dto: UpdateSessionStatusDto,
   ) {
-    const result = await this.sessionsService.updateSessionStatus(id, dto);
+    const result = await this.sessionsService.updateSessionStatus(
+      id,
+      req.user.userId,
+      dto,
+    );
     return { success: true, data: result };
   }
 
@@ -141,22 +147,34 @@ export class SessionsController {
   }
 
   // ── POST /api/sessions/:id/members ────────────────────
+  // 보안 패치: 호스트만 가능
   @Post(':id/members')
   async addMember(
+    @Req() req: { user: { userId: string } },
     @Param('id') id: string,
     @Body() dto: AddMemberDto,
   ) {
-    const result = await this.sessionsService.addMember(id, dto);
+    const result = await this.sessionsService.addMember(
+      id,
+      req.user.userId,
+      dto,
+    );
     return { success: true, data: result };
   }
 
   // ── DELETE /api/sessions/:id/members/:userId ──────────
+  // 보안 패치: 본인이 자기 자신 제거는 허용, 타인 제거는 호스트만
   @Delete(':id/members/:userId')
   async removeMember(
+    @Req() req: { user: { userId: string } },
     @Param('id') id: string,
     @Param('userId') userId: string,
   ) {
-    const result = await this.sessionsService.removeMember(id, userId);
+    const result = await this.sessionsService.removeMember(
+      id,
+      req.user.userId,
+      userId,
+    );
     return { success: true, data: result };
   }
 }

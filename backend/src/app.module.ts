@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { join } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -40,6 +42,16 @@ import { NotificationsModule } from './notifications/notifications.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+
+    // Rate Limiting — 보안 에이전트 Defense in Depth 권장
+    // 분당 100 요청 초과 시 429 Too Many Requests 응답
+    // 캡스톤 시연 트래픽엔 여유롭지만 봇/DDoS 기본 방어
+    ThrottlerModule.forRoot([
+      {
+        ttl: 60_000, // 60초
+        limit: 100,
+      },
+    ]),
 
     // 정적 파일 서빙 (toss-checkout.html 등)
     // 모바일 앱에서 인앱 WebView로 결제 페이지 접근 시 사용
@@ -90,6 +102,13 @@ import { NotificationsModule } from './notifications/notifications.module';
     NotificationsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // Rate limiting 전역 적용 (모든 엔드포인트)
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

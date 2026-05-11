@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -82,8 +83,7 @@ class NotificationsApiService {
       }
       return [];
     } catch (e) {
-      // ignore: avoid_print
-      print('[NotificationsApiService] getMyNotifications 에러: $e');
+      debugPrint('[NotificationsApiService] getMyNotifications 에러: $e');
       return [];
     }
   }

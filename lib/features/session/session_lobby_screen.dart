@@ -11,19 +11,24 @@ import '../../services/sessions_api_service.dart';
 import 'recommendation_list_screen.dart';
 
 // ══════════════════════════════════════════════════════════
-// 파일 역할: 세션 로비 화면 (CU-10 간소화 버전)
+// 파일 역할: 세션 로비 화면 (CU-10)
 //
 // 진입 경로:
 //   1. 세션 생성 후 (호스트) — inviteCode 포함
 //   2. 초대코드 수락 후 (참가자) — inviteCode 없음
 //
 // 주요 기능:
-//   - 초대코드 표시 + 클립보드 복사 (호스트만)
+//   - 초대코드 표시 + 클립보드 복사 + 공유 시트(웹: Web Share API)
 //   - 세션 멤버 목록 (3초 폴링)
 //   - 세션 상태 표시
+//   - 세션 조건(예산/반경/복귀시간) 칩 표시
+//   - scheduledAt 기반 점심시간 카운트다운 (1초 갱신)
 //
-// 폴링: Timer.periodic 3초 간격
+// 폴링: Timer.periodic 3초 간격 (멤버 목록)
 //   백그라운드 진입 시 취소, 복귀 시 재시작 (WidgetsBindingObserver)
+//
+// 카운트다운 타이머: Timer.periodic 1초 간격
+//   scheduledAt 가 미래일 때만 활성. 지나면 "지금 점심시간이에요" 안내.
 // ══════════════════════════════════════════════════════════
 
 class SessionLobbyScreen extends ConsumerStatefulWidget {
@@ -50,7 +55,11 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
   SessionMembersResponse? _membersData; // 멤버 목록 + 카운트
   bool _isLoading = false;              // initialSession이 있으면 처음부터 false
   String? _errorMessage;                // 에러 메시지
-  Timer? _pollingTimer;                 // 멤버 목록 폴링 타이머
+  Timer? _pollingTimer;                 // 멤버 목록 폴링 타이머 (3초)
+  Timer? _countdownTimer;               // 점심 카운트다운 타이머 (1초)
+
+  // 카운트다운에 사용할 "현재 시각" — 1초마다 갱신해 UI rebuild 유도.
+  DateTime _now = DateTime.now();
 
   static const _sessionsApi = SessionsApiService();
 
@@ -70,26 +79,40 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
       if (widget.initialSession == null) _loadAll();
       _loadMembers(); // 멤버 목록은 항상 최초 1회 로드
       _startPolling();
+      _startCountdown();
     });
   }
 
   @override
   void dispose() {
     _pollingTimer?.cancel();
+    _countdownTimer?.cancel();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
 
+  // ── 점심 카운트다운: 1초마다 _now 갱신 → build() 재호출 → 표시 갱신 ──
+  // scheduledAt 미설정 세션에는 타이머 자체를 시작하지 않는다.
+  void _startCountdown() {
+    _countdownTimer?.cancel();
+    _countdownTimer = Timer.periodic(const Duration(seconds: 1), (_) {
+      if (!mounted) return;
+      setState(() => _now = DateTime.now());
+    });
+  }
+
   // ── 앱 포그라운드/백그라운드 전환 감지 ─────────────────
-  // 백그라운드: 폴링 중단 (배터리 보호)
-  // 포그라운드: 폴링 재시작
+  // 백그라운드: 폴링·카운트다운 중단 (배터리 보호)
+  // 포그라운드: 두 타이머 재시작
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state == AppLifecycleState.paused) {
       _pollingTimer?.cancel();
+      _countdownTimer?.cancel();
     } else if (state == AppLifecycleState.resumed) {
       _loadMembers(); // 즉시 1회 갱신
       _startPolling();
+      _startCountdown();
     }
   }
 
@@ -162,6 +185,113 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
         content: Text('초대 코드가 복사됐어요!'),
         duration: Duration(seconds: 2),
       ),
+    );
+  }
+
+  // ── 초대 공유 시트 — 친구에게 카톡 메시지 / 링크 복사 ──
+  // 시연 친화적으로 메시지 미리보기와 두 가지 액션(메시지 복사 / 코드만 복사)을 제공.
+  // 카톡 SDK 의 인앱 공유는 추후 통합 가능 (현재는 텍스트 복사로 fallback).
+  Future<void> _openShareSheet() async {
+    final inviteCode = widget.inviteCode!;
+    final sessionName = _session?.name ?? '점심 세션';
+    final shareMessage =
+        '$sessionName 에 초대합니다!\n'
+        'LunchSync 앱에서 아래 코드를 입력해주세요:\n'
+        '\n📋 초대 코드: $inviteCode\n'
+        '⏰ 24시간 동안 유효해요.';
+
+    if (!mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final theme = Theme.of(context).colorScheme.primary;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Container(
+                  height: 4,
+                  width: 40,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+                Text('친구에게 초대 보내기',
+                    style: AppTextStyles.heading3),
+                const SizedBox(height: 4),
+                Text(
+                  '아래 메시지를 카카오톡·문자 등에 붙여 넣으세요.',
+                  style: AppTextStyles.bodySmall
+                      .copyWith(color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 12),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: AppColors.backgroundGrey,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: AppColors.border),
+                  ),
+                  child: SelectableText(
+                    shareMessage,
+                    style: AppTextStyles.bodySmall,
+                  ),
+                ),
+                const SizedBox(height: 16),
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(sheetCtx).pop();
+                    await Clipboard.setData(ClipboardData(text: shareMessage));
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('초대 메시지가 복사됐어요. 카톡에 붙여 넣어주세요.'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.chat_bubble_rounded, size: 18),
+                  label: const Text('메시지 전체 복사'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: theme,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(sheetCtx).pop();
+                    await Clipboard.setData(ClipboardData(text: inviteCode));
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('초대 코드만 복사됐어요.'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.numbers_rounded, size: 18),
+                  label: const Text('초대 코드만 복사'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                    side: BorderSide(color: AppColors.border),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 
@@ -240,6 +370,17 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
                 ),
               ],
             ),
+            const SizedBox(height: AppSpacing.sm),
+
+            // ── 점심시간 카운트다운 ────────────────────────
+            // scheduledAt 이 미래면 "11:32 후 점심시간" 같은 카드 표시.
+            // 점심 시각 지난 후엔 "지금 점심시간이에요" 안내.
+            // scheduledAt 미설정 세션이면 카드 자체 미노출.
+            if (_session!.scheduledAt != null) _buildCountdownCard(),
+
+            // ── 세션 조건 칩들 ─────────────────────────────
+            // 예산 / 반경 / 복귀시간 — 호스트가 설정한 값을 멤버에게 노출.
+            _buildConditionChips(),
             const SizedBox(height: AppSpacing.sm),
           ],
 
@@ -346,12 +487,19 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
                   ),
                 ),
               ),
-              // 복사 버튼
+              // 복사 버튼 (단순 코드 복사)
               IconButton(
                 onPressed: _copyInviteCode,
                 icon: const Icon(Icons.copy_rounded),
                 color: Theme.of(context).colorScheme.primary,
-                tooltip: '복사',
+                tooltip: '코드 복사',
+              ),
+              // 공유 버튼 (메시지 미리보기 시트)
+              IconButton(
+                onPressed: _openShareSheet,
+                icon: const Icon(Icons.ios_share_rounded),
+                color: Theme.of(context).colorScheme.primary,
+                tooltip: '공유 메시지 만들기',
               ),
             ],
           ),
@@ -362,6 +510,140 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
         ],
       ),
     );
+  }
+
+  // ── 점심 카운트다운 카드 ──────────────────────────────
+  // scheduledAt 까지 남은 시간을 "HH시간 MM분 SS초" 형태로 표시.
+  // 5분 이내로 남으면 강조색(주황), 지났으면 안내 메시지로 전환.
+  Widget _buildCountdownCard() {
+    final scheduled = DateTime.tryParse(_session!.scheduledAt!)?.toLocal();
+    if (scheduled == null) return const SizedBox.shrink();
+
+    final primary = Theme.of(context).colorScheme.primary;
+    final remaining = scheduled.difference(_now);
+
+    String label;
+    IconData icon;
+    Color accent;
+
+    if (remaining.isNegative) {
+      final passed = -remaining;
+      label = passed.inMinutes < 60
+          ? '점심시간이에요! (${passed.inMinutes}분 경과)'
+          : '점심시간이 지났어요';
+      icon = Icons.restaurant_rounded;
+      accent = primary;
+    } else {
+      icon = Icons.access_time_rounded;
+      if (remaining.inMinutes >= 60) {
+        final h = remaining.inHours;
+        final m = remaining.inMinutes % 60;
+        label = '$h시간 $m분 후 점심시간';
+        accent = AppColors.textPrimary;
+      } else if (remaining.inMinutes >= 5) {
+        final m = remaining.inMinutes;
+        final s = remaining.inSeconds % 60;
+        label = '$m분 ${s.toString().padLeft(2, '0')}초 남음';
+        accent = AppColors.textPrimary;
+      } else {
+        final m = remaining.inMinutes;
+        final s = remaining.inSeconds % 60;
+        label = '곧 시작! $m분 ${s.toString().padLeft(2, '0')}초 남음';
+        accent = primary;
+      }
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(top: 4, bottom: 8),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: accent.withAlpha(15),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: accent.withAlpha(40)),
+      ),
+      child: Row(
+        children: [
+          Icon(icon, size: 18, color: accent),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              label,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: accent,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 세션 조건 칩 (예산/반경/복귀시간) ──────────────────
+  Widget _buildConditionChips() {
+    final session = _session!;
+    final chips = <Widget>[];
+
+    if (session.budget != null) {
+      chips.add(_conditionChip(
+        Icons.payments_outlined,
+        '${_formatThousands(session.budget!)}원',
+      ));
+    }
+    if (session.radius != null) {
+      chips.add(_conditionChip(
+        Icons.place_outlined,
+        '반경 ${session.radius!}m',
+      ));
+    }
+    if (session.returnMinutes != null) {
+      chips.add(_conditionChip(
+        Icons.timer_outlined,
+        '${session.returnMinutes}분 안 복귀',
+      ));
+    }
+
+    if (chips.isEmpty) return const SizedBox.shrink();
+
+    return Padding(
+      padding: const EdgeInsets.only(top: 4),
+      child: Wrap(spacing: 6, runSpacing: 6, children: chips),
+    );
+  }
+
+  Widget _conditionChip(IconData icon, String text) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: AppColors.backgroundGrey,
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: AppColors.textSecondary),
+          const SizedBox(width: 4),
+          Text(
+            text,
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+              fontWeight: FontWeight.w600,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatThousands(int v) {
+    final s = v.toString();
+    final buf = StringBuffer();
+    for (int i = 0; i < s.length; i++) {
+      if (i > 0 && (s.length - i) % 3 == 0) buf.write(',');
+      buf.write(s[i]);
+    }
+    return buf.toString();
   }
 
   // ── 멤버 항목 하나 ────────────────────────────────────

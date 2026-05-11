@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
@@ -310,34 +311,12 @@ class _NotificationScreenState extends ConsumerState<NotificationScreen> {
     return '$y-$m-$d';
   }
 
-  // ── 빈 상태 위젯 ──────────────────────────────────────
+  // ── 빈 상태 위젯 — AppEmptyState 컴포넌트로 일관화 ────
   Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(
-            Icons.notifications_none_rounded,
-            size: 64,
-            color: AppColors.textSecondary.withAlpha(80),
-          ),
-          const SizedBox(height: AppSpacing.md),
-          Text(
-            '새 알림이 없어요',
-            style: AppTextStyles.bodyLarge.copyWith(
-              color: AppColors.textSecondary,
-              fontWeight: FontWeight.w500,
-            ),
-          ),
-          const SizedBox(height: AppSpacing.xs),
-          Text(
-            '점심 세션 진행 중 알림이 여기에 표시됩니다',
-            style: AppTextStyles.bodySmall.copyWith(
-              color: AppColors.textSecondary,
-            ),
-          ),
-        ],
-      ),
+    return const AppEmptyState(
+      icon: Icons.notifications_none_rounded,
+      title: '새 알림이 없어요',
+      description: '점심 세션 진행 중 알림이 여기에 표시돼요',
     );
   }
 }

@@ -5,7 +5,7 @@ import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/invitations_api_service.dart'
-    show InvitationsApiService, AcceptInvitationResult, AcceptSuccess, AcceptDuplicate, AcceptInvalid;
+    show InvitationsApiService, AcceptSuccess, AcceptDuplicate, AcceptInvalid;
 import 'session_lobby_screen.dart';
 
 // ══════════════════════════════════════════════════════════

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
@@ -14,12 +15,21 @@ import 'order_tracking_screen.dart';
 //
 // 동작:
 //   - 최초 진입 시 한 번 조회
-//   - "새로고침" 버튼으로 수동 갱신
+//   - "새로고침" 버튼으로 수동 갱신 (Pull-to-refresh)
 //   - 카드 탭 → CU-20 주문 추적 화면으로 이동
+//
+// historyMode:
+//   - false (기본): 오늘 주문만 표시 (탭 "주문현황")
+//   - true        : 같은 GET /orders/today 결과를 "내역" 탭에서 재사용 (캡스톤 단순화).
+//                   backend 에 별도의 GET /orders/history 엔드포인트가 생기면
+//                   이 분기에서 다른 API 를 호출하도록 교체.
 // ══════════════════════════════════════════════════════════
 
 class OrderListScreen extends ConsumerStatefulWidget {
-  const OrderListScreen({super.key});
+  const OrderListScreen({super.key, this.historyMode = false});
+
+  /// true 면 "내역" 탭 모드 — 빈 상태 메시지를 다르게 표시.
+  final bool historyMode;
 
   @override
   ConsumerState<OrderListScreen> createState() => _OrderListScreenState();
@@ -35,7 +45,7 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen> {
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      DebugToast.show(context, '주문현황');
+      DebugToast.show(context, widget.historyMode ? '내역' : '주문현황');
       _load();
     });
   }
@@ -69,23 +79,19 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen> {
     final orders = _orders ?? const <OrderSummaryDto>[];
 
     if (orders.isEmpty) {
+      // 빈 상태 — AppEmptyState 컴포넌트로 일관화 (디자이너 가이드 P0)
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          const SizedBox(height: 100),
-          Icon(
-            Icons.receipt_long_outlined,
-            size: 48,
-            color: AppColors.iconInactive,
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Center(
-            child: Text(
-              '오늘 주문 내역이 없어요',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.textSecondary,
-              ),
-            ),
+          const SizedBox(height: AppSpacing.xxl),
+          AppEmptyState(
+            icon: Icons.receipt_long_outlined,
+            title: widget.historyMode
+                ? '아직 주문 내역이 없어요'
+                : '오늘 주문 내역이 없어요',
+            description: widget.historyMode
+                ? '첫 점심 주문을 만들어볼까요?'
+                : '오늘은 어떤 점심을 함께할까요?',
           ),
         ],
       );

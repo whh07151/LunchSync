@@ -63,6 +63,8 @@ class _RestaurantDetailScreenState
   }
 
   // ── 식당 기본 정보 조회 ────────────────────────────────
+  // getRestaurantById 단건 조회 — 이전엔 전체 목록 받아 필터링했지만
+  // restaurants 테이블이 커지면 비효율이라 백엔드 :id 라우트를 사용.
   Future<void> _loadDetail() async {
     final token = ref.read(userProvider).accessToken;
     if (token == null) {
@@ -70,19 +72,12 @@ class _RestaurantDetailScreenState
       return;
     }
 
-    // restaurants API에 getRestaurantById가 없으므로 getRestaurants 후 필터
-    // (추후 service에 getById 헬퍼 추가 시 교체)
-    final list = await _restaurantsApi.getRestaurants(accessToken: token);
+    final found = await _restaurantsApi.getRestaurantById(
+      accessToken: token,
+      restaurantId: widget.restaurantId,
+    );
+
     if (!mounted) return;
-
-    RestaurantDto? found;
-    for (final r in list) {
-      if (r.id == widget.restaurantId) {
-        found = r;
-        break;
-      }
-    }
-
     setState(() {
       _restaurant = found;
       _isRestaurantLoading = false;

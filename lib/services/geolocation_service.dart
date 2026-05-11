@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:geolocator/geolocator.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -50,8 +51,7 @@ class GeolocationService {
       // ① OS 위치 서비스(GPS) 활성 여부 — 꺼져 있으면 측정 자체 불가
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        // ignore: avoid_print
-        print('[GeolocationService] OS 위치 서비스가 꺼져 있습니다.');
+        debugPrint('[GeolocationService] OS 위치 서비스가 꺼져 있습니다.');
         return null;
       }
 
@@ -62,16 +62,14 @@ class GeolocationService {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          // ignore: avoid_print
-          print('[GeolocationService] 사용자가 권한을 거부했습니다.');
+          debugPrint('[GeolocationService] 사용자가 권한을 거부했습니다.');
           return null;
         }
       }
 
       // 영구 거부 상태면 앱 설정으로 직접 이동해야 함
       if (permission == LocationPermission.deniedForever) {
-        // ignore: avoid_print
-        print('[GeolocationService] 권한 영구 거부 — 앱 설정에서 직접 허용 필요');
+        debugPrint('[GeolocationService] 권한 영구 거부 — 앱 설정에서 직접 허용 필요');
         return null;
       }
 
@@ -84,8 +82,7 @@ class GeolocationService {
       );
       return position;
     } catch (e) {
-      // ignore: avoid_print
-      print('[GeolocationService] 위치 조회 에러: $e');
+      debugPrint('[GeolocationService] 위치 조회 에러: $e');
       return null;
     }
   }
@@ -114,8 +111,7 @@ class GeolocationService {
       // ① OS 위치 서비스 활성 여부
       final serviceEnabled = await Geolocator.isLocationServiceEnabled();
       if (!serviceEnabled) {
-        // ignore: avoid_print
-        print('[GeolocationService:stream] OS 위치 서비스가 꺼져 있습니다.');
+        debugPrint('[GeolocationService:stream] OS 위치 서비스가 꺼져 있습니다.');
         return;
       }
 
@@ -124,14 +120,12 @@ class GeolocationService {
       if (permission == LocationPermission.denied) {
         permission = await Geolocator.requestPermission();
         if (permission == LocationPermission.denied) {
-          // ignore: avoid_print
-          print('[GeolocationService:stream] 사용자가 권한을 거부했습니다.');
+          debugPrint('[GeolocationService:stream] 사용자가 권한을 거부했습니다.');
           return;
         }
       }
       if (permission == LocationPermission.deniedForever) {
-        // ignore: avoid_print
-        print('[GeolocationService:stream] 권한 영구 거부 — 설정에서 직접 허용 필요');
+        debugPrint('[GeolocationService:stream] 권한 영구 거부 — 설정에서 직접 허용 필요');
         return;
       }
 
@@ -143,8 +137,7 @@ class GeolocationService {
         ),
       );
     } catch (e) {
-      // ignore: avoid_print
-      print('[GeolocationService:stream] 스트림 에러: $e');
+      debugPrint('[GeolocationService:stream] 스트림 에러: $e');
     }
   }
 }

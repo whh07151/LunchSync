@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -90,8 +91,7 @@ class RecommendationsApiService {
       }
       return [];
     } catch (e) {
-      // ignore: avoid_print
-      print('[RecommendationsApiService] getRecommendations 에러: $e');
+      debugPrint('[RecommendationsApiService] getRecommendations 에러: $e');
       return [];
     }
   }

@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -22,6 +23,13 @@ class UserProfile {
     this.budget,
     this.speed,
     this.role,
+    this.status,
+    this.authProvider,
+    this.email,
+    this.phoneNumber,
+    this.businessName,
+    this.businessNumber,
+    this.restaurantId,
     this.allergies = const [],
     this.dislikes = const [],
   });
@@ -34,6 +42,14 @@ class UserProfile {
   final int? budget;           // 예산 조건
   final String? speed;         // 속도 조건
   final String? role;          // CUSTOMER | OWNER
+  // 회원가입/인증 결정(2026-05-07) 추가 필드
+  final String? status;          // PENDING | APPROVED | REJECTED
+  final String? authProvider;    // KAKAO | EMAIL | PHONE
+  final String? email;
+  final String? phoneNumber;
+  final String? businessName;    // OWNER 가게 상호
+  final String? businessNumber;  // OWNER 사업자등록번호
+  final String? restaurantId;    // OWNER가 운영하는 restaurants.id (운영자가 콘솔에서 매핑)
   final List<String> allergies; // 알레르기 목록 (CU-04)
   final List<String> dislikes;  // 비선호 음식 목록 (CU-04)
 
@@ -48,6 +64,13 @@ class UserProfile {
       budget: json['budget'] as int?,
       speed: json['speed'] as String?,
       role: json['role'] as String?,
+      status: json['status'] as String?,
+      authProvider: json['authProvider'] as String?,
+      email: json['email'] as String?,
+      phoneNumber: json['phoneNumber'] as String?,
+      businessName: json['businessName'] as String?,
+      businessNumber: json['businessNumber'] as String?,
+      restaurantId: json['restaurantId'] as String?,
       allergies: (json['allergies'] as List<dynamic>?)?.cast<String>() ?? [],
       dislikes: (json['dislikes'] as List<dynamic>?)?.cast<String>() ?? [],
     );
@@ -79,8 +102,7 @@ class UsersApiService {
 
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[UsersApiService] getMe 에러: $e');
+      debugPrint('[UsersApiService] getMe 에러: $e');
       return null;
     }
   }
@@ -98,6 +120,9 @@ class UsersApiService {
     String? speed,
     List<String>? allergies,
     List<String>? dislikes,
+    // OWNER 전용 — 사장 내정보 탭에서 상호/사업자번호 수정
+    String? businessName,
+    String? businessNumber,
   }) async {
     try {
       // null이 아닌 필드만 요청 바디에 포함
@@ -109,6 +134,8 @@ class UsersApiService {
       if (speed != null) body['speed'] = speed;
       if (allergies != null) body['allergies'] = allergies;
       if (dislikes != null) body['dislikes'] = dislikes;
+      if (businessName != null) body['businessName'] = businessName;
+      if (businessNumber != null) body['businessNumber'] = businessNumber;
 
       final response = await http.patch(
         Uri.parse('${AppConfig.backendBaseUrl}/users/me'),

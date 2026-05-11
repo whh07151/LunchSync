@@ -1,5 +1,6 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { FirebaseService } from '../auth/firebase.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 알림(notifications) 비즈니스 로직
@@ -28,7 +29,13 @@ export interface NotificationDto {
 
 @Injectable()
 export class NotificationsService {
-  constructor(private readonly supabase: SupabaseService) {}
+  private readonly logger = new Logger(NotificationsService.name);
+
+  constructor(
+    private readonly supabase: SupabaseService,
+    // FCM 푸시 송신용 — 미초기화 환경에서도 동작 (sendPush 가 안전 false 반환)
+    private readonly firebase: FirebaseService,
+  ) {}
 
   // ── GET /notifications — 내 알림 목록 ────────────────
   // 최신순으로 정렬. 페이지네이션은 추후 limit/offset 추가 가능.
@@ -92,11 +99,16 @@ export class NotificationsService {
   // ── 알림 생성 (다른 모듈에서 호출하는 내부 메서드) ────
   // orders, votes 모듈 등에서 이벤트 발생 시 호출.
   // 예) 주문 상태가 PAID → 점주에게 ORDER_RECEIVED 알림 생성.
+  //
+  // DB 저장과 별개로 사용자의 fcm_token 이 있으면 FCM 푸시도 함께 송신.
+  // 푸시 송신 실패는 비즈니스 흐름을 막지 않음 (DB 저장은 무조건 성공).
   async createNotification(params: {
     userId: string;
     type: string;
     title: string;
     message: string;
+    // 클라이언트가 받을 수 있는 딥링크용 페이로드 (예: { orderId, sessionId })
+    pushData?: Record<string, string>;
   }): Promise<NotificationDto> {
     const { data, error } = await this.supabase.client
       .from('notifications')
@@ -114,6 +126,20 @@ export class NotificationsService {
       throw new Error(`알림 생성 실패: ${error?.message}`);
     }
 
+    // ── FCM 푸시 송신 (best-effort) ──────────────────────
+    // fcm_token 조회 → 있으면 송신, 없으면 건너뜀.
+    // 토큰 만료/네트워크 오류는 sendPush 내부에서 swallow.
+    void this.sendPushIfPossible({
+      userId: params.userId,
+      title: params.title,
+      body: params.message,
+      data: {
+        type: params.type,
+        notificationId: data.id,
+        ...(params.pushData ?? {}),
+      },
+    });
+
     return {
       id: data.id,
       type: data.type,
@@ -122,5 +148,37 @@ export class NotificationsService {
       isRead: data.is_read,
       createdAt: data.created_at,
     };
+  }
+
+  // ── 내부: 사용자 fcm_token 조회 후 푸시 송신 ──────────
+  // 노티 생성과 비동기로 분리 (push 실패가 응답을 느리게 만들지 않도록).
+  private async sendPushIfPossible(params: {
+    userId: string;
+    title: string;
+    body: string;
+    data: Record<string, string>;
+  }): Promise<void> {
+    try {
+      const { data: user } = await this.supabase.client
+        .from('users')
+        .select('fcm_token')
+        .eq('id', params.userId)
+        .single();
+
+      const token = user?.fcm_token as string | null | undefined;
+      if (!token) return; // 토큰 미저장 — 푸시 건너뜀
+
+      await this.firebase.sendPush({
+        token,
+        title: params.title,
+        body: params.body,
+        data: params.data,
+      });
+    } catch (err) {
+      // FCM 송신은 best-effort — 실패해도 비즈니스 흐름 계속 진행
+      this.logger.warn(
+        `FCM 푸시 송신 시도 중 오류 (무시): ${(err as Error).message}`,
+      );
+    }
   }
 }

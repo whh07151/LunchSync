@@ -71,4 +71,14 @@ class AppConfig {
 
   /// 결제 실패 시 리다이렉트될 경로
   static const String tossFailUrl = 'http://localhost:8080/payment/fail';
+
+  // ══════════════════════════════════════════════════════════
+  // 네트워크 안정성 (프론트 에이전트 권장 — 2026-05-11)
+  // ══════════════════════════════════════════════════════════
+
+  /// 모든 HTTP 호출 기본 타임아웃 — 느린 네트워크에서 무한 로딩 방지
+  static const Duration apiTimeout = Duration(seconds: 10);
+
+  /// 401 응답 시 자동 로그아웃 처리 활성화 여부
+  static const bool autoLogoutOn401 = true;
 }
