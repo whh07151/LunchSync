@@ -5,6 +5,7 @@ import '../../core/debug/debug_toast.dart';
 import '../../services/kakao_auth_service.dart';
 import '../../services/auth_api_service.dart';
 import '../../providers/user_provider.dart';
+import 'phone_verify_screen.dart';
 import 'signup_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -147,6 +148,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         builder: (_) => SignupScreen(
           onSignupSuccess: ({required String nextStep}) {
             // 회원가입 성공 → 로그인 화면을 팝하고 main.dart의 라우터에 위임
+            widget.onLoginSuccess(nextStep: nextStep);
+          },
+        ),
+      ),
+    );
+  }
+
+  // ── 휴대폰 인증 로그인 진입 ─────────────────────────────
+  // Firebase Phone Auth — 번호 입력 → SMS OTP → 백엔드 /auth/verify-phone
+  // 전화번호로 기존 사용자 조회되면 로그인, 없으면 신규 CUSTOMER 가입.
+  void _goToPhoneLogin() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => PhoneVerifyScreen(
+          nextStep: 'HOME',          // 백엔드가 응답으로 덮어쓸 기본값
+          allowSkip: false,           // 단독 로그인 흐름이므로 건너뛰기 비활성
+          onComplete: ({required String nextStep}) {
             widget.onLoginSuccess(nextStep: nextStep);
           },
         ),
@@ -350,8 +368,32 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
         // ── 카카오 로그인 버튼 ─────────────────────────────
         _buildKakaoButton(),
+        const SizedBox(height: AppSpacing.sm),
+
+        // ── 휴대폰으로 시작하기 버튼 ─────────────────────
+        _buildPhoneButton(),
         const SizedBox(height: AppSpacing.lg),
       ],
+    );
+  }
+
+  Widget _buildPhoneButton() {
+    final isLoading = _isKakaoLoading || _isEmailLoading;
+    return OutlinedButton.icon(
+      onPressed: isLoading ? null : _goToPhoneLogin,
+      icon: const Icon(Icons.smartphone_rounded, size: 20),
+      label: const Text(
+        '휴대폰 번호로 시작하기',
+        style: TextStyle(fontWeight: FontWeight.w600),
+      ),
+      style: OutlinedButton.styleFrom(
+        minimumSize: const Size.fromHeight(52),
+        side: BorderSide(color: AppColors.border),
+        foregroundColor: AppColors.textPrimary,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.button),
+        ),
+      ),
     );
   }
 

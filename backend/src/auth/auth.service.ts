@@ -2,11 +2,13 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  Logger,
   UnauthorizedException,
 } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import { SupabaseService } from '../supabase/supabase.service';
+import { FirebaseService } from './firebase.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 인증 비즈니스 로직 — 카카오 + 이메일 + (추후) 휴대폰
@@ -62,12 +64,15 @@ export interface AuthResult {
 
 @Injectable()
 export class AuthService {
+  private readonly logger = new Logger(AuthService.name);
+
   // bcrypt salt rounds — 10이 일반 권장값 (해시 한 번에 약 100ms)
   private readonly BCRYPT_SALT_ROUNDS = 10;
 
   constructor(
     private readonly supabase: SupabaseService,
     private readonly jwtService: JwtService,
+    private readonly firebase: FirebaseService,
   ) {}
 
   // ════════════════════════════════════════════════════════
@@ -297,6 +302,212 @@ export class AuthService {
         id: user.id,
         name: user.name,
         profileImage: user.profile_image,
+        role: userRole,
+        status: userStatus,
+      },
+    };
+  }
+
+  // ════════════════════════════════════════════════════════
+  // 4) 휴대폰 인증 (Firebase Phone Auth)
+  // ════════════════════════════════════════════════════════
+
+  // ── Firebase ID 토큰 검증 + 사용자 갱신/생성 ────────────
+  // Flutter → POST /auth/verify-phone { idToken, existingUserId? } 처리.
+  //
+  // 두 가지 모드를 지원한다:
+  //   (A) existingUserId 전달  : 로그인 중인 사용자에게 휴대폰 본인확인을 붙임
+  //                             - users.phone_number / phone_verified_at 갱신
+  //                             - nextStep 은 기존 사용자 로직 그대로 계산
+  //   (B) existingUserId 미전달: 전화번호 기반으로 사용자 조회.
+  //                             - 일치 사용자 있음 → 로그인 처리
+  //                             - 없음 → CUSTOMER 신규 가입 (auth_provider='PHONE')
+  //
+  // 카카오 로그인과 동일하게 AuthResult 를 반환해 Flutter 측 라우팅을 통일.
+  async phoneVerify(params: {
+    idToken: string;
+    existingUserId?: string;
+  }): Promise<AuthResult> {
+    const { idToken, existingUserId } = params;
+
+    // ── 1단계: Firebase ID 토큰 검증 ──
+    // verifyIdToken 내부에서 401 처리됨. 여기까지 오면 토큰은 유효.
+    const { uid, phoneNumber } = await this.firebase.verifyIdToken(idToken);
+
+    if (!phoneNumber) {
+      // 토큰은 유효하지만 phone_number 클레임이 비어 있음 — Phone Auth 가 아닌 토큰.
+      throw new BadRequestException(
+        '휴대폰 번호가 포함되지 않은 토큰입니다. Phone Auth 로 로그인해주세요.',
+      );
+    }
+
+    // ── 2단계: 분기 처리 ──
+    if (existingUserId) {
+      return this.attachPhoneToExistingUser(existingUserId, phoneNumber);
+    }
+    return this.loginOrSignupByPhone(uid, phoneNumber);
+  }
+
+  // ── (A) 로그인 중인 사용자에 휴대폰 붙이기 ──────────────
+  // 다른 사람의 휴대폰을 중복으로 붙이는 걸 막기 위해, 같은 번호가
+  // 다른 user_id 에 이미 등록돼 있으면 ConflictException 으로 거부.
+  private async attachPhoneToExistingUser(
+    userId: string,
+    phoneNumber: string,
+  ): Promise<AuthResult> {
+    // 다른 사용자가 같은 번호를 이미 쓰고 있는지 확인
+    const { data: collide } = await this.supabase.client
+      .from('users')
+      .select('id')
+      .eq('phone_number', phoneNumber)
+      .neq('id', userId)
+      .maybeSingle();
+
+    if (collide) {
+      throw new ConflictException('이미 다른 계정에 등록된 번호입니다.');
+    }
+
+    const verifiedAt = new Date().toISOString();
+    const { data: updated, error } = await this.supabase.client
+      .from('users')
+      .update({
+        phone_number: phoneNumber,
+        phone_verified_at: verifiedAt,
+      })
+      .eq('id', userId)
+      .select(
+        'id, name, profile_image, role, status, org, budget, speed',
+      )
+      .single();
+
+    if (error || !updated) {
+      this.logger.error(`휴대폰 갱신 실패 (user=${userId}): ${error?.message}`);
+      throw new BadRequestException('사용자를 찾을 수 없습니다.');
+    }
+
+    const userRole = (updated.role as 'CUSTOMER' | 'OWNER') ?? 'CUSTOMER';
+    const userStatus =
+      (updated.status as 'PENDING' | 'APPROVED' | 'REJECTED') ?? 'APPROVED';
+
+    const nextStep = this.resolveNextStepForExistingUser(
+      userRole,
+      userStatus,
+      updated.org,
+      updated.budget,
+      updated.speed,
+    );
+
+    // 기존 사용자이므로 새 JWT 를 굳이 갱신하지 않아도 되지만,
+    // 응답 구조 통일을 위해 갱신 토큰 발급 (Flutter 가 같은 로직으로 처리하도록)
+    const accessToken = this.jwtService.sign({ sub: updated.id });
+
+    return {
+      accessToken,
+      isNewUser: false,
+      nextStep,
+      user: {
+        id: updated.id,
+        name: updated.name,
+        profileImage: updated.profile_image,
+        role: userRole,
+        status: userStatus,
+      },
+    };
+  }
+
+  // ── (B) 전화번호로 로그인/회원가입 ──────────────────────
+  // 기존 사용자(phone_number 일치) 있으면 로그인 처리.
+  // 없으면 CUSTOMER 신규 가입 (auth_provider='PHONE', status='APPROVED').
+  //
+  // 참고: firebaseUid 는 현재 컬럼이 없어 저장하지 않는다. 향후 컬럼 추가 시
+  // 여기서 함께 INSERT 하면 됨.
+  private async loginOrSignupByPhone(
+    _firebaseUid: string,
+    phoneNumber: string,
+  ): Promise<AuthResult> {
+    const verifiedAt = new Date().toISOString();
+
+    // 기존 사용자 조회
+    const { data: existingUser } = await this.supabase.client
+      .from('users')
+      .select(
+        'id, name, profile_image, role, status, org, budget, speed',
+      )
+      .eq('phone_number', phoneNumber)
+      .maybeSingle();
+
+    let userId: string;
+    let userName: string;
+    let profileImage: string | null;
+    let userRole: 'CUSTOMER' | 'OWNER';
+    let userStatus: 'PENDING' | 'APPROVED' | 'REJECTED';
+    let isNewUser: boolean;
+    let nextStep: AuthResult['nextStep'];
+
+    if (existingUser) {
+      // ── 기존 사용자: 로그인 흐름 ──
+      userId = existingUser.id;
+      userName = existingUser.name;
+      profileImage = existingUser.profile_image;
+      userRole = (existingUser.role as 'CUSTOMER' | 'OWNER') ?? 'CUSTOMER';
+      userStatus =
+        (existingUser.status as 'PENDING' | 'APPROVED' | 'REJECTED') ??
+        'APPROVED';
+      isNewUser = false;
+
+      // 인증 시각만 최신화 (실패해도 로그인은 진행)
+      await this.supabase.client
+        .from('users')
+        .update({ phone_verified_at: verifiedAt })
+        .eq('id', userId);
+
+      nextStep = this.resolveNextStepForExistingUser(
+        userRole,
+        userStatus,
+        existingUser.org,
+        existingUser.budget,
+        existingUser.speed,
+      );
+    } else {
+      // ── 신규 휴대폰 가입자: CUSTOMER 로 INSERT ──
+      const { data: newUser, error } = await this.supabase.client
+        .from('users')
+        .insert({
+          name: '이름 없음', // 온보딩에서 사용자가 채울 예정
+          phone_number: phoneNumber,
+          phone_verified_at: verifiedAt,
+          role: 'CUSTOMER',
+          status: 'APPROVED',
+          auth_provider: 'PHONE',
+          radius: '500m',
+        })
+        .select('id, name, profile_image')
+        .single();
+
+      if (error || !newUser) {
+        this.logger.error(`휴대폰 가입 실패 (${phoneNumber}): ${error?.message}`);
+        throw new BadRequestException('휴대폰 회원가입에 실패했어요.');
+      }
+
+      userId = newUser.id;
+      userName = newUser.name;
+      profileImage = newUser.profile_image;
+      userRole = 'CUSTOMER';
+      userStatus = 'APPROVED';
+      isNewUser = true;
+      nextStep = 'PROFILE_SETUP'; // 신규 가입은 온보딩부터
+    }
+
+    const accessToken = this.jwtService.sign({ sub: userId });
+
+    return {
+      accessToken,
+      isNewUser,
+      nextStep,
+      user: {
+        id: userId,
+        name: userName,
+        profileImage,
         role: userRole,
         status: userStatus,
       },

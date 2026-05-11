@@ -42,6 +42,10 @@ dependencies:
   geolocator: ^13.0.2
   # 외부 앱/URL 실행 — 네이버·카카오맵 길찾기로 넘길 때 사용
   url_launcher: ^6.3.1
+  # Firebase Phone Auth — Web/Android 휴대폰 본인확인 (Spark 무료 플랜)
+  # firebase_auth 와 firebase_core 는 메이저 버전을 함께 맞춰야 함.
+  firebase_core: ^3.6.0
+  firebase_auth: ^5.3.1
 
 dev_dependencies:
   flutter_test:

@@ -1,9 +1,11 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme/theme.dart';
 import 'core/config/app_config.dart';
+import 'firebase_options.dart';
 import 'features/splash/splash_screen.dart';
 import 'features/auth/login_screen.dart';
 import 'features/auth/owner_pending_screen.dart';
@@ -33,12 +35,27 @@ import 'services/users_api_service.dart';
 //   4. 자동 로그인 실패 + 온보딩 완료 → 로그인 화면
 // ══════════════════════════════════════════════════════════
 
-void main() {
+Future<void> main() async {
+  // Flutter 바인딩이 Firebase 초기화 전에 준비되도록 보장
+  WidgetsFlutterBinding.ensureInitialized();
+
   // ── 카카오 SDK 초기화 ────────────────────────────────
   KakaoSdk.init(
     nativeAppKey: AppConfig.kakaoNativeAppKey,
     javaScriptAppKey: AppConfig.kakaoJavaScriptAppKey,
   );
+
+  // ── Firebase 초기화 ────────────────────────────────
+  // 휴대폰 인증(Phone Auth) 진입 전 반드시 1회 실행. 실패해도 앱은 동작하도록
+  // try/catch — iOS 미설정 환경 등에서 무리하게 죽지 않게.
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    // 로그만 남기고 진행 — 휴대폰 인증 화면 진입 시 다시 에러 처리
+    debugPrint('Firebase 초기화 실패: $e');
+  }
 
   runApp(const ProviderScope(child: LunchSyncApp()));
 }
@@ -297,17 +314,41 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
     }
 
     // ── 3. 자동 로그인 성공 → 해당 화면으로 ───────────────
+    // 온보딩 미완료 사용자도 적절한 단계로 정확히 진입하도록 분기.
     if (_autoLoginNextStep != null) {
       switch (_autoLoginNextStep) {
         case 'OWNER_PENDING':
           return const OwnerPendingScreen();
         case 'OWNER_HOME':
           return const OwnerHomeScreen();
+        case 'PROFILE_SETUP':
+          // CU-03 → 끝나면 CU-05 → HomeScreen 순으로 자동 연결
+          return ProfileSetupScreen(
+            onNext: () {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (ctx) => ConditionSetupScreen(
+                    onComplete: () {
+                      Navigator.of(ctx).pushReplacement(
+                        MaterialPageRoute(builder: (_) => const HomeScreen()),
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
+          );
+        case 'CONDITION_SETUP':
+          // CU-03 는 이미 끝났고 CU-05 만 남은 케이스
+          return ConditionSetupScreen(
+            onComplete: () {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const HomeScreen()),
+              );
+            },
+          );
         case 'HOME':
           return const HomeScreen();
-        // 온보딩 미완료 손님은 일반 로그인 화면을 거치지 않고
-        // 바로 온보딩 다음 단계로 진입할 수도 있지만,
-        // 단순함을 위해 기본은 홈으로.
         default:
           return const HomeScreen();
       }

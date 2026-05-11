@@ -8,6 +8,7 @@ import { JwtStrategy } from './jwt.strategy';
 import { JwtAuthGuard } from './jwt-auth.guard';
 import { EmailOtpController } from './email-otp.controller';
 import { EmailOtpService } from './email-otp.service';
+import { FirebaseService } from './firebase.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 인증 모듈
@@ -29,7 +30,7 @@ import { EmailOtpService } from './email-otp.service';
     }),
   ],
   controllers: [AuthController, EmailOtpController],
-  providers: [AuthService, JwtStrategy, JwtAuthGuard, EmailOtpService],
+  providers: [AuthService, JwtStrategy, JwtAuthGuard, EmailOtpService, FirebaseService],
   // JwtModule도 export — PosModule 의 PosAuthService 가 JwtService 를 주입받기 위함
   exports: [JwtAuthGuard, JwtModule],
 })

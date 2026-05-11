@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "472348585865",
+    "project_id": "lunchsync-cf32f",
+    "storage_bucket": "lunchsync-cf32f.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:472348585865:android:b37aed822baa2f89367b58",
+        "android_client_info": {
+          "package_name": "com.example.capstone"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC_nKqFO8UHQDSTFxCiR05MvIPY9wJSnPw"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

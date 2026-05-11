@@ -16,6 +16,7 @@ import { AuthService } from './auth.service';
 //   POST /api/auth/kakao         — 카카오 토큰으로 로그인/회원가입
 //   POST /api/auth/signup/email  — 이메일+비밀번호 회원가입 (역할 선택 포함)
 //   POST /api/auth/login/email   — 이메일+비밀번호 로그인
+//   POST /api/auth/verify-phone  — Firebase Phone Auth ID 토큰 검증 후 사용자 갱신
 // ══════════════════════════════════════════════════════════
 
 // ── 카카오 로그인 DTO ──────────────────────────────────
@@ -64,6 +65,21 @@ class EmailLoginDto {
   password: string;
 }
 
+// ── 휴대폰 인증 DTO ────────────────────────────────────
+// Flutter 가 Firebase Phone Auth 로 받은 ID 토큰을 그대로 전달.
+// existingUserId: 로그인된 상태에서 휴대폰만 추가 검증할 때 사용 (없으면 신규/전화로그인).
+class VerifyPhoneDto {
+  @IsString()
+  @IsNotEmpty({ message: 'Firebase ID 토큰이 비어 있습니다.' })
+  idToken: string;
+
+  // 이미 로그인된 사용자가 본인확인 차원으로 휴대폰만 등록할 때 전달.
+  // 미전달 시: phone_number 로 사용자 조회/생성하는 흐름으로 진입.
+  @IsOptional()
+  @IsString()
+  existingUserId?: string;
+}
+
 @Controller('auth')
 export class AuthController {
   constructor(private readonly authService: AuthService) {}
@@ -99,6 +115,23 @@ export class AuthController {
   @Post('login/email')
   async emailLogin(@Body() dto: EmailLoginDto) {
     const result = await this.authService.emailLogin(dto.email, dto.password);
+    return { success: true, data: result };
+  }
+
+  // ── POST /api/auth/verify-phone ────────────────────────
+  // Flutter 가 Firebase Phone Auth 로 받은 ID 토큰을 검증한다.
+  //
+  // 동작 분기:
+  //   1) existingUserId 전달  → 로그인 사용자의 휴대폰 본인확인 (phone_verified_at 갱신)
+  //   2) 미전달                → 전화번호로 사용자 조회/생성 → 카카오 로그인과 동일 구조 반환
+  //
+  // 응답 형식: AuthResult (accessToken + nextStep + user) — 카카오/이메일과 동일
+  @Post('verify-phone')
+  async verifyPhone(@Body() dto: VerifyPhoneDto) {
+    const result = await this.authService.phoneVerify({
+      idToken: dto.idToken,
+      existingUserId: dto.existingUserId,
+    });
     return { success: true, data: result };
   }
 }
