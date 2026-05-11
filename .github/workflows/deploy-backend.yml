@@ -7,7 +7,9 @@
 
 name: Deploy Backend to EC2
 
-# ── 트리거: main, temp 브랜치에 backend/ 코드 변경 시 ──
+# ── 트리거 ──
+#   1) main / temp 브랜치에 backend/ 또는 본 워크플로 자체 변경 push 시
+#   2) workflow_dispatch — Actions 탭에서 수동 실행 (배포 강제 재시도)
 on:
   push:
     branches:
@@ -15,6 +17,18 @@ on:
       - temp
     paths:
       - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '배포할 브랜치 (수동 실행 시)'
+        required: false
+        default: 'temp'
+
+# 동시 실행 방지 — 같은 브랜치의 이전 배포가 끝날 때까지 다음 대기
+concurrency:
+  group: deploy-backend-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -22,33 +36,42 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1단계: 코드 체크아웃
+      # 1단계: 코드 체크아웃 (참조용 — 실제 빌드는 EC2 에서)
       - name: 코드 체크아웃
         uses: actions/checkout@v4
 
-      # 2단계: SSH로 EC2 접속 후 배포 실행
+      # 2단계: SSH 로 EC2 접속 후 배포 실행
+      #   - GH_TOKEN: 워크플로 자동 발급 토큰을 EC2 로 전달해서
+      #     git pull HTTPS 인증을 통과시킨다 (EC2 의 git credential
+      #     설정 없이도 PAT 없이 동작).
       - name: EC2 배포
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: GH_TOKEN,REF_NAME,REPO
+          script_stop: true      # 중간 실패 시 즉시 중단 (fatal 무시 방지)
           script: |
-            echo "===== 배포 시작 ====="
+            set -e
+            echo "===== 배포 시작: branch=$REF_NAME repo=$REPO ====="
 
-            # 백엔드 디렉토리로 이동
-            cd /home/ubuntu/LunchSync/backend
+            cd /home/ubuntu/LunchSync
 
-            # 최신 코드 pull
-            git -C /home/ubuntu/LunchSync pull origin ${{ github.ref_name }}
+            # 토큰 인증으로 git pull (HTTPS remote 인 EC2 에서 username 프롬프트 회피)
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
+                fetch --prune origin "$REF_NAME"
+            git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
+                reset --hard "origin/$REF_NAME"
 
-            # 의존성 설치 (새 패키지 추가된 경우)
-            npm install --production=false
-
-            # NestJS 빌드
+            # 백엔드 디렉토리로 이동 후 빌드/재시작
+            cd backend
+            npm install --omit=optional
             npm run build
-
-            # pm2로 서버 재시작
-            pm2 restart lunchsync-backend
+            pm2 reload lunchsync-backend --update-env || pm2 restart lunchsync-backend --update-env
 
             echo "===== 배포 완료 ====="
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ inputs.branch || github.ref_name }}
+          REPO: ${{ github.repository }}
