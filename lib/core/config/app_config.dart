@@ -35,18 +35,34 @@ class AppConfig {
   /// 🔴 AWS 배포본: http://13.125.165.80:3000/api
   ///    → AWS 재배포 완료 후 위 주소로 복귀
 
-  // 빌드 시 --dart-define=BACKEND_HOST=<IP> 로 주입
-  // 예) flutter run --dart-define=BACKEND_HOST=192.168.45.105
-  // BACKEND_HOST 미입력 시 기본값: 192.168.45.105
+  // ── 백엔드 URL 빌드 환경별 분기 ──────────────────────────
+  //
+  // 빌드 시 dart-define 으로 환경 선택:
+  //   1) BACKEND_URL=<full url>       — 완전 URL 직접 지정 (가장 강력, HTTPS도 OK)
+  //      예) --dart-define=BACKEND_URL=https://lunchsync-api.duckdns.org/api
+  //   2) BACKEND_HOST=<IP or domain>  — 호스트만 지정 (포트 3000, HTTP 자동)
+  //      예) --dart-define=BACKEND_HOST=192.168.45.105
+  //   3) 둘 다 미지정                 — 기본값 (web: localhost, mobile: 10.0.2.2)
+  //
+  // 프로덕션 시연: BACKEND_URL=https://lunchsync-api.duckdns.org/api 사용 권장
+  // (HTTPS + Caddy + DuckDNS 조합)
+
+  static const String _backendUrlOverride = String.fromEnvironment(
+    'BACKEND_URL',
+    defaultValue: '',
+  );
+
   static const String _backendHost = String.fromEnvironment(
     'BACKEND_HOST',
     defaultValue: '10.0.2.2',
   );
 
-  // 플랫폼에 따라 자동 분기 (web: localhost, iOS/Android: 로컬 IP)
-  static const String backendBaseUrl = _isWeb
-      ? 'http://localhost:3000/api'           // AndroidStudio Chrome(web)
-      : 'http://$_backendHost:3000/api';      // iOS / Android 실기기
+  // 우선순위: BACKEND_URL > BACKEND_HOST > 기본값(web localhost / mobile _backendHost)
+  static const String backendBaseUrl = _backendUrlOverride.length > 0
+      ? _backendUrlOverride
+      : (_isWeb
+          ? 'http://localhost:3000/api'
+          : 'http://$_backendHost:3000/api');
 
   // ══════════════════════════════════════════════════════════
   // 토스페이먼츠 (결제위젯 v2)

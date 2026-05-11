@@ -22,11 +22,20 @@ import { FirebaseService } from './firebase.service';
     PassportModule,
     JwtModule.registerAsync({
       inject: [ConfigService],
-      useFactory: (config: ConfigService) => ({
-        secret: config.getOrThrow<string>('JWT_SECRET'),
-        // expiresIn 타입이 ms 라이브러리의 StringValue라 직접 지정
-        signOptions: { expiresIn: '7d' as '7d' },
-      }),
+      useFactory: (config: ConfigService) => {
+        // .env 의 JWT_EXPIRES_IN 우선 (미설정 시 기본 24h). 시연용 24h, 운영 1~2h 권장.
+        const expiresIn = (config.get<string>('JWT_EXPIRES_IN') ?? '24h') as
+          | '24h'
+          | '7d'
+          | '1h'
+          | '2h'
+          | '12h'
+          | '1d';
+        return {
+          secret: config.getOrThrow<string>('JWT_SECRET'),
+          signOptions: { expiresIn },
+        };
+      },
     }),
   ],
   controllers: [AuthController, EmailOtpController],
