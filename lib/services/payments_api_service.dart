@@ -75,15 +75,18 @@ class PaymentsApiService {
     required int amount,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/payments/confirm'),
-        headers: _headers(accessToken),
-        body: jsonEncode({
-          'paymentKey': paymentKey,
-          'orderId': orderId,
-          'amount': amount,
-        }),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/payments/confirm'),
+            headers: _headers(accessToken),
+            body: jsonEncode({
+              'paymentKey': paymentKey,
+              'orderId': orderId,
+              'amount': amount,
+            }),
+          )
+          // 결제 승인은 길어질 수 있으므로 기본보다 길게 (15s)
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;

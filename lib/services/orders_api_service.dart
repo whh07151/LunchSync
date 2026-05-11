@@ -188,11 +188,13 @@ class OrdersApiService {
         'paymentMethod': paymentMethod,
       });
 
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/orders'),
-        headers: _headers(accessToken),
-        body: body,
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/orders'),
+            headers: _headers(accessToken),
+            body: body,
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -217,10 +219,12 @@ class OrdersApiService {
     required String accessToken,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/orders/today'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/orders/today'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -243,10 +247,12 @@ class OrdersApiService {
     required String orderId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/orders/$orderId'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/orders/$orderId'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;

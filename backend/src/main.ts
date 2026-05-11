@@ -1,5 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
+import helmet from 'helmet';
 import { AppModule } from './app.module';
 
 // ══════════════════════════════════════════════════════════
@@ -19,7 +21,22 @@ import { AppModule } from './app.module';
 
 async function bootstrap() {
   const logger = new Logger('Bootstrap');
-  const app = await NestFactory.create(AppModule);
+  const app = await NestFactory.create<NestExpressApplication>(AppModule);
+
+  // ── 0. 보안 헤더 (helmet) + 요청 크기 제한 ───────────────
+  // Defense in Depth — X-Frame-Options, X-Content-Type-Options,
+  // Strict-Transport-Security, X-XSS-Protection 등 자동 적용.
+  // contentSecurityPolicy 는 결제 webview 와 충돌 가능해 비활성화.
+  app.use(
+    helmet({
+      contentSecurityPolicy: false,
+      crossOriginEmbedderPolicy: false,
+    }),
+  );
+
+  // body size 제한 — 대용량 페이로드 거부 (DoS 기본 방어)
+  app.useBodyParser('json', { limit: '100kb' });
+  app.useBodyParser('urlencoded', { limit: '100kb', extended: true });
 
   // ── 1. 전역 유효성 검사 파이프 ────────────────────────────
   app.useGlobalPipes(
