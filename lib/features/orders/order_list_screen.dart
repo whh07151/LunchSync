@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
@@ -78,27 +79,19 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen> {
     final orders = _orders ?? const <OrderSummaryDto>[];
 
     if (orders.isEmpty) {
-      // 빈 상태 — 모드별 안내 문구 분리
-      final emptyMessage = widget.historyMode
-          ? '아직 주문 내역이 없어요'
-          : '오늘 주문 내역이 없어요';
+      // 빈 상태 — AppEmptyState 컴포넌트로 일관화 (디자이너 가이드 P0)
       return ListView(
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
-          const SizedBox(height: 100),
-          Icon(
-            Icons.receipt_long_outlined,
-            size: 48,
-            color: AppColors.iconInactive,
-          ),
-          const SizedBox(height: AppSpacing.sm),
-          Center(
-            child: Text(
-              emptyMessage,
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.textSecondary,
-              ),
-            ),
+          const SizedBox(height: AppSpacing.xxl),
+          AppEmptyState(
+            icon: Icons.receipt_long_outlined,
+            title: widget.historyMode
+                ? '아직 주문 내역이 없어요'
+                : '오늘 주문 내역이 없어요',
+            description: widget.historyMode
+                ? '첫 점심 주문을 만들어볼까요?'
+                : '오늘은 어떤 점심을 함께할까요?',
           ),
         ],
       );
