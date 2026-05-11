@@ -104,12 +104,13 @@ export class InvitationsService {
       throw new BadRequestException('만료된 초대 코드입니다.');
     }
 
-    // 세션에 멤버 추가 (SessionsService 재사용)
+    // 세션에 멤버 추가 — 내부 전용 메서드 사용
+    // (호스트 검증은 초대 코드 자체가 권한 토큰 역할이므로 우회)
     try {
-      await this.sessionsService.addMember(data.session_id, { userId });
+      await this.sessionsService.addMemberInternal(data.session_id, userId);
     } catch (e) {
       if (e instanceof ConflictException) {
-        throw e; // 이미 참가한 멤버
+        throw e; // 이미 참가한 멤버 — 그대로 전달
       }
       throw e;
     }
