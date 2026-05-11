@@ -6,6 +6,7 @@ import '../../providers/user_provider.dart';
 import '../../services/pos_api_service.dart';
 import '../auth/login_screen.dart';
 import 'menu_management_screen.dart';
+import 'owner_profile_edit_screen.dart';
 import 'sales_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -201,7 +202,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
         children: [
           const SizedBox(height: AppSpacing.lg),
 
-          // 프로필 박스
+          // 프로필 박스 — 상호 + 사업자번호 + 매장 매핑 상태
           Container(
             padding: const EdgeInsets.all(AppSpacing.md),
             decoration: BoxDecoration(
@@ -226,16 +227,29 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
-                        user.name ?? '사장님',
+                        // 상호가 있으면 상호를 메인 타이틀로, 없으면 이름.
+                        (user.businessName != null &&
+                                user.businessName!.isNotEmpty)
+                            ? user.businessName!
+                            : (user.name ?? '사장님'),
                         style: AppTextStyles.bodyLarge
                             .copyWith(fontWeight: FontWeight.w700),
                       ),
                       const SizedBox(height: 2),
                       Text(
-                        '사장님 계정 · ${hasRestaurant ? "매장 연동됨" : "매장 매핑 대기"}',
+                        '${user.name ?? "사장님"} · ${hasRestaurant ? "매장 연동됨" : "매장 매핑 대기"}',
                         style: AppTextStyles.bodySmall
                             .copyWith(color: AppColors.textSecondary),
                       ),
+                      if (user.businessNumber != null &&
+                          user.businessNumber!.isNotEmpty) ...[
+                        const SizedBox(height: 2),
+                        Text(
+                          '사업자번호 ${user.businessNumber}',
+                          style: AppTextStyles.caption
+                              .copyWith(color: AppColors.textSecondary),
+                        ),
+                      ],
                     ],
                   ),
                 ),
@@ -246,6 +260,19 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
           const SizedBox(height: AppSpacing.lg),
 
           // 메뉴 리스트
+          _ownerInfoRow(
+            icon: Icons.edit_rounded,
+            label: '정보 수정',
+            onTap: () async {
+              // 수정 후 상태가 setFromProfile 로 동기화되므로 별도 처리 불필요
+              await Navigator.of(context).push<bool>(
+                MaterialPageRoute(
+                  builder: (_) => const OwnerProfileEditScreen(),
+                ),
+              );
+              if (mounted) setState(() {}); // 표시값 즉시 갱신
+            },
+          ),
           _ownerInfoRow(
             icon: Icons.bar_chart_rounded,
             label: '매출 보기',

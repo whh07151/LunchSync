@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_api_service.dart';
+import '../services/fcm_service.dart';
 import '../services/kakao_auth_service.dart';
 import '../services/users_api_service.dart';
 
@@ -55,6 +57,10 @@ class UserState {
     this.role,
     this.status,
     this.restaurantId,
+    this.email,
+    this.phoneNumber,
+    this.businessName,
+    this.businessNumber,
   });
 
   final String? accessToken;  // LunchSync JWT (API 요청 시 사용)
@@ -72,6 +78,12 @@ class UserState {
   /// OWNER 가 운영하는 restaurants.id (운영자가 Supabase 콘솔에서 매핑).
   /// NULL 이면 사장 홈에서 "매장 매핑 대기" 안내 표시.
   final String? restaurantId;
+
+  // ── 사장 내정보 탭 표시용 (인메모리 캐시, 영속화는 별도) ──
+  final String? email;
+  final String? phoneNumber;
+  final String? businessName;    // OWNER 상호
+  final String? businessNumber;  // OWNER 사업자등록번호
 
   /// 로그인된 상태인지 여부
   bool get isLoggedIn => accessToken != null;
@@ -91,6 +103,10 @@ class UserState {
     String? role,
     String? status,
     String? restaurantId,
+    String? email,
+    String? phoneNumber,
+    String? businessName,
+    String? businessNumber,
   }) {
     return UserState(
       accessToken: accessToken ?? this.accessToken,
@@ -101,6 +117,10 @@ class UserState {
       role: role ?? this.role,
       status: status ?? this.status,
       restaurantId: restaurantId ?? this.restaurantId,
+      email: email ?? this.email,
+      phoneNumber: phoneNumber ?? this.phoneNumber,
+      businessName: businessName ?? this.businessName,
+      businessNumber: businessNumber ?? this.businessNumber,
     );
   }
 }
@@ -136,6 +156,10 @@ class UserNotifier extends Notifier<UserState> {
     }
     await prefs.setString(_PrefKeys.userRole, response.role);
     await prefs.setString(_PrefKeys.userStatus, response.status);
+
+    // FCM 단말 토큰 발급 + 백엔드 저장 (best-effort).
+    // 실패해도 throw 안 함 — Firebase 미초기화/권한 거부 환경에서도 흐름 유지.
+    unawaited(const FcmService().registerToken(accessToken: response.accessToken));
   }
 
   // ── DB 프로필 조회 후 상태 갱신 ──────────────────────────
@@ -150,6 +174,10 @@ class UserNotifier extends Notifier<UserState> {
       role: profile.role,
       status: profile.status,
       restaurantId: profile.restaurantId,
+      email: profile.email,
+      phoneNumber: profile.phoneNumber,
+      businessName: profile.businessName,
+      businessNumber: profile.businessNumber,
     );
 
     // restaurantId 변경분 영속화 (다음 자동 로그인 시 즉시 사용)
@@ -158,6 +186,13 @@ class UserNotifier extends Notifier<UserState> {
       await prefs.setString(_PrefKeys.restaurantId, profile.restaurantId!);
     } else {
       await prefs.remove(_PrefKeys.restaurantId);
+    }
+
+    // 자동 로그인 복원 흐름에서도 FCM 토큰을 재확보 (단말 교체/앱 재설치 대응).
+    // 토큰이 동일하면 백엔드는 그냥 덮어쓰기 — 무해.
+    final token = state.accessToken;
+    if (token != null && token.isNotEmpty) {
+      unawaited(const FcmService().registerToken(accessToken: token));
     }
   }
 

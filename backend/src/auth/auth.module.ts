@@ -32,6 +32,7 @@ import { FirebaseService } from './firebase.service';
   controllers: [AuthController, EmailOtpController],
   providers: [AuthService, JwtStrategy, JwtAuthGuard, EmailOtpService, FirebaseService],
   // JwtModule도 export — PosModule 의 PosAuthService 가 JwtService 를 주입받기 위함
-  exports: [JwtAuthGuard, JwtModule],
+  // FirebaseService 도 export — NotificationsModule 이 FCM 푸시 송신용으로 주입
+  exports: [JwtAuthGuard, JwtModule, FirebaseService],
 })
 export class AuthModule {}

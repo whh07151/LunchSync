@@ -120,6 +120,9 @@ class UsersApiService {
     String? speed,
     List<String>? allergies,
     List<String>? dislikes,
+    // OWNER 전용 — 사장 내정보 탭에서 상호/사업자번호 수정
+    String? businessName,
+    String? businessNumber,
   }) async {
     try {
       // null이 아닌 필드만 요청 바디에 포함
@@ -131,6 +134,8 @@ class UsersApiService {
       if (speed != null) body['speed'] = speed;
       if (allergies != null) body['allergies'] = allergies;
       if (dislikes != null) body['dislikes'] = dislikes;
+      if (businessName != null) body['businessName'] = businessName;
+      if (businessNumber != null) body['businessNumber'] = businessNumber;
 
       final response = await http.patch(
         Uri.parse('${AppConfig.backendBaseUrl}/users/me'),

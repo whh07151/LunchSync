@@ -119,4 +119,54 @@ export class FirebaseService implements OnModuleInit {
       throw new UnauthorizedException('유효하지 않은 Firebase 토큰입니다.');
     }
   }
+
+  // ── FCM 푸시 송신 ──────────────────────────────────────
+  // notifications.service 가 주문 상태 변경 등 이벤트 발생 시 호출.
+  //
+  // 인자:
+  //   - token: 수신 단말의 FCM 토큰 (users.fcm_token)
+  //   - title, body: 알림 표시 텍스트
+  //   - data: 클라이언트가 받을 수 있는 페이로드 (sessionId, orderId 등 딥링크용)
+  //
+  // 반환: 송신 성공 여부 (false 면 토큰 만료/네트워크 오류 가능 — 호출측이 무시 가능)
+  //
+  // 실패 정책: 푸시 송신 실패가 비즈니스 흐름을 막지 않도록 throw 하지 않음.
+  // Firebase 미초기화 시 false 반환 → 카카오/이메일 전용 운영에서도 안전.
+  async sendPush(params: {
+    token: string;
+    title: string;
+    body: string;
+    data?: Record<string, string>;
+  }): Promise<boolean> {
+    if (!this.app) {
+      this.logger.warn('Firebase 미초기화 — FCM 푸시 송신 건너뜀');
+      return false;
+    }
+    if (!params.token) {
+      // 토큰이 빈 문자열/null 인 경우 (저장된 토큰 없음)
+      return false;
+    }
+
+    try {
+      await admin.messaging(this.app).send({
+        token: params.token,
+        notification: {
+          title: params.title,
+          body: params.body,
+        },
+        // data 는 모두 string 이어야 함 — sessionId/orderId 등 딥링크용 페이로드
+        data: params.data ?? {},
+        android: {
+          priority: 'high',
+        },
+      });
+      return true;
+    } catch (err) {
+      // 토큰 만료(UNREGISTERED) 등은 정상적인 케이스 — 경고만 남기고 false 반환
+      this.logger.warn(
+        `FCM 송신 실패: ${(err as Error).message}`,
+      );
+      return false;
+    }
+  }
 }
