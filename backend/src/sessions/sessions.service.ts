@@ -89,63 +89,35 @@ export class SessionsService {
   }
 
   // ── POST /sessions ────────────────────────────────────
+  // 트랜잭션 보장 (2026-05-14):
+  //   create_session_with_host_member RPC 사용 — sessions + session_members
+  //   INSERT 가 PostgreSQL 함수 단일 트랜잭션으로 묶임.
+  //   중간 실패 시 전체 롤백 → "세션만 남고 호스트 미멤버" 정합성 버그 차단.
   async createSession(userId: string, dto: CreateSessionDto) {
-    const insertData: Record<string, unknown> = {
-      name: dto.name,
-      created_by: userId,
-    };
-    if (dto.scheduledAt) insertData.scheduled_at = dto.scheduledAt;
-    if (dto.radius != null) insertData.radius = dto.radius;
-    if (dto.budget != null) insertData.budget = dto.budget;
-    if (dto.returnMinutes != null) insertData.return_minutes = dto.returnMinutes;
-    if (dto.memo) insertData.memo = dto.memo;
-    if (dto.lat != null) insertData.lat = dto.lat;
-    if (dto.lng != null) insertData.lng = dto.lng;
+    const { data, error } = await this.supabase.client.rpc(
+      'create_session_with_host_member',
+      {
+        p_name: dto.name,
+        p_created_by: userId,
+        p_scheduled_at: dto.scheduledAt ?? null,
+        p_radius: dto.radius ?? null,
+        p_budget: dto.budget ?? null,
+        p_return_minutes: dto.returnMinutes ?? null,
+        p_memo: dto.memo ?? null,
+        p_lat: dto.lat ?? null,
+        p_lng: dto.lng ?? null,
+      },
+    );
 
-    const { data: session, error } = await this.supabase.client
-      .from('sessions')
-      .insert(insertData)
-      .select('id, name, status, created_by, scheduled_at, radius, budget, return_minutes, memo, lat, lng, created_at')
-      .single();
-
-    if (error || !session) {
-      // 내부 에러 메시지 노출 차단 (보안 에이전트 권장)
-      this.logger.error(`세션 생성 DB 오류 user=${userId}: ${error?.message}`);
-      throw new InternalServerErrorException('세션을 만들지 못했어요. 잠시 후 다시 시도해주세요.');
-    }
-
-    // 호스트 자동 멤버 등록 — 실패해도 세션 자체는 살아있어 후속 조회에 영향 없음
-    const { error: memberError } = await this.supabase.client
-      .from('session_members')
-      .insert({ session_id: session.id, user_id: userId });
-    if (memberError) {
-      this.logger.warn(
-        `호스트 멤버 자동 추가 실패 session=${session.id}: ${memberError.message}`,
+    if (error || !data) {
+      this.logger.error(`세션 생성 RPC 오류 user=${userId}: ${error?.message}`);
+      throw new InternalServerErrorException(
+        '세션을 만들지 못했어요. 잠시 후 다시 시도해주세요.',
       );
     }
 
-    const { data: creator } = await this.supabase.client
-      .from('users')
-      .select('id, name')
-      .eq('id', userId)
-      .single();
-
-    return {
-      id: session.id,
-      name: session.name,
-      status: session.status,
-      scheduledAt: session.scheduled_at,
-      radius: session.radius,
-      budget: session.budget,
-      returnMinutes: session.return_minutes,
-      memo: session.memo,
-      lat: session.lat,
-      lng: session.lng,
-      memberCount: 1,
-      createdBy: creator
-        ? { id: creator.id, name: creator.name }
-        : { id: userId, name: null },
-    };
+    // RPC가 이미 camelCase JSON 응답을 반환하므로 그대로 사용
+    return data;
   }
 
   // ── GET /sessions/today ───────────────────────────────
