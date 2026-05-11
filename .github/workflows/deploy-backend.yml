@@ -58,11 +58,12 @@ jobs:
 
             cd /home/ubuntu/LunchSync
 
-            # 토큰 인증으로 git pull (HTTPS remote 인 EC2 에서 username 프롬프트 회피)
-            git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
-                fetch --prune origin "$REF_NAME"
-            git -c "http.https://github.com/.extraheader=AUTHORIZATION: bearer $GH_TOKEN" \
-                reset --hard "origin/$REF_NAME"
+            # 토큰을 URL 에 직접 박아 인증 — HTTPS remote 의 username 프롬프트 회피
+            # x-access-token 은 GitHub Actions GITHUB_TOKEN 의 표준 username.
+            REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
+
+            git fetch --prune "$REMOTE_URL" "$REF_NAME"
+            git reset --hard FETCH_HEAD
 
             # 백엔드 디렉토리로 이동 후 빌드/재시작
             cd backend
