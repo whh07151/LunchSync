@@ -17,6 +17,7 @@ import {
   IsNumber,
   Min,
   Max,
+  MaxLength,
 } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SessionsService } from './sessions.service';
@@ -37,6 +38,7 @@ import { SessionsService } from './sessions.service';
 class CreateSessionDto {
   @IsString()
   @IsNotEmpty()
+  @MaxLength(100, { message: '세션 이름은 100자 이하여야 해요.' })
   name: string;
 
   @IsOptional()
@@ -46,20 +48,24 @@ class CreateSessionDto {
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(10000, { message: '반경은 10km 이하여야 해요.' })
   radius?: number; // 식당 검색 반경 (미터)
 
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(100000, { message: '예산은 10만원 이하여야 해요.' })
   budget?: number; // 1인당 예산 상한 (원)
 
   @IsOptional()
   @IsInt()
   @Min(0)
+  @Max(240, { message: '복귀 시간은 4시간 이하여야 해요.' })
   returnMinutes?: number; // 복귀 여유 시간 (분)
 
   @IsOptional()
   @IsString()
+  @MaxLength(500, { message: '메모는 500자 이하여야 해요.' })
   memo?: string; // 자유 메모
 
   // ── 세션 기준 좌표 ────────────────────────────────────
