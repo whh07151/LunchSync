@@ -67,9 +67,20 @@ jobs:
 
             # 백엔드 디렉토리로 이동 후 빌드/재시작
             cd backend
-            npm install --omit=optional
+            npm install
             npm run build
             pm2 reload lunchsync-backend --update-env || pm2 restart lunchsync-backend --update-env
+
+            # 부팅 안정화 대기 후 상태/로그 출력 (진단용)
+            sleep 4
+            echo "----- PM2 STATUS -----"
+            pm2 status lunchsync-backend || true
+            echo "----- PM2 LOGS (LAST 40) -----"
+            pm2 logs lunchsync-backend --lines 40 --nostream || true
+            echo "----- HEALTHCHECK -----"
+            curl -sf --max-time 5 http://localhost:3000/api/health \
+              && echo "HEALTHCHECK OK" \
+              || (echo "HEALTHCHECK FAIL" && exit 1)
 
             echo "===== 배포 완료 ====="
         env:
