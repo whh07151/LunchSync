@@ -67,8 +67,17 @@ jobs:
 
             # 백엔드 디렉토리로 이동 후 빌드/재시작
             cd backend
+            echo "----- NPM INSTALL -----"
             npm install
+            echo "----- BUILD -----"
             npm run build
+            echo "----- DIST -----"
+            ls -la dist/ || (echo "❌ dist 디렉토리가 없음" && exit 1)
+            if [ ! -f dist/main.js ]; then
+              echo "❌ dist/main.js 가 없음 — nest build 실패"
+              exit 1
+            fi
+            echo "✓ dist/main.js 존재 확인"
             pm2 reload lunchsync-backend --update-env || pm2 restart lunchsync-backend --update-env
 
             # 부팅 안정화 대기 후 상태/로그 출력 (진단용)
