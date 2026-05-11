@@ -1,4 +1,9 @@
-import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { FirebaseService } from '../auth/firebase.service';
 
@@ -48,7 +53,8 @@ export class NotificationsService {
       .limit(50);
 
     if (error) {
-      throw new Error(`알림 조회 실패: ${error.message}`);
+      // 500: 알림 SELECT 실패 → 운영팀 알람용
+      throw new InternalServerErrorException(`알림 조회 실패: ${error.message}`);
     }
 
     return (data ?? []).map((n) => ({
@@ -90,7 +96,9 @@ export class NotificationsService {
       .select('id');
 
     if (error) {
-      throw new Error(`전체 읽음 처리 실패: ${error.message}`);
+      throw new InternalServerErrorException(
+        `전체 읽음 처리 실패: ${error.message}`,
+      );
     }
 
     return (data ?? []).length;
@@ -123,7 +131,9 @@ export class NotificationsService {
       .single();
 
     if (error || !data) {
-      throw new Error(`알림 생성 실패: ${error?.message}`);
+      throw new InternalServerErrorException(
+        `알림 생성 실패: ${error?.message}`,
+      );
     }
 
     // ── FCM 푸시 송신 (best-effort) ──────────────────────

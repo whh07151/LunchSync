@@ -2,6 +2,7 @@ import {
   BadRequestException,
   ConflictException,
   Injectable,
+  InternalServerErrorException,
   Logger,
   UnauthorizedException,
 } from '@nestjs/common';
@@ -137,7 +138,10 @@ export class AuthService {
         .single();
 
       if (error || !newUser) {
-        throw new Error(`유저 생성 실패: ${error?.message}`);
+        // 500: DB INSERT 실패 — Supabase 장애/제약 위반 등
+        throw new InternalServerErrorException(
+          `유저 생성 실패: ${error?.message}`,
+        );
       }
 
       userId = newUser.id;
@@ -230,7 +234,10 @@ export class AuthService {
       .single();
 
     if (error || !newUser) {
-      throw new Error(`회원가입 실패: ${error?.message}`);
+      // 500: 회원가입 INSERT 실패 — 백엔드 로그로 원인 추적
+      throw new InternalServerErrorException(
+        `회원가입 실패: ${error?.message}`,
+      );
     }
 
     // ── 4단계: JWT 발급 ──────────────────────────────────

@@ -3,6 +3,7 @@ import {
   NotFoundException,
   BadRequestException,
   ConflictException,
+  InternalServerErrorException,
 } from '@nestjs/common';
 import { randomBytes } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -48,7 +49,10 @@ export class InvitationsService {
       .single();
 
     if (error || !data) {
-      throw new Error(`초대 생성 실패: ${error?.message}`);
+      // 500: 초대 토큰 INSERT 실패 (예: 유니크 충돌 등)
+      throw new InternalServerErrorException(
+        `초대 생성 실패: ${error?.message}`,
+      );
     }
 
     return {

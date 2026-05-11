@@ -49,7 +49,8 @@ export class OrdersService {
     // CORE-09: 메뉴 충돌 검증 — 모든 아이템이 같은 식당인지 확인
     const restaurantIds = new Set(menuItems.map((m) => m.restaurant_id));
     if (restaurantIds.size > 1) {
-      throw new Error('서로 다른 식당의 메뉴를 동시에 주문할 수 없습니다.');
+      // BadRequestException: 클라이언트 입력 오류 → 400 응답
+      throw new BadRequestException('서로 다른 식당의 메뉴를 동시에 주문할 수 없습니다.');
     }
     // orders.restaurant_id 컬럼에 들어갈 단일 값
     const restaurantId = menuItems[0].restaurant_id as string;
@@ -91,7 +92,10 @@ export class OrdersService {
       .single();
 
     if (orderError || !order) {
-      throw new Error(`주문 생성 실패: ${orderError?.message}`);
+      // InternalServerErrorException: DB 쓰기 실패 → 500 응답 (운영 모니터링 대상)
+      throw new InternalServerErrorException(
+        `주문 생성 실패: ${orderError?.message}`,
+      );
     }
 
     // 4. order_items 테이블 INSERT
@@ -213,7 +217,10 @@ export class OrdersService {
       .order('created_at', { ascending: false });
 
     if (error) {
-      throw new Error(`주문 조회 실패: ${error.message}`);
+      // InternalServerErrorException: DB 조회 실패 → 500 응답
+      throw new InternalServerErrorException(
+        `주문 조회 실패: ${error.message}`,
+      );
     }
 
     return (data ?? []).map((o) => ({
