@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../providers/cart_provider.dart';
@@ -132,8 +133,6 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final primary = Theme.of(context).colorScheme.primary;
-
     return Scaffold(
       backgroundColor: AppColors.background,
       body: SafeArea(
@@ -143,31 +142,44 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
             mainAxisAlignment: MainAxisAlignment.center,
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // ── 상태 아이콘 ────────────────────────────
-              Icon(
-                _isConfirming
-                    ? Icons.hourglass_empty_rounded
-                    : (_confirmed
-                        ? Icons.check_circle_rounded
-                        : Icons.error_rounded),
-                size: 96,
-                color: _isConfirming
-                    ? AppColors.textSecondary
-                    : (_confirmed ? primary : const Color(0xFFD4351C)),
+              // ── 상태 비주얼: 결제 성공 시 AppSuccessOverlay(체크+광선) ──
+              Center(
+                child: _isConfirming
+                    ? SizedBox(
+                        width: 96,
+                        height: 96,
+                        child: Center(
+                          child: SizedBox(
+                            width: 32,
+                            height: 32,
+                            child: CircularProgressIndicator(
+                              strokeWidth: 3,
+                              color: AppColors.textSecondary,
+                            ),
+                          ),
+                        ),
+                      )
+                    : _confirmed
+                        ? const AppSuccessOverlay(size: 140)
+                        : Icon(
+                            Icons.error_rounded,
+                            size: 96,
+                            color: AppColors.error,
+                          ),
               ),
-              const SizedBox(height: 24),
+              const SizedBox(height: AppSpacing.lg),
 
               // ── 상태 텍스트 ────────────────────────────
               Text(
                 _isConfirming
-                    ? '결제를 확인하는 중입니다...'
-                    : (_confirmed ? '결제가 완료되었습니다' : '결제 승인 실패'),
+                    ? '결제를 확인하고 있어요...'
+                    : (_confirmed ? '결제가 완료됐어요' : '결제 승인 실패'),
                 textAlign: TextAlign.center,
                 style: AppTextStyles.heading2,
               ),
 
               if (_confirmed) ...[
-                const SizedBox(height: 12),
+                const SizedBox(height: AppSpacing.sm + 4),
                 Text(
                   '${_formatPrice(widget.amount)}원 결제 완료',
                   textAlign: TextAlign.center,
@@ -176,7 +188,7 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
                   ),
                 ),
                 if (_method != null) ...[
-                  const SizedBox(height: 4),
+                  const SizedBox(height: AppSpacing.xs),
                   Text(
                     '결제수단: $_method',
                     textAlign: TextAlign.center,
@@ -198,17 +210,17 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
               ],
 
               if (_errorMessage != null) ...[
-                const SizedBox(height: 16),
+                const SizedBox(height: AppSpacing.md),
                 Text(
                   _errorMessage!,
                   textAlign: TextAlign.center,
                   style: AppTextStyles.bodySmall.copyWith(
-                    color: const Color(0xFFD4351C),
+                    color: AppColors.error,
                   ),
                 ),
               ],
 
-              const SizedBox(height: 40),
+              const SizedBox(height: AppSpacing.xl + 8),
 
               // ── 액션 버튼 ──────────────────────────────
               if (!_isConfirming)

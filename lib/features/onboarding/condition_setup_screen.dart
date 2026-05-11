@@ -231,43 +231,42 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
                     // ── 반경 슬라이더 섹션 ──────────────────
                     _buildRadiusSection(),
 
-                    // TODO: 수치 확정 시 수정 — 섹션 사이 간격 (현재 28px)
-                    const SizedBox(height: AppSpacing.lg + 4),
+                    const SizedBox(height: AppSpacing.lg),
 
                     // ── 구분선 ───────────────────────────────
                     const Divider(color: AppColors.divider, height: 1),
 
-                    const SizedBox(height: AppSpacing.lg + 4),
+                    const SizedBox(height: AppSpacing.lg),
 
                     // ── 예산 선택 섹션 ──────────────────────
                     _buildBudgetSection(),
 
-                    const SizedBox(height: AppSpacing.lg + 4),
+                    const SizedBox(height: AppSpacing.lg),
 
                     // ── 구분선 ───────────────────────────────
                     const Divider(color: AppColors.divider, height: 1),
 
-                    const SizedBox(height: AppSpacing.lg + 4),
+                    const SizedBox(height: AppSpacing.lg),
 
                     // ── 식사 속도 선택 섹션 ─────────────────
                     _buildSpeedSection(),
 
-                    const SizedBox(height: AppSpacing.lg + 4),
+                    const SizedBox(height: AppSpacing.lg),
 
                     // ── 구분선 ───────────────────────────────
                     const Divider(color: AppColors.divider, height: 1),
 
-                    const SizedBox(height: AppSpacing.lg + 4),
+                    const SizedBox(height: AppSpacing.lg),
 
                     // ── 알레르기 선택 섹션 (CU-04) ──────────
                     _buildAllergySection(),
 
-                    const SizedBox(height: AppSpacing.lg + 4),
+                    const SizedBox(height: AppSpacing.lg),
 
                     // ── 구분선 ───────────────────────────────
                     const Divider(color: AppColors.divider, height: 1),
 
-                    const SizedBox(height: AppSpacing.lg + 4),
+                    const SizedBox(height: AppSpacing.lg),
 
                     // ── 비선호 음식 선택 섹션 (CU-04) ────────
                     _buildDislikeSection(),
@@ -289,28 +288,28 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
   // ── 온보딩 진행 단계 표시 위젯 ───────────────────────────
   // 2단계 활성화 (CU-03이 1단계, 이 화면이 2단계)
   Widget _buildStepIndicator() {
+    final primary = Theme.of(context).colorScheme.primary;
+    const totalSteps = 3;
+    const currentStep = 1;
     return Row(
-      children: List.generate(
-        3,
-        (index) => Expanded(
+      children: List.generate(totalSteps, (index) {
+        final isActive = index <= currentStep;
+        return Expanded(
           child: Padding(
-            padding: EdgeInsets.only(right: index < 2 ? 4 : 0),
+            padding: EdgeInsets.only(
+              right: index < totalSteps - 1 ? AppSpacing.xs : 0,
+            ),
             child: AnimatedContainer(
               duration: const Duration(milliseconds: 300),
               height: 4,
               decoration: BoxDecoration(
-                // 0번(1단계): 완료 → 진한 primary
-                // 1번(2단계=현재): 활성 → primary
-                // 2번(3단계): 미완료 → 연한 회색
-                color: index <= 1
-                    ? Theme.of(context).colorScheme.primary
-                    : AppColors.border,
+                color: isActive ? primary : AppColors.border,
                 borderRadius: BorderRadius.circular(AppRadius.small),
               ),
             ),
           ),
-        ),
-      ),
+        );
+      }),
     );
   }
 
@@ -320,20 +319,19 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Text(
-          '2단계',
+          '2단계 / 3단계',
           style: AppTextStyles.label.copyWith(
             color: Theme.of(context).colorScheme.primary,
             fontWeight: FontWeight.w600,
           ),
         ),
-        const SizedBox(height: 6),
+        const SizedBox(height: AppSpacing.xs + 2),
         Text(
           '기본 조건을\n설정해주세요',
           style: AppTextStyles.heading1,
         ),
-        const SizedBox(height: 10),
+        const SizedBox(height: AppSpacing.sm + 2),
         Text(
-          // TODO: 수정 필요 — 실제 안내 문구로 교체
           '나중에 설정 메뉴에서 언제든지 바꿀 수 있어요',
           style: AppTextStyles.bodyMedium.copyWith(
             color: AppColors.textSecondary,
@@ -380,17 +378,15 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
           ],
         ),
 
-        const SizedBox(height: 4),
+        const SizedBox(height: AppSpacing.xs),
 
         // 섹션 안내 문구
         Text(
-          // TODO: 수정 필요 — 실제 안내 문구로 교체
           '도보로 이동 가능한 식당 추천 범위예요',
           style: AppTextStyles.bodySmall,
         ),
 
-        // TODO: 수치 확정 시 수정 — 슬라이더 상하 여백
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm + 4),
 
         // ── 슬라이더 ────────────────────────────────────────
         SliderTheme(
@@ -409,7 +405,6 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
           ),
           child: Slider(
             value: _radiusMeters,
-            // TODO: 수치 확정 시 수정 — 슬라이더 최소/최대값 및 단계
             min: 300,    // 최소 300m
             max: 3000,   // 최대 3km
             divisions: 9, // 300m 간격으로 9칸 (300,600,...,2700,3000)
@@ -421,7 +416,7 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
 
         // ── 슬라이더 양 끝 레이블 ───────────────────────────
         Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 12),
+          padding: const EdgeInsets.symmetric(horizontal: AppSpacing.sm + 4),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
@@ -449,15 +444,14 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
           ),
         ),
 
-        const SizedBox(height: 4),
+        const SizedBox(height: AppSpacing.xs),
 
         Text(
-          // TODO: 수정 필요 — 실제 안내 문구로 교체
           '점심 한 끼에 쓸 수 있는 금액을 선택해주세요',
           style: AppTextStyles.bodySmall,
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm + 4),
 
         // ── 예산 칩 목록 ──────────────────────────────────
         Wrap(
@@ -490,15 +484,14 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
           ),
         ),
 
-        const SizedBox(height: 4),
+        const SizedBox(height: AppSpacing.xs),
 
         Text(
-          // TODO: 수정 필요 — 실제 안내 문구로 교체
           '보통 점심 시간에 얼마나 여유가 있나요?',
           style: AppTextStyles.bodySmall,
         ),
 
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm + 4),
 
         // ── 속도 선택 카드 목록 ────────────────────────────
         // 칩 대신 카드 형태로 표시: 설명 문구가 들어가야 하므로
@@ -511,15 +504,15 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
               child: Padding(
                 // 카드 사이 좌우 간격
                 padding: EdgeInsets.only(
-                  right: speed != _speedOptions.last ? 8 : 0,
+                  right: speed != _speedOptions.last ? AppSpacing.sm : 0,
                 ),
                 child: GestureDetector(
                   onTap: () => setState(() => _selectedSpeed = speed),
                   child: AnimatedContainer(
                     duration: const Duration(milliseconds: 200),
                     padding: const EdgeInsets.symmetric(
-                      vertical: 14,
-                      horizontal: 8,
+                      vertical: AppSpacing.md - 2,
+                      horizontal: AppSpacing.sm,
                     ),
                     decoration: BoxDecoration(
                       // 선택됐으면 연한 primary 배경, 아니면 흰색
@@ -582,12 +575,12 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
             color: AppColors.textPrimary,
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: AppSpacing.xs),
         Text(
           '해당하는 알레르기가 있으면 선택해주세요 (선택사항)',
           style: AppTextStyles.bodySmall,
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm + 4),
         Wrap(
           spacing: AppSpacing.sm,
           runSpacing: AppSpacing.sm,
@@ -624,12 +617,12 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
             color: AppColors.textPrimary,
           ),
         ),
-        const SizedBox(height: 4),
+        const SizedBox(height: AppSpacing.xs),
         Text(
           '피하고 싶은 음식 종류가 있으면 선택해주세요 (선택사항)',
           style: AppTextStyles.bodySmall,
         ),
-        const SizedBox(height: 12),
+        const SizedBox(height: AppSpacing.sm + 4),
         Wrap(
           spacing: AppSpacing.sm,
           runSpacing: AppSpacing.sm,
@@ -659,9 +652,9 @@ class _ConditionSetupScreenState extends ConsumerState<ConditionSetupScreen> {
     return Container(
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.screenHorizontal,
-        12,
+        AppSpacing.sm + 4,
         AppSpacing.screenHorizontal,
-        32,
+        AppSpacing.xl,
       ),
       decoration: const BoxDecoration(
         color: AppColors.background,

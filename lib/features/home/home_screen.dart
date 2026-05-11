@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../session/member_select_screen.dart';
@@ -422,7 +423,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // ── 인사말 헤더 섹션 ────────────────────────────
           _buildGreetingHeader(),
 
-          // TODO: 수치 확정 시 수정 — 섹션 사이 간격 (현재 16px)
           const SizedBox(height: AppSpacing.md),
 
           // ── 빠른 실행 CTA 4개 ───────────────────────────
@@ -476,7 +476,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     return Container(
       width: double.infinity,
-      // TODO: 수치 확정 시 수정 — 헤더 내부 여백
       padding: const EdgeInsets.fromLTRB(
         AppSpacing.screenHorizontal,
         AppSpacing.md,
@@ -485,7 +484,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       ),
       decoration: BoxDecoration(
         // 그라디언트 배경: 주황 → 연한 주황으로 자연스럽게 변함
-        // TODO: 수치 확정 시 수정 — 그라디언트 색상 범위
         gradient: LinearGradient(
           begin: Alignment.topLeft,
           end: Alignment.bottomRight,
@@ -575,7 +573,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       crossAxisCount: 4,      // 가로 4칸 (버튼 4개가 한 줄에 나란히)
       shrinkWrap: true,       // 그리드가 내용물 크기만큼만 차지 (스크롤 안에 있으므로 필수)
       physics: const NeverScrollableScrollPhysics(), // 그리드 자체는 스크롤 불가 (부모 스크롤 사용)
-      // TODO: 수치 확정 시 수정 — 버튼 가로세로 비율 (현재 정사각형에 가까운 0.9)
       childAspectRatio: 0.9,
       children: actions.map(_buildQuickActionItem).toList(),
     );
@@ -592,7 +589,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         children: [
           // ── 아이콘 원형 배경 ─────────────────────────
           Container(
-            // TODO: 수치 확정 시 수정 — 아이콘 원 크기 (현재 52px)
             width: 52,
             height: 52,
             decoration: BoxDecoration(
@@ -603,7 +599,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             child: Icon(
               action.icon,
               color: primary,
-              // TODO: 수치 확정 시 수정 — 아이콘 크기 (현재 26px)
               size: 26,
             ),
           ),
@@ -713,23 +708,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           // ── 세션 상태 배지 + 세션 이름 ─────────────────
           Row(
             children: [
-              // 상태 배지 (주황 pill 형태)
-              Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 4,
-                ),
-                decoration: BoxDecoration(
-                  color: Theme.of(context).colorScheme.primary,
-                  borderRadius: BorderRadius.circular(AppRadius.chip),
-                ),
-                child: Text(
-                  statusText,
-                  style: AppTextStyles.caption.copyWith(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
+              // 공통 AppBadge 컴포넌트 — 상태별 tone 자동 적용
+              AppBadge(
+                label: statusText,
+                tone: _toneForSessionStatus(session.status),
+                filled: true,
               ),
 
               const SizedBox(width: AppSpacing.sm),
@@ -790,6 +773,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     final isAfternoon = hour >= 12;
     final display12 = hour == 0 ? 12 : (hour > 12 ? hour - 12 : hour);
     return '${isAfternoon ? "오후" : "오전"} $display12:$minute';
+  }
+
+  // 세션 상태 → AppBadge 톤 매핑 (디자인 일관성)
+  AppBadgeTone _toneForSessionStatus(String status) {
+    switch (status) {
+      case 'WAITING':
+        return AppBadgeTone.warning;
+      case 'VOTING':
+        return AppBadgeTone.primary;
+      case 'ORDERED':
+        return AppBadgeTone.success;
+      case 'DONE':
+        return AppBadgeTone.neutral;
+      default:
+        return AppBadgeTone.primary;
+    }
   }
 
   // 세션 정보 항목 하나 (아이콘 + 텍스트 조합)
@@ -896,7 +895,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     }
 
     return SizedBox(
-      // TODO: 수치 확정 시 수정 — 식당 카드 영역 높이 (현재 176px)
       height: 176,
       child: ListView.separated(
         // scrollDirection.horizontal: 가로 방향으로 스크롤
