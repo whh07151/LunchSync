@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
+import { GeminiService } from '../gemini/gemini.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당 크롤링 서비스
@@ -32,7 +33,11 @@ interface NaverMenuItem {
   name: string;
   price: number;
   description: string;
-  imageUrl?: string;
+  imageUrl?: string | null;
+  // Gemini AI 폴백 시 추가되는 알레르기/재료 메타 (옵션)
+  ingredients?: string[];
+  allergens?: string[];
+  source?: 'CRAWL_NAVER' | 'AI_GEMINI' | 'MANUAL';
 }
 
 interface NaverPlaceDetail {
@@ -58,6 +63,7 @@ export class CrawlService {
   constructor(
     private readonly config: ConfigService,
     private readonly supabase: SupabaseService,
+    private readonly gemini: GeminiService,
   ) {}
 
   // ── 메인: 좌표 + 반경으로 식당 크롤링 → DB 저장 ──────────
@@ -91,10 +97,41 @@ export class CrawlService {
     for (const place of kakaoPlaces) {
       try {
         // 네이버에서 메뉴/가격/평점 수집
-        const detail = await this.fetchNaverPlaceDetail(place.place_name);
+        let detail = await this.fetchNaverPlaceDetail(place.place_name);
 
         // 딜레이: 네이버 서버 부하 방지 (1초)
         await this.delay(1000);
+
+        // ── Gemini 폴백 (2026-05-12) ─────────────────────
+        // 네이버가 응답 안 했거나 메뉴 0개면 Gemini AI 로 메뉴 추정 생성.
+        // source='AI_GEMINI' 로 표시해 사장이 추후 수정 가능.
+        if (!detail || detail.menus.length === 0) {
+          const aiMenus = await this.gemini.generateMenuForRestaurant({
+            name: place.place_name,
+            category: place.category_name,
+          });
+          if (aiMenus.length > 0) {
+            this.logger.log(
+              `Gemini AI 메뉴 폴백 (${place.place_name}): ${aiMenus.length}개`,
+            );
+            detail = {
+              name: place.place_name,
+              rating: detail?.rating ?? 0,
+              reviewCount: detail?.reviewCount ?? 0,
+              imageUrl: detail?.imageUrl,
+              businessHours: detail?.businessHours,
+              menus: aiMenus.map((m) => ({
+                name: m.name,
+                price: m.price,
+                description: '', // Gemini 는 설명은 안 받음 (재료 위주)
+                imageUrl: null,
+                ingredients: m.ingredients,
+                allergens: m.allergens,
+                source: 'AI_GEMINI',
+              })),
+            };
+          }
+        }
 
         // 3단계: DB에 저장
         const menuCount = await this.saveToDb(place, detail);
@@ -329,6 +366,10 @@ export class CrawlService {
         category: this.mapMenuCategory(m.name),
         description: m.description,
         image_url: m.imageUrl || null,
+        // Gemini AI 폴백 시 채워진 필드. 네이버 출처면 빈 배열.
+        ingredients: m.ingredients ?? [],
+        allergens: m.allergens ?? [],
+        source: m.source ?? 'CRAWL_NAVER',
       }));
 
       const { error: menuError } = await client
