@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -61,8 +62,7 @@ class SessionsApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[SessionsApiService] createSession 에러: $e');
+      debugPrint('[SessionsApiService] createSession 에러: $e');
       return null;
     }
   }
@@ -86,8 +86,7 @@ class SessionsApiService {
       }
       return [];
     } catch (e) {
-      // ignore: avoid_print
-      print('[SessionsApiService] getTodaySessions 에러: $e');
+      debugPrint('[SessionsApiService] getTodaySessions 에러: $e');
       return [];
     }
   }
@@ -109,9 +108,28 @@ class SessionsApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[SessionsApiService] getSessionById 에러: $e');
+      debugPrint('[SessionsApiService] getSessionById 에러: $e');
       return null;
+    }
+  }
+
+  // ── PATCH /api/sessions/:id/status ────────────────────
+  // 세션 상태 전이 (WAITING → VOTING → ORDERED → DONE).
+  // 백엔드가 호스트 권한 + 전이 유효성을 검증. 본 클라이언트는 단순 호출.
+  Future<bool> updateSessionStatus({
+    required String accessToken,
+    required String sessionId,
+    required String status,
+  }) async {
+    try {
+      final response = await http.patch(
+        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/status'),
+        headers: _headers(accessToken),
+        body: jsonEncode({'status': status}),
+      );
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -136,8 +154,7 @@ class SessionsApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[SessionsApiService] getSessionMembers 에러: $e');
+      debugPrint('[SessionsApiService] getSessionMembers 에러: $e');
       return null;
     }
   }

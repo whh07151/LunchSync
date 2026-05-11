@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -75,12 +76,10 @@ class CrawlApiService {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         return CrawlResult.fromJson(json['data'] as Map<String, dynamic>);
       }
-      // ignore: avoid_print
-      print('[CrawlApiService] 응답 실패: ${response.statusCode}');
+      debugPrint('[CrawlApiService] 응답 실패: ${response.statusCode}');
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[CrawlApiService] crawlRestaurants 에러: $e');
+      debugPrint('[CrawlApiService] crawlRestaurants 에러: $e');
       return null;
     }
   }

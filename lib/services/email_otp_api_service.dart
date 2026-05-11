@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -53,8 +54,7 @@ class EmailOtpApiService {
         return OtpResult.fail('메일 발송에 실패했어요. 잠시 후 다시 시도해주세요.');
       }
     } catch (e) {
-      // ignore: avoid_print
-      print('[EmailOtpApiService] sendOtp 에러: $e');
+      debugPrint('[EmailOtpApiService] sendOtp 에러: $e');
       return OtpResult.fail('네트워크 오류가 발생했어요.');
     }
   }
@@ -80,8 +80,7 @@ class EmailOtpApiService {
         return OtpResult.fail('인증 코드가 올바르지 않거나 만료됐어요.');
       }
     } catch (e) {
-      // ignore: avoid_print
-      print('[EmailOtpApiService] verifyOtp 에러: $e');
+      debugPrint('[EmailOtpApiService] verifyOtp 에러: $e');
       return OtpResult.fail('네트워크 오류가 발생했어요.');
     }
   }

@@ -315,10 +315,11 @@ class _MyInfoScreenState extends ConsumerState<MyInfoScreen> {
             ),
           ),
           // 로그아웃 확인
+          // 카카오 SDK logout + JWT 삭제는 user_provider.clear() 에 통합돼 있어
+          // 여기서는 onLogout 콜백만 호출 (콜백 안에서 clear() 가 실행됨).
           TextButton(
             onPressed: () {
               Navigator.of(ctx).pop();
-              // TODO: API 연동 시 — 카카오 SDK unlink + JWT 삭제 후 콜백 호출
               widget.onLogout?.call();
             },
             child: Text(

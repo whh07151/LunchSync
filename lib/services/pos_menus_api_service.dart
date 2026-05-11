@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -72,8 +73,7 @@ class PosMenusApiService {
           .map(PosMenuItem.fromJson)
           .toList(growable: false);
     } catch (e) {
-      // ignore: avoid_print
-      print('[PosMenusApiService] list 에러: $e');
+      debugPrint('[PosMenusApiService] list 에러: $e');
       return const [];
     }
   }

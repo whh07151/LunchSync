@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -91,15 +92,13 @@ class PaymentsApiService {
         );
       }
 
-      // ignore: avoid_print
-      print(
+      debugPrint(
         '[PaymentsApiService] confirmPayment 실패: '
         '${response.statusCode} ${response.body}',
       );
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[PaymentsApiService] confirmPayment 에러: $e');
+      debugPrint('[PaymentsApiService] confirmPayment 에러: $e');
       return null;
     }
   }

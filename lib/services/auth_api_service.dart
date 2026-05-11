@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -85,8 +86,7 @@ class AuthApiService {
         body: jsonEncode({'kakaoAccessToken': kakaoAccessToken}),
       );
 
-      // ignore: avoid_print
-      print('[AuthApiService] kakao 상태: ${response.statusCode}');
+      debugPrint('[AuthApiService] kakao 상태: ${response.statusCode}');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -96,8 +96,7 @@ class AuthApiService {
 
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[AuthApiService] kakao 에러: $e');
+      debugPrint('[AuthApiService] kakao 에러: $e');
       return null;
     }
   }
@@ -132,8 +131,7 @@ class AuthApiService {
         body: jsonEncode(body),
       );
 
-      // ignore: avoid_print
-      print('[AuthApiService] signup 상태: ${response.statusCode}');
+      debugPrint('[AuthApiService] signup 상태: ${response.statusCode}');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -143,6 +141,51 @@ class AuthApiService {
 
       // 에러 메시지 추출 (NestJS ValidationPipe / Exception 응답 구조)
       String message = '회원가입에 실패했습니다.';
+      try {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final raw = json['message'];
+        if (raw is String) {
+          message = raw;
+        } else if (raw is List && raw.isNotEmpty) {
+          message = raw.first.toString();
+        }
+      } catch (_) {}
+
+      return AuthSignupResult.failure(message);
+    } catch (e) {
+      return AuthSignupResult.failure('서버 연결에 실패했어요. ($e)');
+    }
+  }
+
+  // ── POST /api/auth/verify-phone ────────────────────────
+  // Firebase Phone Auth 로 받은 ID 토큰을 백엔드에 전달.
+  // existingUserId 가 있으면 "본인확인 모드" — 현재 사용자에 휴대폰 붙이기.
+  // 없으면 "전화 로그인/가입 모드" — 휴대폰 번호로 사용자 조회/생성.
+  Future<AuthSignupResult> verifyPhone({
+    required String firebaseIdToken,
+    String? existingUserId,
+  }) async {
+    try {
+      final body = <String, dynamic>{'idToken': firebaseIdToken};
+      if (existingUserId != null) {
+        body['existingUserId'] = existingUserId;
+      }
+
+      final response = await http.post(
+        Uri.parse('${AppConfig.backendBaseUrl}/auth/verify-phone'),
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode(body),
+      );
+
+      debugPrint('[AuthApiService] verifyPhone 상태: ${response.statusCode}');
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = json['data'] as Map<String, dynamic>;
+        return AuthSignupResult.success(AuthResponse.fromJson(data));
+      }
+
+      String message = '휴대폰 인증에 실패했어요.';
       try {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         final raw = json['message'];

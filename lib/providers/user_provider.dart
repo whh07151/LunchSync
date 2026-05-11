@@ -1,6 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../services/auth_api_service.dart';
+import '../services/kakao_auth_service.dart';
 import '../services/users_api_service.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -204,8 +205,15 @@ class UserNotifier extends Notifier<UserState> {
   }
 
   // ── 로그아웃 시 유저 정보 초기화 ─────────────────────────
-  // 인메모리 + SharedPreferences 둘 다 삭제.
+  // 인메모리 + SharedPreferences 둘 다 삭제 + 카카오 SDK 토큰도 만료.
+  //
+  // 카카오 logout() 은 try/catch 로 감싸져 있어 카카오 로그인 사용자가 아니어도
+  // (이메일·휴대폰 가입) 안전하게 호출 가능. 미카카오 사용자 케이스는 무해하게
+  // 무시됨.
   Future<void> clear() async {
+    // 카카오 SDK 측 토큰 만료 — 다음 카카오 로그인 시 계정 선택 화면 노출되도록
+    await const KakaoAuthService().logout();
+
     state = const UserState();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_PrefKeys.jwt);

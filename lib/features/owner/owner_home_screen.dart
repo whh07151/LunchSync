@@ -179,8 +179,138 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
         _buildHomeTab(),
         _buildOrdersTab(),
         const MenuManagementScreen(),
-        _buildPlaceholderTab('내정보', Icons.person_rounded),
+        _buildOwnerInfoTab(),
       ],
+    );
+  }
+
+  // ── 4번 탭: 사장 내정보 ─────────────────────────────────
+  // 사장 계정 정보 + 매장 매핑 상태 + 매출/메뉴 진입 + 로그아웃.
+  // 손님 MyInfoScreen 은 소속/예산/속도 칩이라 사장에 부적합 → 별도 페이지로 구성.
+  Widget _buildOwnerInfoTab() {
+    final user = ref.watch(userProvider);
+    final primary = Theme.of(context).colorScheme.primary;
+    final hasRestaurant =
+        user.restaurantId != null && user.restaurantId!.isNotEmpty;
+
+    return SingleChildScrollView(
+      physics: const BouncingScrollPhysics(),
+      padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          const SizedBox(height: AppSpacing.lg),
+
+          // 프로필 박스
+          Container(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              border: Border.all(color: AppColors.border),
+            ),
+            child: Row(
+              children: [
+                CircleAvatar(
+                  radius: 28,
+                  backgroundColor: primary.withAlpha(30),
+                  child: Icon(
+                    Icons.storefront_rounded,
+                    color: primary,
+                    size: 28,
+                  ),
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        user.name ?? '사장님',
+                        style: AppTextStyles.bodyLarge
+                            .copyWith(fontWeight: FontWeight.w700),
+                      ),
+                      const SizedBox(height: 2),
+                      Text(
+                        '사장님 계정 · ${hasRestaurant ? "매장 연동됨" : "매장 매핑 대기"}',
+                        style: AppTextStyles.bodySmall
+                            .copyWith(color: AppColors.textSecondary),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+
+          const SizedBox(height: AppSpacing.lg),
+
+          // 메뉴 리스트
+          _ownerInfoRow(
+            icon: Icons.bar_chart_rounded,
+            label: '매출 보기',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const SalesScreen()),
+            ),
+          ),
+          _ownerInfoRow(
+            icon: Icons.menu_book_rounded,
+            label: '메뉴 관리',
+            onTap: () => setState(() => _currentTabIndex = 2),
+          ),
+          _ownerInfoRow(
+            icon: Icons.refresh_rounded,
+            label: '주문 새로고침',
+            onTap: _fetchAll,
+          ),
+
+          const SizedBox(height: AppSpacing.xl),
+
+          OutlinedButton.icon(
+            onPressed: _handleLogout,
+            icon: const Icon(Icons.logout_rounded),
+            label: const Text('로그아웃'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: AppColors.error,
+              side: BorderSide(color: AppColors.error.withAlpha(80)),
+              minimumSize: const Size.fromHeight(48),
+            ),
+          ),
+
+          const SizedBox(height: AppSpacing.md),
+          Center(
+            child: Text(
+              'LunchSync 사장님 v1.0',
+              style: AppTextStyles.caption
+                  .copyWith(color: AppColors.textSecondary),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _ownerInfoRow({
+    required IconData icon,
+    required String label,
+    required VoidCallback onTap,
+  }) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: ListTile(
+        leading: Icon(icon, color: Theme.of(context).colorScheme.primary),
+        title: Text(label, style: AppTextStyles.bodyMedium),
+        trailing: const Icon(
+          Icons.chevron_right_rounded,
+          color: AppColors.iconInactive,
+        ),
+        onTap: onTap,
+      ),
     );
   }
 
@@ -904,23 +1034,6 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
     );
   }
 
-  Widget _buildPlaceholderTab(String label, IconData icon) {
-    return Center(
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 48, color: AppColors.iconInactive),
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            '$label 화면 준비 중',
-            style: AppTextStyles.bodyMedium.copyWith(
-              color: AppColors.textSecondary,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
 }
 
 

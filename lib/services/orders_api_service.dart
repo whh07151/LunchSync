@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -200,15 +201,13 @@ class OrdersApiService {
         );
       }
 
-      // ignore: avoid_print
-      print(
+      debugPrint(
         '[OrdersApiService] createOrder 실패: '
         '${response.statusCode} ${response.body}',
       );
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[OrdersApiService] createOrder 에러: $e');
+      debugPrint('[OrdersApiService] createOrder 에러: $e');
       return null;
     }
   }
@@ -232,8 +231,7 @@ class OrdersApiService {
       }
       return [];
     } catch (e) {
-      // ignore: avoid_print
-      print('[OrdersApiService] getTodayOrders 에러: $e');
+      debugPrint('[OrdersApiService] getTodayOrders 에러: $e');
       return [];
     }
   }
@@ -256,8 +254,7 @@ class OrdersApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[OrdersApiService] getOrderById 에러: $e');
+      debugPrint('[OrdersApiService] getOrderById 에러: $e');
       return null;
     }
   }

@@ -97,8 +97,8 @@ class CartNotifier extends Notifier<List<CartItem>> {
   }
 
   // ── 장바구니 전체 비우기 ────────────────────────────────
-  // 주문 완료 또는 세션 종료 시 호출
-  // TODO: CU-21(결제 완료, 우현호 담당) 완성 후 결제 완료 화면에서 호출 연결
+  // 주문 완료 또는 세션 종료 시 호출.
+  // 결제 성공 후 payment_success_screen 에서 호출되어 다음 주문 시 깨끗한 상태로 진입.
   void clear() {
     state = const [];
   }

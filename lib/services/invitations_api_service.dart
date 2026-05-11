@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -58,8 +59,7 @@ class InvitationsApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[InvitationsApiService] createInvitation 에러: $e');
+      debugPrint('[InvitationsApiService] createInvitation 에러: $e');
       return null;
     }
   }

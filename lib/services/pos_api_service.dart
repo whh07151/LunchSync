@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -184,8 +185,7 @@ class PosApiService {
           .map(PosOrder.fromJson)
           .toList(growable: false);
     } catch (e) {
-      // ignore: avoid_print
-      print('[PosApiService] getOrders 에러: $e');
+      debugPrint('[PosApiService] getOrders 에러: $e');
       return const [];
     }
   }
@@ -214,8 +214,7 @@ class PosApiService {
       }
       return PosStats.empty;
     } catch (e) {
-      // ignore: avoid_print
-      print('[PosApiService] getStats 에러: $e');
+      debugPrint('[PosApiService] getStats 에러: $e');
       return PosStats.empty;
     }
   }
