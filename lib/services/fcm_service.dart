@@ -80,14 +80,16 @@ class FcmService {
     required String accessToken,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/users/me/fcm-token'),
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': 'Bearer $accessToken',
-        },
-        body: jsonEncode({'token': token}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/users/me/fcm-token'),
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': 'Bearer $accessToken',
+            },
+            body: jsonEncode({'token': token}),
+          )
+          .timeout(AppConfig.apiTimeout);
       if (response.statusCode != 200 && response.statusCode != 201) {
         debugPrint(
           '[FcmService] 백엔드 저장 실패 ${response.statusCode}: ${response.body}',

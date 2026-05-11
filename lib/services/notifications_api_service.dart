@@ -69,10 +69,12 @@ class NotificationsApiService {
     required String accessToken,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/notifications'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/notifications'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -94,11 +96,13 @@ class NotificationsApiService {
     required String notificationId,
   }) async {
     try {
-      final response = await http.patch(
-        Uri.parse(
-            '${AppConfig.backendBaseUrl}/notifications/$notificationId/read'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .patch(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/notifications/$notificationId/read'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -108,10 +112,12 @@ class NotificationsApiService {
   // ── PATCH /api/notifications/read-all ─────────────────
   Future<bool> markAllAsRead({required String accessToken}) async {
     try {
-      final response = await http.patch(
-        Uri.parse('${AppConfig.backendBaseUrl}/notifications/read-all'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .patch(
+            Uri.parse('${AppConfig.backendBaseUrl}/notifications/read-all'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
       return response.statusCode == 200;
     } catch (_) {
       return false;

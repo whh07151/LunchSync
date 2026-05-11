@@ -62,15 +62,18 @@ class CrawlApiService {
     int radius = 1000,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/crawl/restaurants'),
-        headers: _headers(accessToken),
-        body: jsonEncode({
-          'lat': lat,
-          'lng': lng,
-          'radius': radius,
-        }),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/crawl/restaurants'),
+            headers: _headers(accessToken),
+            body: jsonEncode({
+              'lat': lat,
+              'lng': lng,
+              'radius': radius,
+            }),
+          )
+          // 크롤링은 카카오 + 네이버 + Gemini AI 호출까지 길어질 수 있음
+          .timeout(const Duration(seconds: 30));
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;

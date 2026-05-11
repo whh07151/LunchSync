@@ -98,7 +98,9 @@ class RestaurantsApiService {
       final uri = Uri.parse('${AppConfig.backendBaseUrl}/restaurants')
           .replace(queryParameters: params.isNotEmpty ? params : null);
 
-      final response = await http.get(uri, headers: _headers(accessToken));
+      final response = await http
+          .get(uri, headers: _headers(accessToken))
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -122,10 +124,12 @@ class RestaurantsApiService {
     required String restaurantId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/restaurants/$restaurantId'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/restaurants/$restaurantId'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -148,11 +152,13 @@ class RestaurantsApiService {
     required String restaurantId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse(
-            '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/menus'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/menus'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;

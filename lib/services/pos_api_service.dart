@@ -160,10 +160,12 @@ class PosApiService {
         '${AppConfig.backendBaseUrl}/pos/restaurants/$restaurantId/orders'
         '${status != null ? '?status=$status' : ''}',
       );
-      final response = await http.get(
-        uri,
-        headers: {'Authorization': 'Bearer $accessToken'},
-      );
+      final response = await http
+          .get(
+            uri,
+            headers: {'Authorization': 'Bearer $accessToken'},
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode != 200) return const [];
 
@@ -197,12 +199,14 @@ class PosApiService {
     required String restaurantId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse(
-          '${AppConfig.backendBaseUrl}/pos/restaurants/$restaurantId/stats',
-        ),
-        headers: {'Authorization': 'Bearer $accessToken'},
-      );
+      final response = await http
+          .get(
+            Uri.parse(
+              '${AppConfig.backendBaseUrl}/pos/restaurants/$restaurantId/stats',
+            ),
+            headers: {'Authorization': 'Bearer $accessToken'},
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode != 200) return PosStats.empty;
 
@@ -228,14 +232,16 @@ class PosApiService {
     required String status,
   }) async {
     try {
-      final response = await http.patch(
-        Uri.parse('${AppConfig.backendBaseUrl}/pos/orders/$orderId/status'),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'status': status}),
-      );
+      final response = await http
+          .patch(
+            Uri.parse('${AppConfig.backendBaseUrl}/pos/orders/$orderId/status'),
+            headers: {
+              'Authorization': 'Bearer $accessToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'status': status}),
+          )
+          .timeout(AppConfig.apiTimeout);
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -250,14 +256,16 @@ class PosApiService {
     String? reason,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/pos/orders/$orderId/cancel'),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({'reason': ?reason}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/pos/orders/$orderId/cancel'),
+            headers: {
+              'Authorization': 'Bearer $accessToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({'reason': ?reason}),
+          )
+          .timeout(AppConfig.apiTimeout);
       return response.statusCode == 200;
     } catch (_) {
       return false;

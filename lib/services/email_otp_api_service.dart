@@ -35,11 +35,13 @@ class EmailOtpApiService {
   /// 가입 안 된 이메일 → 백엔드가 400 BadRequest 반환 → success=false.
   Future<OtpResult> sendOtp(String email) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/auth/email/send-otp'),
-        headers: const {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/auth/email/send-otp'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': email}),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         return OtpResult.ok('인증 메일을 보냈어요. 메일함을 확인해주세요.');
@@ -62,11 +64,13 @@ class EmailOtpApiService {
   /// 6자리 OTP 검증 — 성공 시 백엔드가 email_verified_at 갱신.
   Future<OtpResult> verifyOtp(String email, String code) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/auth/email/verify-otp'),
-        headers: const {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email, 'code': code}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/auth/email/verify-otp'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': email, 'code': code}),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         return OtpResult.ok('이메일 인증이 완료됐어요.');

@@ -61,10 +61,12 @@ class PosMenusApiService {
     required String restaurantId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/pos/menus/$restaurantId'),
-        headers: {'Authorization': 'Bearer $accessToken'},
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/pos/menus/$restaurantId'),
+            headers: {'Authorization': 'Bearer $accessToken'},
+          )
+          .timeout(AppConfig.apiTimeout);
       if (response.statusCode != 200) return const [];
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final list = (body['data'] as List<dynamic>?) ?? const [];
@@ -89,20 +91,22 @@ class PosMenusApiService {
     String? imageUrl,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/pos/menus/$restaurantId'),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode({
-          'name': name,
-          'price': price,
-          'category': ?category,
-          'description': ?description,
-          'imageUrl': ?imageUrl,
-        }),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/pos/menus/$restaurantId'),
+            headers: {
+              'Authorization': 'Bearer $accessToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'name': name,
+              'price': price,
+              'category': ?category,
+              'description': ?description,
+              'imageUrl': ?imageUrl,
+            }),
+          )
+          .timeout(AppConfig.apiTimeout);
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
         return PosMenuItem.fromJson(body['data'] as Map<String, dynamic>);
@@ -133,14 +137,16 @@ class PosMenusApiService {
       if (imageUrl != null) body['imageUrl'] = imageUrl;
       if (isAvailable != null) body['isAvailable'] = isAvailable;
 
-      final response = await http.patch(
-        Uri.parse('${AppConfig.backendBaseUrl}/pos/menus/item/$menuId'),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-          'Content-Type': 'application/json',
-        },
-        body: jsonEncode(body),
-      );
+      final response = await http
+          .patch(
+            Uri.parse('${AppConfig.backendBaseUrl}/pos/menus/item/$menuId'),
+            headers: {
+              'Authorization': 'Bearer $accessToken',
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(AppConfig.apiTimeout);
       if (response.statusCode == 200) {
         final resBody = jsonDecode(response.body) as Map<String, dynamic>;
         return PosMenuItem.fromJson(resBody['data'] as Map<String, dynamic>);
@@ -157,10 +163,12 @@ class PosMenusApiService {
     required String menuId,
   }) async {
     try {
-      final response = await http.delete(
-        Uri.parse('${AppConfig.backendBaseUrl}/pos/menus/item/$menuId'),
-        headers: {'Authorization': 'Bearer $accessToken'},
-      );
+      final response = await http
+          .delete(
+            Uri.parse('${AppConfig.backendBaseUrl}/pos/menus/item/$menuId'),
+            headers: {'Authorization': 'Bearer $accessToken'},
+          )
+          .timeout(AppConfig.apiTimeout);
       return response.statusCode == 200;
     } catch (_) {
       return false;

@@ -76,11 +76,14 @@ class RecommendationsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse(
-            '${AppConfig.backendBaseUrl}/sessions/$sessionId/recommendations'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/sessions/$sessionId/recommendations'),
+            headers: _headers(accessToken),
+          )
+          // 추천은 LLM 호출 가능성 있어 길게 (15s)
+          .timeout(const Duration(seconds: 15));
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;

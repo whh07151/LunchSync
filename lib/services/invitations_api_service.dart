@@ -47,11 +47,13 @@ class InvitationsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/invitations'),
-        headers: _headers(accessToken),
-        body: jsonEncode({'sessionId': sessionId}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/invitations'),
+            headers: _headers(accessToken),
+            body: jsonEncode({'sessionId': sessionId}),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -74,10 +76,12 @@ class InvitationsApiService {
     required String code,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/invitations/$code/accept'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/invitations/$code/accept'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         final data = json['data'] as Map<String, dynamic>;
