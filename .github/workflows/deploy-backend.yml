@@ -67,14 +67,22 @@ jobs:
 
             # 백엔드 디렉토리로 이동 후 빌드/재시작
             cd backend
+            echo "----- ENV -----"
+            echo "pwd: $(pwd)"
+            echo "node: $(node -v)"
+            echo "npm: $(npm -v)"
             echo "----- NPM INSTALL -----"
-            npm install
-            echo "----- BUILD -----"
-            npm run build
-            echo "----- DIST -----"
-            ls -la dist/ || (echo "❌ dist 디렉토리가 없음" && exit 1)
+            npm install 2>&1 | tail -20
+            echo "----- TSC BUILD (raw, verbose) -----"
+            # nest build 가 stderr 를 가려서 raw tsc 로 실행하여 컴파일 에러 노출.
+            # nest-cli.json 의 deleteOutDir 도 우회. 산출물은 tsconfig.build 기준.
+            rm -rf dist
+            npx tsc -p tsconfig.build.json 2>&1 || (echo "❌ TSC 빌드 실패" && exit 1)
+            echo "----- DIST 산출물 -----"
+            ls -la dist/ 2>&1 || echo "dist 디렉토리 없음"
+            find dist -name "main.js" -type f 2>/dev/null | head -5
             if [ ! -f dist/main.js ]; then
-              echo "❌ dist/main.js 가 없음 — nest build 실패"
+              echo "❌ dist/main.js 가 없음 — 빌드 실패"
               exit 1
             fi
             echo "✓ dist/main.js 존재 확인"
