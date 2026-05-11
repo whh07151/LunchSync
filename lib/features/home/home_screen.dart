@@ -73,6 +73,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   // 0 일 때는 배지 숨김, 1 이상이면 빨간 점.
   int _unreadNotifications = 0;
 
+  /// 미읽음 알림 폴링 타이머 — 홈 머무는 동안 30초마다 카운트 동기화.
+  /// FCM 푸시는 백그라운드/포그라운드 알림만, 카운트는 별도 조회.
+  Timer? _unreadPollingTimer;
+  static const _kUnreadPollInterval = Duration(seconds: 30);
+
   // ── 자동 크롤링 관련 상태 ─────────────────────────────
   // 앱 진입 + 이동 감지 기반으로 카카오 로컬 API에서 주변 식당을 DB에 동기화.
   // 쿨다운으로 API 쿼터 과다 소모를 방지한다(카카오는 1일 10k 호출 제한).
@@ -98,13 +103,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       _loadUnreadNotifications();
       // 진입 즉시 1회 자동 크롤링 + 이동 스트림 구독
       _startAutoCrawl();
+
+      // 알림 미읽음 카운트 30초 폴링 — 홈 머무는 동안 배지 자동 갱신
+      _unreadPollingTimer = Timer.periodic(_kUnreadPollInterval, (_) {
+        if (mounted) _loadUnreadNotifications();
+      });
     });
   }
 
   @override
   void dispose() {
-    // 홈 화면 이탈 시 스트림 구독 해제 — 배터리/권한 UI 정리
+    // 홈 화면 이탈 시 스트림/타이머 해제 — 배터리/권한 UI 정리
     _positionSub?.cancel();
+    _unreadPollingTimer?.cancel();
     super.dispose();
   }
 
