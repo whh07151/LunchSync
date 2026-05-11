@@ -137,15 +137,17 @@ class UsersApiService {
       if (businessName != null) body['businessName'] = businessName;
       if (businessNumber != null) body['businessNumber'] = businessNumber;
 
-      final response = await http.patch(
-        Uri.parse('${AppConfig.backendBaseUrl}/users/me'),
-        headers: {
-          'Content-Type': 'application/json',
-          // JWT 인증: NestJS JwtAuthGuard가 이 헤더로 user_id 추출
-          'Authorization': 'Bearer $accessToken',
-        },
-        body: jsonEncode(body),
-      );
+      final response = await http
+          .patch(
+            Uri.parse('${AppConfig.backendBaseUrl}/users/me'),
+            headers: {
+              'Content-Type': 'application/json',
+              // JWT 인증: NestJS JwtAuthGuard가 이 헤더로 user_id 추출
+              'Authorization': 'Bearer $accessToken',
+            },
+            body: jsonEncode(body),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       return response.statusCode == 200;
     } catch (_) {

@@ -50,11 +50,13 @@ class SessionsApiService {
       if (lat != null)            body['lat']            = lat;
       if (lng != null)            body['lng']            = lng;
 
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions'),
-        headers: _headers(accessToken),
-        body: jsonEncode(body),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions'),
+            headers: _headers(accessToken),
+            body: jsonEncode(body),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -72,10 +74,12 @@ class SessionsApiService {
     required String accessToken,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions/today'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/today'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -97,10 +101,12 @@ class SessionsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -122,11 +128,13 @@ class SessionsApiService {
     required String status,
   }) async {
     try {
-      final response = await http.patch(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/status'),
-        headers: _headers(accessToken),
-        body: jsonEncode({'status': status}),
-      );
+      final response = await http
+          .patch(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/status'),
+            headers: _headers(accessToken),
+            body: jsonEncode({'status': status}),
+          )
+          .timeout(AppConfig.apiTimeout);
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (_) {
       return false;
@@ -141,10 +149,12 @@ class SessionsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -166,11 +176,13 @@ class SessionsApiService {
     required String userId,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
-        headers: _headers(accessToken),
-        body: jsonEncode({'userId': userId}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
+            headers: _headers(accessToken),
+            body: jsonEncode({'userId': userId}),
+          )
+          .timeout(AppConfig.apiTimeout);
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (_) {
       return false;
@@ -184,11 +196,13 @@ class SessionsApiService {
     required String userId,
   }) async {
     try {
-      final response = await http.delete(
-        Uri.parse(
-            '${AppConfig.backendBaseUrl}/sessions/$sessionId/members/$userId'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .delete(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/sessions/$sessionId/members/$userId'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
       return response.statusCode == 200;
     } catch (_) {
       return false;

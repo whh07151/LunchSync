@@ -84,10 +84,15 @@ export class OrdersController {
 
   @Patch(':id/status')
   async updateStatus(
+    @Req() req: { user: { userId: string } },
     @Param('id') id: string,
     @Body() dto: UpdateOrderStatusDto,
   ) {
-    const result = await this.ordersService.updateOrderStatus(id, dto);
+    const result = await this.ordersService.updateOrderStatus(
+      id,
+      req.user.userId,
+      dto,
+    );
     return { success: true, data: result };
   }
 }

@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
 // ══════════════════════════════════════════════════════════
@@ -220,7 +226,43 @@ export class OrdersService {
   }
 
   // ── PATCH /orders/:id/status ──────────────────────────
-  async updateOrderStatus(orderId: string, dto: UpdateOrderStatusDto) {
+  // 보안 패치 (2026-05-12):
+  //   - 주문 소유자(user_id) 만 변경 가능 (사장은 별도 /pos/orders/:id/status 사용)
+  //   - 상태 전이 매트릭스 검증
+  async updateOrderStatus(
+    orderId: string,
+    requesterId: string,
+    dto: UpdateOrderStatusDto,
+  ) {
+    // 주문 조회 + 소유자 검증
+    const { data: order, error: orderError } = await this.supabase.client
+      .from('orders')
+      .select('id, user_id, status')
+      .eq('id', orderId)
+      .single();
+    if (orderError || !order) {
+      throw new NotFoundException('주문을 찾을 수 없어요.');
+    }
+    if (order.user_id !== requesterId) {
+      throw new ForbiddenException('본인의 주문만 변경할 수 있어요.');
+    }
+
+    // 상태 전이 매트릭스 (손님 입장)
+    const VALID_TRANSITIONS: Record<string, ReadonlyArray<string>> = {
+      PENDING: ['PAID', 'CANCELLED'],
+      PAID: [], // 이후는 POS 권한
+      PREPARING: [],
+      READY: [],
+      COMPLETED: [],
+      CANCELLED: [],
+    };
+    const allowed = VALID_TRANSITIONS[order.status] ?? [];
+    if (!allowed.includes(dto.status)) {
+      throw new BadRequestException(
+        `${order.status} 상태에서 ${dto.status} 로 변경할 수 없어요.`,
+      );
+    }
+
     const { data, error } = await this.supabase.client
       .from('orders')
       .update({ status: dto.status })
@@ -229,7 +271,7 @@ export class OrdersService {
       .single();
 
     if (error || !data) {
-      throw new NotFoundException('주문을 찾을 수 없습니다.');
+      throw new InternalServerErrorException('주문 상태를 변경하지 못했어요.');
     }
 
     return { id: data.id, status: data.status, updatedAt: data.updated_at };

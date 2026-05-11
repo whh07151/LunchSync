@@ -43,10 +43,16 @@ export class VotesController {
     return { success: true, data: result };
   }
 
-  // CU-15: 투표 결과 집계 → 식당 확정
+  // CU-15: 투표 결과 집계 → 식당 확정 (호스트만)
   @Post(':id/decide')
-  async decide(@Param('id') sessionId: string) {
-    const result = await this.votesService.tallyAndDecide(sessionId);
+  async decide(
+    @Req() req: { user: { userId: string } },
+    @Param('id') sessionId: string,
+  ) {
+    const result = await this.votesService.tallyAndDecide(
+      sessionId,
+      req.user.userId,
+    );
     return { success: true, data: result };
   }
 }

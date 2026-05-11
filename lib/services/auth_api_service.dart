@@ -80,11 +80,13 @@ class AuthApiService {
   // 카카오 access token을 서버에 전달해서 LunchSync JWT를 받아옴
   Future<AuthResponse?> loginWithKakao(String kakaoAccessToken) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/auth/kakao'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'kakaoAccessToken': kakaoAccessToken}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/auth/kakao'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'kakaoAccessToken': kakaoAccessToken}),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       debugPrint('[AuthApiService] kakao 상태: ${response.statusCode}');
 
@@ -125,11 +127,13 @@ class AuthApiService {
       if (businessName != null) body['businessName'] = businessName;
       if (businessNumber != null) body['businessNumber'] = businessNumber;
 
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/auth/signup/email'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/auth/signup/email'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       debugPrint('[AuthApiService] signup 상태: ${response.statusCode}');
 
@@ -171,11 +175,13 @@ class AuthApiService {
         body['existingUserId'] = existingUserId;
       }
 
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/auth/verify-phone'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode(body),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/auth/verify-phone'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode(body),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       debugPrint('[AuthApiService] verifyPhone 상태: ${response.statusCode}');
 
@@ -213,11 +219,13 @@ class AuthApiService {
     required String password,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/auth/login/email'),
-        headers: {'Content-Type': 'application/json'},
-        body: jsonEncode({'email': email, 'password': password}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/auth/login/email'),
+            headers: {'Content-Type': 'application/json'},
+            body: jsonEncode({'email': email, 'password': password}),
+          )
+          .timeout(AppConfig.apiTimeout);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
