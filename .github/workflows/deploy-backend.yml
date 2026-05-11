@@ -73,11 +73,22 @@ jobs:
             echo "npm: $(npm -v)"
             echo "----- NPM INSTALL -----"
             npm install 2>&1 | tail -20
-            echo "----- TSC BUILD (raw, verbose) -----"
-            # nest build 가 stderr 를 가려서 raw tsc 로 실행하여 컴파일 에러 노출.
-            # nest-cli.json 의 deleteOutDir 도 우회. 산출물은 tsconfig.build 기준.
+            echo "----- TSC BUILD (verbose+diagnostics) -----"
             rm -rf dist
-            npx tsc -p tsconfig.build.json 2>&1 || (echo "❌ TSC 빌드 실패" && exit 1)
+            # stdout/stderr 양쪽 모두 캡처 (SSH 가 stderr 를 가리는 경우 대비)
+            npx tsc -p tsconfig.build.json \
+              --listEmittedFiles \
+              --diagnostics \
+              --pretty false \
+              > /tmp/tsc.log 2>&1
+            TSC_EXIT=$?
+            echo "tsc exit code: $TSC_EXIT"
+            echo "----- TSC 출력 (last 80 lines) -----"
+            tail -80 /tmp/tsc.log
+            if [ $TSC_EXIT -ne 0 ]; then
+              echo "❌ TSC 빌드 실패 (exit $TSC_EXIT)"
+              exit 1
+            fi
             echo "----- DIST 산출물 -----"
             ls -la dist/ 2>&1 || echo "dist 디렉토리 없음"
             find dist -name "main.js" -type f 2>/dev/null | head -5
