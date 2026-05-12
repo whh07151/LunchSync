@@ -76,6 +76,9 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
     // 정상 흐름: OrderReviewScreen 이 리다이렉트 직전에 저장해둔 값
     final savedJwt = PaymentWebBridge.getSessionItem('ls_jwt');
     if (savedJwt == null || savedJwt.isEmpty) {
+      // mounted 가드 (2026-05-12 박검토B 긴급): 결제 후 사용자가 뒤로가기로
+      // 화면을 빠져나간 경우 setState 호출이 크래시를 일으킬 수 있음.
+      if (!mounted) return;
       setState(() {
         _isConfirming = false;
         _errorMessage =
@@ -96,6 +99,9 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
     );
 
     if (result == null) {
+      // mounted 가드 (2026-05-12 박검토B 긴급): confirm 응답이 10초 가까이 걸리므로
+      // 그 사이 사용자가 뒤로가기 누르면 mounted=false → setState 호출이 크래시.
+      if (!mounted) return;
       setState(() {
         _isConfirming = false;
         _errorMessage =
@@ -115,6 +121,9 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
     // 주소창에서 결제 쿼리 제거 (뒤로가기 시 재호출 방지)
     PaymentWebBridge.clearQueryParams();
 
+    // mounted 가드 (2026-05-12 박검토B 긴급): 결제 성공 응답이 늦게 와서
+    // 사용자가 그 사이 화면 떠난 경우 setState 호출 차단.
+    if (!mounted) return;
     setState(() {
       _isConfirming = false;
       _confirmed = true;

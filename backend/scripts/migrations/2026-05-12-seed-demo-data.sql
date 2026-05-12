@@ -41,6 +41,35 @@ ON CONFLICT (id) DO UPDATE
       lng = EXCLUDED.lng,
       price_range = EXCLUDED.price_range;
 
+-- ── 재실행 안전 정리 ─────────────────────────────────
+-- 외래키 의존: order_items → menu_items, orders → restaurants
+-- 시드 식당 5개에 묶인 데이터만 정리 (실제 사장 데이터는 다른 restaurant_id 라 안전)
+--
+-- 정리 순서가 중요:
+--   1) order_items: menu_items 를 참조 → 먼저 삭제 안 하면 23503 외래키 위반
+--   2) orders: restaurants 를 참조 → menu_items 삭제 전에 같이 정리
+--   3) menu_items: 위 둘이 정리되면 안전하게 DELETE
+DELETE FROM order_items
+WHERE menu_item_id IN (
+  SELECT id FROM menu_items
+  WHERE restaurant_id IN (
+    '11111111-1111-1111-1111-111111111111',
+    '22222222-2222-2222-2222-222222222222',
+    '33333333-3333-3333-3333-333333333333',
+    '44444444-4444-4444-4444-444444444444',
+    '55555555-5555-5555-5555-555555555555'
+  )
+);
+
+DELETE FROM orders
+WHERE restaurant_id IN (
+  '11111111-1111-1111-1111-111111111111',
+  '22222222-2222-2222-2222-222222222222',
+  '33333333-3333-3333-3333-333333333333',
+  '44444444-4444-4444-4444-444444444444',
+  '55555555-5555-5555-5555-555555555555'
+);
+
 -- ── menu_items — 각 식당 4~6개씩 (총 24개) ────────────
 -- 이전 메뉴 정리 (재실행 안전성)
 DELETE FROM menu_items WHERE restaurant_id IN (

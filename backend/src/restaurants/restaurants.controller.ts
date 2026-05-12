@@ -17,6 +17,11 @@ class GetRestaurantsQueryDto {
   @IsOptional() @IsNumberString() maxPrice?: string;
   @IsOptional() @IsNumberString() limit?: string;
   @IsOptional() @IsNumberString() offset?: string;
+  // 위치 기반 필터링 (2026-05-12 추가) — 길동 GPS 에서 강남 식당 노출 차단
+  // 위/경도 와 반경(m) 모두 있으면 Haversine 으로 반경 내 식당만 반환.
+  @IsOptional() @IsNumberString() lat?: string;
+  @IsOptional() @IsNumberString() lng?: string;
+  @IsOptional() @IsNumberString() radius?: string; // m 단위, 기본 1000m
 }
 
 @Controller('restaurants')
@@ -32,6 +37,9 @@ export class RestaurantsController {
       maxPrice: query.maxPrice ? Number(query.maxPrice) : undefined,
       limit: query.limit ? Number(query.limit) : undefined,
       offset: query.offset ? Number(query.offset) : undefined,
+      lat: query.lat ? Number(query.lat) : undefined,
+      lng: query.lng ? Number(query.lng) : undefined,
+      radius: query.radius ? Number(query.radius) : undefined,
     });
     return { success: true, data: result };
   }

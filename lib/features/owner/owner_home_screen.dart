@@ -904,56 +904,64 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
   // ── 취소 사유 입력 다이얼로그 ────────────────────────────
   // 자주 쓰는 사유 4종 칩 + 자유 입력. 빈 사유도 허용 (선택 입력).
   // null 반환 = 사용자가 다이얼로그 닫음(작업 취소).
+  //
+  // controller dispose (2026-05-12 박검토B 긴급):
+  //   TextEditingController 를 다이얼로그 안에서 만들고 dispose 안 하면 매 호출마다
+  //   메모리 누수. try/finally 로 다이얼로그 종료 시 무조건 dispose 보장.
   Future<String?> _showCancelReasonDialog() async {
     final controller = TextEditingController();
     const presetReasons = ['재료 소진', '조리 불가', '잘못된 주문', '손님 요청'];
 
-    return showDialog<String>(
-      context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('주문 취소'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Wrap(
-              spacing: 6,
-              runSpacing: 6,
-              children: presetReasons
-                  .map((r) => ActionChip(
-                        label: Text(r),
-                        onPressed: () {
-                          controller.text = r;
-                        },
-                      ))
-                  .toList(),
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: controller,
-              decoration: const InputDecoration(
-                labelText: '취소 사유 (선택)',
-                hintText: '직접 입력하거나 위 버튼 선택',
-                border: OutlineInputBorder(),
+    try {
+      return await showDialog<String>(
+        context: context,
+        builder: (dialogContext) => AlertDialog(
+          title: const Text('주문 취소'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: presetReasons
+                    .map((r) => ActionChip(
+                          label: Text(r),
+                          onPressed: () {
+                            controller.text = r;
+                          },
+                        ))
+                    .toList(),
               ),
-              maxLines: 2,
+              const SizedBox(height: 12),
+              TextField(
+                controller: controller,
+                decoration: const InputDecoration(
+                  labelText: '취소 사유 (선택)',
+                  hintText: '직접 입력하거나 위 버튼 선택',
+                  border: OutlineInputBorder(),
+                ),
+                maxLines: 2,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('닫기'),
+            ),
+            FilledButton(
+              onPressed: () =>
+                  Navigator.of(dialogContext).pop(controller.text.trim()),
+              style: FilledButton.styleFrom(backgroundColor: AppColors.error),
+              child: const Text('취소 처리'),
             ),
           ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(dialogContext).pop(),
-            child: const Text('닫기'),
-          ),
-          FilledButton(
-            onPressed: () =>
-                Navigator.of(dialogContext).pop(controller.text.trim()),
-            style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-            child: const Text('취소 처리'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      controller.dispose();
+    }
   }
 
   // ── 상태 전이 규칙 (LSPOS src/lib/utils/status.ts 의 nextStatus 와 동일) ───

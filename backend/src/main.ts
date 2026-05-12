@@ -59,12 +59,20 @@ async function bootstrap() {
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 
+  // localhost 패턴은 production 모드에서도 자동 허용 (2026-05-12 박검토 후 수정):
+  //   외부 인터넷에서는 어차피 localhost 로 EC2 백엔드를 호출할 수 없으므로
+  //   허용해도 보안상 의미 있는 영향 없음. 시연 환경(개발자 PC localhost:8080
+  //   Flutter 웹 → EC2 백엔드 호출)이 CORS 500 으로 막히는 문제를 해소.
+  const isLocalhostOrigin = (o: string): boolean =>
+    /^https?:\/\/localhost(:\d+)?$/.test(o) ||
+    /^https?:\/\/127\.0\.0\.1(:\d+)?$/.test(o);
+
   app.enableCors({
     origin: isProduction
       ? (origin, callback) => {
           // origin 이 undefined 인 경우(server-to-server, curl) 도 허용
           if (!origin) return callback(null, true);
-          if (productionOrigins.includes(origin)) {
+          if (isLocalhostOrigin(origin) || productionOrigins.includes(origin)) {
             callback(null, true);
           } else {
             logger.warn(`CORS 차단된 origin: ${origin}`);

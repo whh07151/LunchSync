@@ -13,6 +13,11 @@ export interface GetRestaurantsQuery {
   maxPrice?: number;
   limit?: number;
   offset?: number;
+  // 위치 기반 필터 (2026-05-12 추가) — 사용자 GPS 좌표 + 반경(m).
+  // lat/lng/radius 모두 제공 시 Haversine 으로 반경 내만 반환.
+  lat?: number;
+  lng?: number;
+  radius?: number;
 }
 
 @Injectable()
@@ -48,7 +53,19 @@ export class RestaurantsService {
       throw new Error(`식당 목록 조회 실패: ${error.message}`);
     }
 
-    return (data ?? []).map((r) => ({
+    // 위치 기반 반경 필터 (2026-05-12 추가):
+    //   query.lat/lng/radius 모두 있으면 Haversine 으로 반경 내 식당만 반환.
+    //   추후 PostGIS 도입 시 DB 쿼리 단에서 처리하도록 이동 가능.
+    let rows = data ?? [];
+    if (query.lat != null && query.lng != null) {
+      const radius = query.radius ?? 1000; // 기본 1km
+      rows = rows.filter((r: any) => {
+        if (r.lat == null || r.lng == null) return false;
+        return haversineMeters(query.lat!, query.lng!, r.lat, r.lng) <= radius;
+      });
+    }
+
+    return rows.map((r: any) => ({
       id: r.id,
       name: r.name,
       category: r.category,
@@ -84,6 +101,9 @@ export class RestaurantsService {
     };
   }
 
+  // ── Haversine 거리 계산 ──────────────────────────────
+  // 두 위경도 좌표 사이 지표면 거리(m). recommendations.service 와 동일 로직.
+  // PostGIS 미사용 환경에서 서비스 단 임시 필터링 용도.
   // ── GET /restaurants/:id/menus ────────────────────────
   async getMenusByRestaurant(restaurantId: string) {
     const { data, error } = await this.supabase.client
@@ -113,4 +133,23 @@ export class RestaurantsService {
 
     return { categories, menus };
   }
+}
+
+// ── Haversine 거리 계산 (m) ─────────────────────────────
+// recommendations.service.ts 동일 로직.
+function haversineMeters(
+  lat1: number,
+  lng1: number,
+  lat2: number,
+  lng2: number,
+): number {
+  const R = 6371000; // 지구 반지름 (m)
+  const toRad = (deg: number) => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLng = toRad(lng2 - lng1);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLng / 2) ** 2;
+  const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  return R * c;
 }

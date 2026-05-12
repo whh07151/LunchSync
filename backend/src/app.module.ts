@@ -43,14 +43,14 @@ import { NotificationsModule } from './notifications/notifications.module';
       envFilePath: '.env',
     }),
 
-    // Rate Limiting — 보안 에이전트 Defense in Depth 권장
-    // 분당 100 요청 초과 시 429 Too Many Requests 응답
-    // 캡스톤 시연 트래픽엔 여유롭지만 봇/DDoS 기본 방어
+    // Rate Limiting — 박검토 후 강화 (2026-05-12):
+    //   default: 모든 엔드포인트 기본 — 분당 100 요청
+    //   auth:    로그인/이메일 OTP — 분당 5회 (부르트포스 방어, login/email-otp 컨트롤러에서 @Throttle 로 지정)
+    //   signup:  가입 — 시간당 10회 (대량 가입 폭주로 Supabase quota 소진 방어)
     ThrottlerModule.forRoot([
-      {
-        ttl: 60_000, // 60초
-        limit: 100,
-      },
+      { name: 'default', ttl: 60_000, limit: 100 },
+      { name: 'auth', ttl: 60_000, limit: 5 },
+      { name: 'signup', ttl: 3_600_000, limit: 10 },
     ]),
 
     // 정적 파일 서빙 (toss-checkout.html 등)
