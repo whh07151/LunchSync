@@ -217,9 +217,15 @@ export class AuthService {
     // OWNER    → status=PENDING (운영자 승인 대기)
     const status: 'APPROVED' | 'PENDING' = role === 'OWNER' ? 'PENDING' : 'APPROVED';
 
+    // kakao_id 컬럼이 NOT NULL 이지만 이메일 가입은 카카오 ID 가 없음.
+    // 충돌 방지를 위해 `EMAIL_${타임스탬프}_${이메일}` 형식의 가상 ID 부여
+    // (2026-05-12 박검토 후 추가 — 추후 컬럼 NULLABLE 마이그레이션으로 대체 예정).
+    const dummyKakaoId = `EMAIL_${Date.now()}_${email}`;
+
     const { data: newUser, error } = await this.supabase.client
       .from('users')
       .insert({
+        kakao_id: dummyKakaoId,
         email,
         password_hash: passwordHash,
         name,

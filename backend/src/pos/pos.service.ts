@@ -180,6 +180,21 @@ export class PosService {
     return stats;
   }
 
+  // ── 권한 검증용: orderId → restaurant_id 사전 조회 ─────
+  // 컨트롤러가 assertPosAccessTo 호출 전에 어느 매장의 주문인지 확인하기 위함.
+  // 주문이 없으면 NotFoundException — 컨트롤러가 그대로 위로 전파.
+  async getRestaurantIdByOrderId(orderId: string): Promise<string> {
+    const { data, error } = await this.supabase.client
+      .from('orders')
+      .select('restaurant_id')
+      .eq('id', orderId)
+      .single();
+    if (error || !data?.restaurant_id) {
+      throw new NotFoundException('주문을 찾을 수 없습니다.');
+    }
+    return data.restaurant_id as string;
+  }
+
   // ── 점주 주문 상태 변경 (조리중 → 준비완료 등) ────────
   async updateOrderStatus(orderId: string, status: string) {
     const { data, error } = await this.supabase.client

@@ -1,4 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
 import { SupabaseService } from '../supabase/supabase.service';
 
@@ -24,12 +25,19 @@ export class PosAuthService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly jwt: JwtService,
+    private readonly config: ConfigService,
   ) {}
 
   /// POS 단말 로그인 — restaurantId 검증 후 type=POS JWT 발급.
+  ///
+  /// PIN 검증 (2026-05-12 박검토 후 추가):
+  ///   환경변수 POS_PIN 이 설정되어 있으면 pin 인자 일치 여부 확인.
+  ///   미설정 시 기존 동작 유지 (하위 호환). 시연용 공통 PIN 또는
+  ///   운영 전환 시 매장별 컬럼 추가로 교체.
+  ///
   /// 성공 시: { accessToken, restaurantId, restaurantName }
-  /// 실패 시: NotFoundException
-  async login(restaurantId: string, terminalName?: string) {
+  /// 실패 시: NotFoundException (식당 없음) / UnauthorizedException (PIN 불일치)
+  async login(restaurantId: string, terminalName?: string, pin?: string) {
     // 식당 존재 여부 확인 — 잘못된 UUID 또는 미등록 식당 차단
     const { data, error } = await this.supabase.client
       .from('restaurants')
@@ -39,6 +47,14 @@ export class PosAuthService {
 
     if (error || !data) {
       throw new NotFoundException('등록된 식당을 찾을 수 없습니다.');
+    }
+
+    // PIN 검증 — POS_PIN 환경변수가 설정된 경우만 활성화
+    const requiredPin = this.config.get<string>('POS_PIN');
+    if (requiredPin && requiredPin.trim().length > 0) {
+      if (!pin || pin !== requiredPin) {
+        throw new UnauthorizedException('POS 단말 PIN 이 올바르지 않습니다.');
+      }
     }
 
     // type=POS JWT 발급 — sub 에 restaurantId 저장

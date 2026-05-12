@@ -168,7 +168,9 @@ export class OrdersService {
   }
 
   // ── GET /orders/:id ───────────────────────────────────
-  async getOrderById(orderId: string) {
+  // 2026-05-13 보안 패치: 본인 주문 또는 같은 세션 멤버만 조회 가능.
+  // 그룹 식사 특성상 같은 세션 멤버가 서로의 주문 상태/금액 확인할 수 있어야 함.
+  async getOrderById(orderId: string, requesterId: string) {
     const { data: order, error } = await this.supabase.client
       .from('orders')
       .select('id, session_id, user_id, status, total_price, payment_key, created_at, updated_at')
@@ -177,6 +179,19 @@ export class OrdersService {
 
     if (error || !order) {
       throw new NotFoundException('주문을 찾을 수 없습니다.');
+    }
+
+    // 본인 주문이 아니면 같은 세션 멤버인지 확인
+    if (order.user_id !== requesterId) {
+      const { data: membership } = await this.supabase.client
+        .from('session_members')
+        .select('user_id')
+        .eq('session_id', order.session_id)
+        .eq('user_id', requesterId)
+        .maybeSingle();
+      if (!membership) {
+        throw new ForbiddenException('주문 조회 권한이 없어요.');
+      }
     }
 
     // 주문 아이템 조회

@@ -1,7 +1,12 @@
-import { Body, Controller, Get, Param, Patch, Post, Query, UseGuards } from '@nestjs/common';
-import { IsOptional, IsString } from 'class-validator';
+import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
+import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { assertPosAccessTo } from '../auth/pos-ownership.util';
+import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import { PosService } from './pos.service';
+
+// 2026-05-12 추가: req.user 타입 보강 — passport 가 주입한 사용자 객체.
+type AuthedRequest = { user: AuthedRequestUser };
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 점주앱/POS HTTP 엔드포인트
@@ -20,12 +25,14 @@ import { PosService } from './pos.service';
 //   기존 사장 홈(우리 owner_home_screen) 과 LSPOS 둘 다 깨지지 않게 둘 다 동작하도록.
 // ══════════════════════════════════════════════════════════
 
+// 2026-05-13 보안 패치: status 는 정해진 ENUM 값만 허용, reason 길이 제한
 class UpdatePosOrderStatusDto {
-  @IsString() status: string;
+  @IsIn(['PREPARING', 'READY', 'COMPLETED'])
+  status: string;
 }
 
 class CancelOrderDto {
-  @IsOptional() @IsString() reason?: string;
+  @IsOptional() @IsString() @MaxLength(500) reason?: string;
 }
 
 @Controller('pos')
@@ -34,11 +41,14 @@ export class PosController {
   constructor(private readonly posService: PosService) {}
 
   // ── OW-10: 식당별 주문 목록 (정식 경로) ───────────────
+  // 권한: POS 토큰의 매장 ID 와 path 매장 ID 일치 필수 (2026-05-12 박검토A)
   @Get('restaurants/:id/orders')
   async getOrders(
+    @Req() req: AuthedRequest,
     @Param('id') restaurantId: string,
     @Query('status') status?: string,
   ) {
+    assertPosAccessTo(req.user, restaurantId);
     const result = await this.posService.getOrdersByRestaurant(
       restaurantId,
       status,
@@ -49,41 +59,57 @@ export class PosController {
   // ── 별칭: LSPOS POS_BUILD_GUIDE 명세 호환 ─────────────
   @Get('orders/:restaurantId')
   async getOrdersAlias(
+    @Req() req: AuthedRequest,
     @Param('restaurantId') restaurantId: string,
     @Query('status') status?: string,
   ) {
-    return this.getOrders(restaurantId, status);
+    return this.getOrders(req, restaurantId, status);
   }
 
   // ── POS-08: 결제 상태 통계 (정식 경로) ────────────────
   @Get('restaurants/:id/stats')
-  async getStats(@Param('id') restaurantId: string) {
+  async getStats(
+    @Req() req: AuthedRequest,
+    @Param('id') restaurantId: string,
+  ) {
+    assertPosAccessTo(req.user, restaurantId);
     const result = await this.posService.getPaymentStats(restaurantId);
     return { success: true, data: result };
   }
 
   // ── 별칭: LSPOS POS_BUILD_GUIDE 명세 호환 ─────────────
   @Get('orders/:restaurantId/stats')
-  async getStatsAlias(@Param('restaurantId') restaurantId: string) {
-    return this.getStats(restaurantId);
+  async getStatsAlias(
+    @Req() req: AuthedRequest,
+    @Param('restaurantId') restaurantId: string,
+  ) {
+    return this.getStats(req, restaurantId);
   }
 
   // ── 주문 상태 변경 (PREPARING → READY 등) ────────────
+  // 권한: orderId → restaurant_id 사전 조회 후 토큰 일치 검증 (2026-05-13 보강)
   @Patch('orders/:id/status')
   async updateStatus(
+    @Req() req: AuthedRequest,
     @Param('id') orderId: string,
     @Body() dto: UpdatePosOrderStatusDto,
   ) {
+    const restaurantId = await this.posService.getRestaurantIdByOrderId(orderId);
+    assertPosAccessTo(req.user, restaurantId);
     const result = await this.posService.updateOrderStatus(orderId, dto.status);
     return { success: true, data: result };
   }
 
   // ── POS-09: 취소/환불 ────────────────────────────────
+  // 권한: orderId → restaurant_id 사전 조회 후 토큰 일치 검증 (2026-05-13 보강)
   @Post('orders/:id/cancel')
   async cancelOrder(
+    @Req() req: AuthedRequest,
     @Param('id') orderId: string,
     @Body() dto: CancelOrderDto,
   ) {
+    const restaurantId = await this.posService.getRestaurantIdByOrderId(orderId);
+    assertPosAccessTo(req.user, restaurantId);
     const result = await this.posService.cancelOrder(orderId, dto.reason);
     return { success: true, data: result };
   }

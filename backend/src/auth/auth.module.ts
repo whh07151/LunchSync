@@ -23,14 +23,17 @@ import { FirebaseService } from './firebase.service';
     JwtModule.registerAsync({
       inject: [ConfigService],
       useFactory: (config: ConfigService) => {
-        // .env 의 JWT_EXPIRES_IN 우선 (미설정 시 기본 24h). 시연용 24h, 운영 1~2h 권장.
-        const expiresIn = (config.get<string>('JWT_EXPIRES_IN') ?? '24h') as
-          | '24h'
-          | '7d'
+        // .env 의 JWT_EXPIRES_IN 우선 (미설정 시 기본 48h).
+        // 캡스톤 시연 기준 48h — 이틀에 한 번 로그인. 운영 환경은 1~2h 권장.
+        const expiresIn = (config.get<string>('JWT_EXPIRES_IN') ?? '48h') as
           | '1h'
           | '2h'
           | '12h'
-          | '1d';
+          | '24h'
+          | '48h'
+          | '1d'
+          | '2d'
+          | '7d';
         return {
           secret: config.getOrThrow<string>('JWT_SECRET'),
           signOptions: { expiresIn },

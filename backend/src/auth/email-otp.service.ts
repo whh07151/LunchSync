@@ -33,11 +33,15 @@ export class EmailOtpService {
 
   /// OTP 코드 발송 — Supabase Auth 가 메일을 보냄.
   /// 동일 이메일로 짧은 시간 내 여러 번 호출 시 Supabase 가 자체 rate-limit 함.
-  /// shouldCreateUser=false 로 설정해 Supabase auth.users 자동 생성을 막음 — 이미
-  /// public.users 에 가입된 사용자를 대상으로만 인증 진행.
+  ///
+  /// 스팸 방지 (2026-05-12 박검토A):
+  ///   1단계: public.users 에 가입된 이메일만 통과 (미가입 이메일 = BadRequest).
+  ///   2단계: shouldCreateUser=false 로 1차 시도 → auth.users 신규 생성 차단.
+  ///   3단계: 1차 거절 시 (auth.users 미존재) shouldCreateUser=true 로 1회 재시도.
+  ///   임의 이메일에 무한 OTP 발송하는 스팸 도구화 가능성을 1단계에서 사전 차단.
   async sendOtp(email: string): Promise<{ sent: true; email: string }> {
     // 1) public.users 에 해당 이메일이 존재하는지 먼저 확인 — 가입 안 된 사용자
-    //    한테 OTP 보내는 건 의미 없음
+    //    한테 OTP 보내는 건 의미 없음 + 스팸 도구화 차단
     const { data: user } = await this.supabase.client
       .from('users')
       .select('id, email_verified_at')
@@ -48,16 +52,21 @@ export class EmailOtpService {
       throw new BadRequestException('가입되지 않은 이메일입니다. 먼저 가입해주세요.');
     }
 
-    // 2) Supabase Auth 로 OTP 발송 요청
-    const { error } = await this.supabase.client.auth.signInWithOtp({
+    // 2) Supabase Auth 로 OTP 발송 요청 — 우선 shouldCreateUser=false 시도
+    let { error } = await this.supabase.client.auth.signInWithOtp({
       email,
-      options: {
-        // false: auth.users 에 신규 행 자동 생성 안 함. 검증만 인프라로 사용.
-        // 단 Supabase 정책상 false 일 때 해당 이메일이 auth.users 에 없으면
-        // 발송 거절 — 그 경우 fallback 으로 true 재시도.
-        shouldCreateUser: true,
-      },
+      options: { shouldCreateUser: false },
     });
+
+    // 3) auth.users 에 미존재해서 거절된 경우 → 1회만 신규 생성 허용 후 재시도
+    //    public.users 가 1단계에서 검증됐으므로 임의 이메일 자동 생성 위험 없음
+    if (error) {
+      const result2 = await this.supabase.client.auth.signInWithOtp({
+        email,
+        options: { shouldCreateUser: true },
+      });
+      error = result2.error;
+    }
 
     if (error) {
       this.logger.error(`OTP 발송 실패 (${email}): ${error.message}`);

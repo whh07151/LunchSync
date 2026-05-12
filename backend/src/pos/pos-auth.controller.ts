@@ -1,5 +1,6 @@
 import { Body, Controller, Param, Post } from '@nestjs/common';
 import { IsOptional, IsString } from 'class-validator';
+import { Throttle } from '@nestjs/throttler';
 import { PosAuthService } from './pos-auth.service';
 
 // ══════════════════════════════════════════════════════════
@@ -16,6 +17,10 @@ import { PosAuthService } from './pos-auth.service';
 class PosLoginDto {
   /// 단말 식별 라벨 (예: "카운터1", "주방POS") — 선택. 운영 로그용
   @IsOptional() @IsString() terminalName?: string;
+
+  /// POS 단말 PIN (2026-05-12 추가) — 환경변수 POS_PIN 설정 시 필수 검증.
+  /// 시드 매장 UUID 가 노출되어도 PIN 모르면 토큰 발급 불가.
+  @IsOptional() @IsString() pin?: string;
 }
 
 @Controller('pos')
@@ -25,6 +30,10 @@ export class PosAuthController {
   // ── POS 단말 로그인 ────────────────────────────────────
   // restaurantId 가 유효하면 type=POS JWT 발급. LSPOS 의 useAuth 가
   // localStorage 에 accessToken 저장 → client.ts 가 Bearer 헤더 자동 주입.
+  //
+  // 부르트포스 차단 (2026-05-12): IP 당 분당 5회 제한.
+  // 시드 매장 UUID 패턴(11111111-...) 노출 시에도 자동 시도 차단.
+  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
   @Post('login/:restaurantId')
   async login(
     @Param('restaurantId') restaurantId: string,
@@ -33,6 +42,7 @@ export class PosAuthController {
     const result = await this.posAuthService.login(
       restaurantId,
       dto.terminalName,
+      dto.pin,
     );
     return { success: true, data: result };
   }

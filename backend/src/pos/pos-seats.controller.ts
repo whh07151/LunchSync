@@ -1,9 +1,13 @@
-import { Body, Controller, Delete, Get, Param, Patch, Post, UseGuards } from '@nestjs/common';
+import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { IsArray, IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { assertPosAccessTo } from '../auth/pos-ownership.util';
+import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import { PosSeatsService } from './pos-seats.service';
 import type { UpsertSeatDto } from './pos-seats.service';
+
+type AuthedRequest = { user: AuthedRequestUser };
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 점주앱/LSPOS 좌석 모듈 HTTP 엔드포인트
@@ -44,28 +48,47 @@ export class PosSeatsController {
   constructor(private readonly seatsService: PosSeatsService) {}
 
   @Get(':restaurantId')
-  async list(@Param('restaurantId') restaurantId: string) {
+  async list(
+    @Req() req: AuthedRequest,
+    @Param('restaurantId') restaurantId: string,
+  ) {
+    assertPosAccessTo(req.user, restaurantId);
     const data = await this.seatsService.listSeats(restaurantId);
     return { success: true, data };
   }
 
   @Post(':restaurantId')
   async create(
+    @Req() req: AuthedRequest,
     @Param('restaurantId') restaurantId: string,
     @Body() dto: CreateSeatDto,
   ) {
+    assertPosAccessTo(req.user, restaurantId);
     const data = await this.seatsService.addSeat(restaurantId, dto.label);
     return { success: true, data };
   }
 
+  // 권한: seatId → restaurant_id 사전 조회 후 토큰 일치 검증 (2026-05-13 보강)
   @Patch('item/:seatId')
-  async update(@Param('seatId') seatId: string, @Body() dto: UpdateSeatDto) {
+  async update(
+    @Req() req: AuthedRequest,
+    @Param('seatId') seatId: string,
+    @Body() dto: UpdateSeatDto,
+  ) {
+    const restaurantId = await this.seatsService.getRestaurantIdBySeatId(seatId);
+    assertPosAccessTo(req.user, restaurantId);
     const data = await this.seatsService.updateSeat(seatId, dto as UpsertSeatDto);
     return { success: true, data };
   }
 
+  // 권한: seatId → restaurant_id 사전 조회 후 토큰 일치 검증 (2026-05-13 보강)
   @Delete('item/:seatId')
-  async remove(@Param('seatId') seatId: string) {
+  async remove(
+    @Req() req: AuthedRequest,
+    @Param('seatId') seatId: string,
+  ) {
+    const restaurantId = await this.seatsService.getRestaurantIdBySeatId(seatId);
+    assertPosAccessTo(req.user, restaurantId);
     const data = await this.seatsService.removeSeat(seatId);
     return { success: true, data };
   }

@@ -6,6 +6,7 @@ import {
   Param,
   Patch,
   Post,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import {
@@ -16,11 +17,15 @@ import {
   Min,
 } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { assertPosAccessTo } from '../auth/pos-ownership.util';
+import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import {
   CreateMenuDto,
   PosMenusService,
   UpdateMenuDto,
 } from './pos-menus.service';
+
+type AuthedRequest = { user: AuthedRequestUser };
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 사장/POS 메뉴 관리 HTTP 엔드포인트
@@ -59,31 +64,47 @@ export class PosMenusController {
   constructor(private readonly posMenusService: PosMenusService) {}
 
   @Get(':restaurantId')
-  async list(@Param('restaurantId') restaurantId: string) {
+  async list(
+    @Req() req: AuthedRequest,
+    @Param('restaurantId') restaurantId: string,
+  ) {
+    assertPosAccessTo(req.user, restaurantId);
     const result = await this.posMenusService.list(restaurantId);
     return { success: true, data: result };
   }
 
   @Post(':restaurantId')
   async create(
+    @Req() req: AuthedRequest,
     @Param('restaurantId') restaurantId: string,
     @Body() dto: CreateMenuRequestDto,
   ) {
+    assertPosAccessTo(req.user, restaurantId);
     const result = await this.posMenusService.create(restaurantId, dto);
     return { success: true, data: result };
   }
 
+  // 권한: menuId → restaurant_id 사전 조회 후 토큰 일치 검증 (2026-05-13 보강)
   @Patch('item/:id')
   async update(
+    @Req() req: AuthedRequest,
     @Param('id') menuId: string,
     @Body() dto: UpdateMenuRequestDto,
   ) {
+    const restaurantId = await this.posMenusService.getRestaurantIdByMenuId(menuId);
+    assertPosAccessTo(req.user, restaurantId);
     const result = await this.posMenusService.update(menuId, dto);
     return { success: true, data: result };
   }
 
+  // 권한: menuId → restaurant_id 사전 조회 후 토큰 일치 검증 (2026-05-13 보강)
   @Delete('item/:id')
-  async delete(@Param('id') menuId: string) {
+  async delete(
+    @Req() req: AuthedRequest,
+    @Param('id') menuId: string,
+  ) {
+    const restaurantId = await this.posMenusService.getRestaurantIdByMenuId(menuId);
+    assertPosAccessTo(req.user, restaurantId);
     const result = await this.posMenusService.delete(menuId);
     return { success: true, data: result };
   }

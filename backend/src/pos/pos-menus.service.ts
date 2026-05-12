@@ -33,6 +33,20 @@ export interface UpdateMenuDto {
 export class PosMenusService {
   constructor(private readonly supabase: SupabaseService) {}
 
+  /// 권한 검증용: menuId → restaurant_id 사전 조회.
+  /// 컨트롤러가 update/delete 전에 권한 일치를 확인하기 위함.
+  async getRestaurantIdByMenuId(menuId: string): Promise<string> {
+    const { data, error } = await this.supabase.client
+      .from('menu_items')
+      .select('restaurant_id')
+      .eq('id', menuId)
+      .single();
+    if (error || !data?.restaurant_id) {
+      throw new NotFoundException('메뉴를 찾을 수 없습니다.');
+    }
+    return data.restaurant_id as string;
+  }
+
   /// 식당의 메뉴 전체 목록 — 품절 포함 (사장 화면이 품절 토글하기 위해 모두 필요).
   async list(restaurantId: string) {
     const { data, error } = await this.supabase.client

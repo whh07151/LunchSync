@@ -44,6 +44,20 @@ export interface UpsertSeatDto {
 export class PosSeatsService {
   constructor(private readonly supabase: SupabaseService) {}
 
+  // ── 권한 검증용: seatId → restaurant_id 사전 조회 ──────
+  // 컨트롤러가 update/remove 전에 권한 일치를 확인하기 위함.
+  async getRestaurantIdBySeatId(seatId: string): Promise<string> {
+    const { data, error } = await this.supabase.client
+      .from('pos_seats')
+      .select('restaurant_id')
+      .eq('id', seatId)
+      .single();
+    if (error || !data?.restaurant_id) {
+      throw new NotFoundException('좌석을 찾을 수 없습니다.');
+    }
+    return data.restaurant_id as string;
+  }
+
   // ── 식당별 좌석 목록 ──────────────────────────────────
   async listSeats(restaurantId: string): Promise<SeatDto[]> {
     const { data, error } = await this.supabase.client
