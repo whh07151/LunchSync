@@ -1,6 +1,8 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
+import { GeminiService } from '../gemini/gemini.service';
+import { pickMenusForCategory } from './menu-library';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당 크롤링 서비스
@@ -32,7 +34,11 @@ interface NaverMenuItem {
   name: string;
   price: number;
   description: string;
-  imageUrl?: string;
+  imageUrl?: string | null;
+  // Gemini AI 폴백 시 추가되는 알레르기/재료 메타 (옵션)
+  ingredients?: string[];
+  allergens?: string[];
+  source?: 'CRAWL_NAVER' | 'AI_GEMINI' | 'MANUAL';
 }
 
 interface NaverPlaceDetail {
@@ -58,6 +64,7 @@ export class CrawlService {
   constructor(
     private readonly config: ConfigService,
     private readonly supabase: SupabaseService,
+    private readonly gemini: GeminiService,
   ) {}
 
   // ── 메인: 좌표 + 반경으로 식당 크롤링 → DB 저장 ──────────
@@ -74,13 +81,15 @@ export class CrawlService {
     const kakaoPlaces = await this.searchKakaoPlaces(lat, lng, radiusMeters);
     this.logger.log(`카카오 검색 결과: ${kakaoPlaces.length}개 식당`);
 
+    // ── 카카오 0개 폴백 (2026-05-12 추가) ────────────────
+    // 카카오 API 가 차단/오지/오류로 0개를 반환하면 그 좌표 동네에
+    // Gemini 가 가상 식당 5개를 만들어 DB에 박는다. 빈 화면 방지 안전망.
+    // 일반 도심에서는 거의 발동하지 않음 (카카오는 한국 거의 어디서나 식당 30개 반환).
     if (kakaoPlaces.length === 0) {
-      return {
-        totalSearched: 0,
-        totalSaved: 0,
-        totalMenus: 0,
-        restaurants: [],
-      };
+      this.logger.warn(
+        '카카오 0개 반환 — Gemini 가상 식당 폴백 시도',
+      );
+      return this.fallbackGenerateVirtualRestaurants(lat, lng);
     }
 
     // 2단계: 각 식당에 대해 네이버에서 상세 정보 보강
@@ -91,10 +100,69 @@ export class CrawlService {
     for (const place of kakaoPlaces) {
       try {
         // 네이버에서 메뉴/가격/평점 수집
-        const detail = await this.fetchNaverPlaceDetail(place.place_name);
+        let detail = await this.fetchNaverPlaceDetail(place.place_name);
 
         // 딜레이: 네이버 서버 부하 방지 (1초)
         await this.delay(1000);
+
+        // ── Gemini 폴백 (2026-05-12) ─────────────────────
+        // 네이버가 응답 안 했거나 메뉴 0개면 Gemini AI 로 메뉴 추정 생성.
+        // source='AI_GEMINI' 로 표시해 사장이 추후 수정 가능.
+        if (!detail || detail.menus.length === 0) {
+          const aiMenus = await this.gemini.generateMenuForRestaurant({
+            name: place.place_name,
+            category: place.category_name,
+          });
+          if (aiMenus.length > 0) {
+            this.logger.log(
+              `Gemini AI 메뉴 폴백 (${place.place_name}): ${aiMenus.length}개`,
+            );
+            detail = {
+              name: place.place_name,
+              rating: detail?.rating ?? 0,
+              reviewCount: detail?.reviewCount ?? 0,
+              imageUrl: detail?.imageUrl,
+              businessHours: detail?.businessHours,
+              menus: aiMenus.map((m) => ({
+                name: m.name,
+                price: m.price,
+                description: '', // Gemini 는 설명은 안 받음 (재료 위주)
+                imageUrl: null,
+                ingredients: m.ingredients,
+                allergens: m.allergens,
+                source: 'AI_GEMINI',
+              })),
+            };
+          }
+        }
+
+        // ── 카테고리 라이브러리 폴백 (2026-05-12 영구 해결책) ──
+        // 네이버 + Gemini 둘 다 실패해도 카테고리(한식/일식/...) 기반으로
+        // 정적 라이브러리에서 메뉴 + Unsplash 사진 자동 매핑. 어디서 켜든
+        // 모든 식당이 메뉴+가격+사진 갖춰서 시연 임팩트 유지.
+        if (!detail || detail.menus.length === 0) {
+          const category = this.mapCategory(place.category_name);
+          const libMenus = pickMenusForCategory(category, 5);
+          this.logger.log(
+            `카테고리 라이브러리 폴백 (${place.place_name}, ${category}): ${libMenus.length}개`,
+          );
+          detail = {
+            name: place.place_name,
+            rating: detail?.rating ?? 0,
+            reviewCount: detail?.reviewCount ?? 0,
+            imageUrl: detail?.imageUrl,
+            businessHours: detail?.businessHours,
+            menus: libMenus.map((m) => ({
+              name: m.name,
+              price: m.price,
+              description: m.description,
+              imageUrl: m.imageUrl,
+              ingredients: m.ingredients,
+              allergens: m.allergens,
+              source: 'AI_GEMINI', // DB ENUM 제약 — 추후 'LIBRARY' 추가 검토
+            })),
+          };
+        }
 
         // 3단계: DB에 저장
         const menuCount = await this.saveToDb(place, detail);
@@ -329,6 +397,10 @@ export class CrawlService {
         category: this.mapMenuCategory(m.name),
         description: m.description,
         image_url: m.imageUrl || null,
+        // Gemini AI 폴백 시 채워진 필드. 네이버 출처면 빈 배열.
+        ingredients: m.ingredients ?? [],
+        allergens: m.allergens ?? [],
+        source: m.source ?? 'CRAWL_NAVER',
       }));
 
       const { error: menuError } = await client
@@ -396,5 +468,145 @@ export class CrawlService {
   // ── 딜레이 유틸 ───────────────────────────────────────────
   private delay(ms: number): Promise<void> {
     return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // ══════════════════════════════════════════════════════
+  // Gemini 가상 식당 폴백 (2026-05-12 추가)
+  // ══════════════════════════════════════════════════════
+  // 카카오가 0개를 반환한 좌표에 대해 Gemini 가 가상 식당 5개 + 메뉴를 생성하고
+  // 좌표 주변에 흩뿌려 DB에 저장한다.
+  //
+  // 흩뿌리기:
+  //   각 식당을 호출 좌표 ±0.003도(약 ±300m) 안에 무작위 배치.
+  //   추천 화면에서 거리 필터(반경 1km)에 모두 잡히도록 충분히 가깝게.
+  //
+  // 중복 방지:
+  //   saveToDb 와 동일하게 (name, address) 중복 체크. Gemini 가 같은 이름을
+  //   다시 만들어도 INSERT 안 되고 UPDATE 만 일어남 → 데이터 폭증 방지.
+  private async fallbackGenerateVirtualRestaurants(
+    lat: number,
+    lng: number,
+  ): Promise<CrawlResult> {
+    // 좌표 → 동네 힌트 변환은 역지오코딩이 필요한데, 추가 API 의존을 피하기 위해
+    // 일단 좌표 자체를 areaHint 에 흘려보냄. Gemini 가 그럭저럭 맞는 가상 주소를
+    // 생성해 줌. (정확도가 필요해지면 카카오 좌표→주소 변환 API 추가 가능)
+    const areaHint = `위도 ${lat.toFixed(4)}, 경도 ${lng.toFixed(4)} 근처`;
+
+    const generated = await this.gemini.generateRestaurantsForArea({
+      areaHint,
+      count: 5,
+      categories: ['한식', '분식', '일식', '양식', '중식'],
+    });
+
+    if (generated.length === 0) {
+      this.logger.warn('Gemini 폴백도 0개 — 완전 빈 결과 반환');
+      return {
+        totalSearched: 0,
+        totalSaved: 0,
+        totalMenus: 0,
+        restaurants: [],
+      };
+    }
+
+    const client = this.supabase.client;
+    const results: Array<{ name: string; menuCount: number }> = [];
+    let totalMenus = 0;
+    let totalSaved = 0;
+
+    for (const r of generated) {
+      try {
+        // 좌표 ±0.003도(약 ±300m) 안에 흩뿌림 — 반경 1km 추천에 충분히 잡힘
+        const jitterLat = lat + (Math.random() - 0.5) * 0.006;
+        const jitterLng = lng + (Math.random() - 0.5) * 0.006;
+
+        const restaurantData = {
+          name: r.name,
+          category: r.category,
+          address: r.addressHint || areaHint,
+          lat: jitterLat,
+          lng: jitterLng,
+          price_range: r.priceRange,
+        };
+
+        // 중복 체크 (이름 + 주소)
+        const { data: existing } = await client
+          .from('restaurants')
+          .select('id')
+          .eq('name', restaurantData.name)
+          .eq('address', restaurantData.address)
+          .limit(1);
+
+        let restaurantId: string;
+        if (existing && existing.length > 0) {
+          restaurantId = existing[0].id;
+          await client
+            .from('restaurants')
+            .update(restaurantData)
+            .eq('id', restaurantId);
+        } else {
+          const { data: inserted, error } = await client
+            .from('restaurants')
+            .insert(restaurantData)
+            .select('id')
+            .single();
+          if (error || !inserted) {
+            this.logger.error(
+              `Gemini 가상식당 저장 실패 (${r.name}): ${error?.message}`,
+            );
+            continue;
+          }
+          restaurantId = inserted.id;
+        }
+
+        // 메뉴 저장 (기존 메뉴 정리 후 재삽입)
+        await client
+          .from('menu_items')
+          .delete()
+          .eq('restaurant_id', restaurantId);
+
+        const menuRows = r.menus.map((m) => ({
+          restaurant_id: restaurantId,
+          name: m.name,
+          price: m.price,
+          category: m.category,
+          description: '', // Gemini 는 설명 미생성
+          image_url: null,
+          ingredients: m.ingredients,
+          allergens: m.allergens,
+          source: 'AI_GEMINI',
+        }));
+
+        const { error: menuError } = await client
+          .from('menu_items')
+          .insert(menuRows);
+
+        if (menuError) {
+          this.logger.warn(
+            `Gemini 가상메뉴 저장 실패 (${r.name}): ${menuError.message}`,
+          );
+          continue;
+        }
+
+        totalMenus += r.menus.length;
+        totalSaved++;
+        results.push({ name: r.name, menuCount: r.menus.length });
+        this.logger.log(
+          `Gemini 가상식당 저장: ${r.name} (메뉴 ${r.menus.length}개)`,
+        );
+      } catch (e) {
+        this.logger.warn(`Gemini 가상식당 처리 예외 (${r.name}): ${e}`);
+      }
+    }
+
+    this.logger.log(
+      `Gemini 폴백 완료: ${totalSaved}개 식당, ${totalMenus}개 메뉴 저장`,
+    );
+
+    return {
+      totalSearched: generated.length,
+      totalSaved,
+      totalMenus,
+      restaurants: results,
+    };
   }
 }

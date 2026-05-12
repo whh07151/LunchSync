@@ -1,52 +1,63 @@
+import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme/theme.dart';
 import 'core/config/app_config.dart';
+import 'core/api/api_auth_hooks.dart';
+import 'firebase_options.dart';
 import 'features/splash/splash_screen.dart';
 import 'features/auth/login_screen.dart';
+import 'features/auth/owner_pending_screen.dart';
 import 'features/onboarding/profile_setup_screen.dart';
 import 'features/onboarding/condition_setup_screen.dart';
 import 'features/home/home_screen.dart';
+import 'features/owner/owner_home_screen.dart';
 import 'features/payment/payment_success_screen.dart';
 import 'features/payment/payment_fail_screen.dart';
 import 'features/payment/payment_web_bridge.dart';
 import 'providers/user_provider.dart';
+import 'services/users_api_service.dart';
 
 // ══════════════════════════════════════════════════════════
-// 파일 역할: 앱의 시작점(Entry Point)
+// 파일 역할: 앱의 시작점 + 전역 라우팅
 //
-// main() 함수:
-//   Dart(Flutter)에서 프로그램이 실행될 때 가장 먼저 호출되는 함수입니다.
-//   runApp()을 통해 LunchSyncApp 위젯을 화면에 띄웁니다.
+// 회원가입/인증 결정(2026-05-07) 반영:
+//   1. 자동 로그인 — SharedPreferences에 저장된 JWT가 있으면
+//      GET /users/me 검증 후 role/status에 맞는 홈으로 자동 진입
+//   2. 동적 테마 — userProvider의 role에 따라 손님(주황)/사장(청록) 테마 자동 전환
+//   3. nextStep 분기 확장 — OWNER_PENDING / OWNER_HOME 추가
 //
-// 전체 앱 구조:
-//   main()
-//    └→ ProviderScope (Riverpod 전역 상태 컨테이너)
-//         └→ LunchSyncApp (앱 설정: 테마, 라우팅 등)
-//              └→ _RootNavigator (첫 화면 결정)
-//                   └→ SplashScreen (스플래시)
-//                        ├→ 온보딩 화면 (처음 실행 시)
-//                        └→ 홈 화면 (재실행 시)
-//
-// ProviderScope란?
-//   Riverpod의 모든 Provider는 ProviderScope 안에서만 동작합니다.
-//   앱 전체를 감싸야 어느 화면에서든 ref.read/watch 로 상태에 접근 가능합니다.
+// 부팅 시 화면 결정 우선순위:
+//   1. 결제 왕복 리턴 URL → 결제 결과 화면
+//   2. 자동 로그인 가능 → 손님/사장 홈
+//   3. 자동 로그인 실패 + 온보딩 미완료 → 스플래시
+//   4. 자동 로그인 실패 + 온보딩 완료 → 로그인 화면
 // ══════════════════════════════════════════════════════════
 
-/// 앱의 진입점 — 이 함수가 가장 먼저 실행됨
-void main() {
-  // ── 카카오 SDK 초기화 ──────────────────────────────────────
-  // runApp 전에 반드시 호출해야 합니다.
-  // nativeAppKey: 카카오 개발자 콘솔에서 발급받은 Native 앱 키
-  // 앱 키는 app_config.dart에서 관리 (.gitignore 처리됨)
+Future<void> main() async {
+  // Flutter 바인딩이 Firebase 초기화 전에 준비되도록 보장
+  WidgetsFlutterBinding.ensureInitialized();
+
+  // ── 카카오 SDK 초기화 ────────────────────────────────
   KakaoSdk.init(
-    nativeAppKey: AppConfig.kakaoNativeAppKey,       // Android/iOS
-    javaScriptAppKey: AppConfig.kakaoJavaScriptAppKey, // Web(Chrome)
+    nativeAppKey: AppConfig.kakaoNativeAppKey,
+    javaScriptAppKey: AppConfig.kakaoJavaScriptAppKey,
   );
 
-  // ProviderScope: Riverpod 상태 컨테이너. 앱 전체를 감싸야 함.
+  // ── Firebase 초기화 ────────────────────────────────
+  // 휴대폰 인증(Phone Auth) 진입 전 반드시 1회 실행. 실패해도 앱은 동작하도록
+  // try/catch — iOS 미설정 환경 등에서 무리하게 죽지 않게.
+  try {
+    await Firebase.initializeApp(
+      options: DefaultFirebaseOptions.currentPlatform,
+    );
+  } catch (e) {
+    // 로그만 남기고 진행 — 휴대폰 인증 화면 진입 시 다시 에러 처리
+    debugPrint('Firebase 초기화 실패: $e');
+  }
+
   runApp(const ProviderScope(child: LunchSyncApp()));
 }
 
@@ -54,49 +65,32 @@ void main() {
 // ─────────────────────────────────────────────────────────
 // LunchSyncApp: 앱 전체를 감싸는 최상위 위젯
 //
-// MaterialApp이란?
-//   Flutter에서 Material Design 기반 앱을 만들 때 최상위에 넣는 위젯입니다.
-//   테마, 라우팅, 언어 설정 등 앱 전체 설정을 담당합니다.
+// ConsumerWidget으로 변경한 이유:
+//   userProvider의 role 값에 따라 테마(주황/청록)를 동적으로 전환하기 위해
+//   build에서 ref.watch(userProvider) 필요.
 // ─────────────────────────────────────────────────────────
-class LunchSyncApp extends StatelessWidget {
+class LunchSyncApp extends ConsumerWidget {
   const LunchSyncApp({super.key});
 
   @override
-  Widget build(BuildContext context) {
+  Widget build(BuildContext context, WidgetRef ref) {
+    // user role에 따라 손님/사장 테마 결정
+    // 로그인 전엔 손님 테마(주황)가 기본
+    final user = ref.watch(userProvider);
+    final appType = user.role == 'OWNER' ? AppType.owner : AppType.customer;
+
     return MaterialApp(
-      title: 'LunchSync',             // 앱 이름 (기기의 최근 앱 목록 등에 표시됨)
-      debugShowCheckedModeBanner: false, // 우측 상단 'debug' 빨간 띠 제거
-
-      // TODO: 상태 관리 결정 후 — AppType을 로그인 상태에 따라 동적으로 전환
-      // 현재는 손님앱 테마(주황)로 고정
-      theme: AppTheme.of(AppType.customer),
-
-      home: const _RootNavigator(), // 앱이 처음 보여줄 화면
+      title: 'LunchSync',
+      debugShowCheckedModeBanner: false,
+      theme: AppTheme.of(appType),
+      home: const _RootNavigator(),
     );
   }
 }
 
 
 // ─────────────────────────────────────────────────────────
-// _RootNavigator: 앱의 첫 화면을 결정하고 라우팅을 담당하는 위젯
-//
-// 역할:
-//   앱 실행 시 SharedPreferences의 'onboarding_done' 값을 읽어서
-//   첫 실행인지 재실행인지 판단합니다.
-//
-//   첫 실행 (onboarding_done == false):
-//     SplashScreen → LoginScreen → nextStep에 따라 화면 분기
-//       "PROFILE_SETUP"   → CU-03 → CU-05 → HomeScreen
-//       "CONDITION_SETUP" → CU-05 → HomeScreen (CU-03 완료 후 재진입)
-//       "HOME"            → HomeScreen (온보딩 완료)
-//
-//   재실행 (onboarding_done == true):
-//     SplashScreen 건너뜀 → LoginScreen → nextStep에 따라 동일 분기
-//     (JWT가 인메모리라 앱 재실행 시 항상 로그인 필요)
-//
-// StatefulWidget을 쓰는 이유:
-//   SharedPreferences 조회가 비동기(async)라 결과가 오기 전까지
-//   로딩 상태를 표시해야 합니다. StatelessWidget은 상태 변경 불가.
+// _RootNavigator: 첫 화면 결정 + 라우팅
 // ─────────────────────────────────────────────────────────
 class _RootNavigator extends ConsumerStatefulWidget {
   const _RootNavigator();
@@ -107,36 +101,94 @@ class _RootNavigator extends ConsumerStatefulWidget {
 
 class _RootNavigatorState extends ConsumerState<_RootNavigator> {
 
-  // null: 아직 확인 중 / true: 온보딩 완료 / false: 첫 실행
+  // ── 부팅 단계별 상태 ─────────────────────────────────
+  // null  : 확인 중 (로딩 표시)
+  // false : 첫 실행 (스플래시 보여줘야 함)
+  // true  : 재실행 (스플래시 건너뜀)
   bool? _onboardingDone;
 
-  // ── 결제 왕복 리턴 처리용 플래그 ────────────────────────
-  // 토스 결제위젯이 successUrl/failUrl 로 리다이렉트해 돌아오면
-  // URL 에 paymentStatus=success|fail 쿼리가 붙어있음.
-  // 이 경우 스플래시/로그인 흐름을 건너뛰고 결제 결과 화면으로 바로 진입.
+  // ── 자동 로그인 결과 ─────────────────────────────────
+  // null  : 자동 로그인 안 시도했거나 실패 → 로그인 화면
+  // 'HOME'         : 손님 홈으로
+  // 'OWNER_HOME'   : 사장 홈으로
+  // 'OWNER_PENDING': 사장 승인 대기 안내로
+  String? _autoLoginNextStep;
+
+  // ── 결제 왕복 리턴 ─────────────────────────────────
   _PaymentReturnInfo? _paymentReturn;
 
   @override
   void initState() {
     super.initState();
-    // _restoreUserFromSession 은 userProvider 를 직접 수정하므로
-    // 위젯 트리 빌드 완료 후 호출해야 함 (빌드 중 provider 수정 에러 방지)
+    // 401 자동 로그아웃 글로벌 콜백 등록 — 토큰 만료 시 userProvider 자동 클리어.
+    // _RootNavigator 상태에 있을 때는 setState 로 build() 재호출 → LoginScreen 으로
+    // 자연 전환. 다른 화면(HomeScreen 등) 에 있으면 토큰만 클리어되고, 사용자가
+    // 앱 재시작 또는 다음 진입 시 LoginScreen 으로 빠짐.
+    ApiAuthHooks.onUnauthorized = () async {
+      debugPrint('[ApiAuthHooks] 401 감지 → userProvider clear');
+      await ref.read(userProvider.notifier).clear();
+      if (mounted) {
+        setState(() {
+          _autoLoginNextStep = null;
+        });
+      }
+    };
     _detectPaymentReturn();
-    _checkOnboardingStatus();
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      _restoreUserFromSession();
-    });
+    _bootSequence();
   }
 
-  // ── 앱 시작 시 sessionStorage 에서 유저 복원 ──────────────
-  // 토스 결제 페이지로 전체 리다이렉트된 뒤 Flutter 앱이 다시
-  // 로드되면 Riverpod 의 userProvider 가 초기 상태(null)로 돌아갑니다.
-  // OrderReviewScreen 이 결제 직전에 백업해둔 ls_jwt/ls_user_* 가 있으면
-  // 그대로 userProvider 에 복원해서 로그인 상태를 이어갑니다.
-  //
-  // 동작 조건:
-  //   - 웹 빌드에서만 실제 값이 들어옴 (모바일 스텁은 항상 null 반환)
-  //   - sessionStorage 가 비었으면 no-op
+  // ── 부팅 시퀀스 ──────────────────────────────────────
+  // 결제 리턴이 아니면 자동 로그인 시도 → 온보딩 상태 확인 순서
+  Future<void> _bootSequence() async {
+    // 결제 리턴 처리 중엔 자동 로그인 건너뜀 (sessionStorage 복원이 우선)
+    if (_paymentReturn != null) {
+      _restoreUserFromSession();
+      await _checkOnboardingStatus();
+      return;
+    }
+
+    // 1) 영속 토큰 복원 시도
+    final restored =
+        await ref.read(userProvider.notifier).restoreFromStorage();
+
+    // 2) 토큰이 있으면 서버에 검증 요청 → role/status 최신화
+    if (restored) {
+      final token = ref.read(userProvider).accessToken!;
+      final profile = await const UsersApiService().getMe(token);
+
+      if (profile != null) {
+        // 토큰 유효 → state에 최신 정보 반영 (restaurantId prefs 동기화 위해 await)
+        await ref.read(userProvider.notifier).setFromProfile(profile);
+        _autoLoginNextStep = _resolveAutoLoginNextStep(profile);
+      } else {
+        // 토큰 만료/무효 → 정리 후 로그인 화면으로
+        await ref.read(userProvider.notifier).clear();
+      }
+    }
+
+    await _checkOnboardingStatus();
+  }
+
+  // ── 자동 로그인 후 어느 화면으로 갈지 결정 ──────────────
+  String _resolveAutoLoginNextStep(UserProfile profile) {
+    final role = profile.role ?? 'CUSTOMER';
+    final status = profile.status ?? 'APPROVED';
+
+    if (role == 'OWNER') {
+      if (status != 'APPROVED') return 'OWNER_PENDING';
+      return 'OWNER_HOME';
+    }
+    // CUSTOMER: 온보딩 진행 상태에 따라
+    if (profile.org == null || (profile.org?.isEmpty ?? true)) {
+      return 'PROFILE_SETUP';
+    }
+    if (profile.budget == null || profile.speed == null) {
+      return 'CONDITION_SETUP';
+    }
+    return 'HOME';
+  }
+
+  // ── sessionStorage(웹) 에서 결제 직전 백업 복원 ─────────
   void _restoreUserFromSession() {
     final savedJwt = PaymentWebBridge.getSessionItem('ls_jwt');
     if (savedJwt == null || savedJwt.isEmpty) return;
@@ -149,8 +201,6 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
         );
   }
 
-  // ── 앱 시작 시 URL 쿼리에서 결제 리턴 여부 감지 ──────────
-  // 웹에서만 의미 있음 (모바일 스텁 구현은 빈 맵 반환)
   void _detectPaymentReturn() {
     final params = PaymentWebBridge.currentQueryParams();
     final status = params['paymentStatus'];
@@ -174,34 +224,36 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
     }
   }
 
-  // ── SharedPreferences에서 온보딩 완료 여부 확인 ──────────
   Future<void> _checkOnboardingStatus() async {
     final prefs = await SharedPreferences.getInstance();
     final done = prefs.getBool('onboarding_done') ?? false;
-    if (mounted) {
-      setState(() => _onboardingDone = done);
-    }
+    if (mounted) setState(() => _onboardingDone = done);
   }
 
-  // ── 로그인 성공 후 nextStep에 따라 화면 분기 ───────────────
-  // nextStep: 서버가 지정한 다음 화면
-  //   "PROFILE_SETUP"   → CU-03 기본 프로필 설정 (신규 유저)
-  //   "CONDITION_SETUP" → CU-05 기본 조건 설정 (CU-03 완료 후 재진입한 유저)
-  //   "HOME" (그 외)    → 홈 대시보드로 바로 이동 (온보딩 완료 유저)
-  //
-  // 왜 switch인가?
-  //   isNewUser bool 분기와 달리, 서버가 추가 단계를 내려줄 수 있음.
-  //   새로운 nextStep 값이 생겨도 case 하나만 추가하면 됨.
+  // ══════════════════════════════════════════════════════
+  // nextStep 분기 라우팅
+  // 로그인/회원가입 성공 콜백, 자동 로그인 결과 둘 다 이 메서드로 통일.
+  // ══════════════════════════════════════════════════════
   void _handleLoginSuccess(BuildContext ctx, String nextStep) {
     switch (nextStep) {
+      // ── OWNER 분기 ──
+      case 'OWNER_PENDING':
+        Navigator.of(ctx).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OwnerPendingScreen()),
+          (route) => false,
+        );
 
-      // ── CU-03: 기본 프로필 설정 ───────────────────────────
+      case 'OWNER_HOME':
+        Navigator.of(ctx).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OwnerHomeScreen()),
+          (route) => false,
+        );
+
+      // ── CUSTOMER: CU-03 프로필 설정 ──
       case 'PROFILE_SETUP':
-        Navigator.of(ctx).pushReplacement(
+        Navigator.of(ctx).pushAndRemoveUntil(
           MaterialPageRoute(
             builder: (ctx2) => ProfileSetupScreen(
-              // name/org는 ProfileSetupScreen이 서버에 직접 저장하므로
-              // 여기서 받아서 넘길 필요 없음 (VoidCallback)
               onNext: () {
                 Navigator.of(ctx2).pushReplacement(
                   MaterialPageRoute(
@@ -219,13 +271,12 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
               },
             ),
           ),
+          (route) => false,
         );
 
-      // ── CU-05: 기본 조건 설정 (프로필 완료 후 재진입) ──────
-      // CU-03에서 이름/소속이 이미 서버에 저장돼 있으므로
-      // profileName/profileOrg props 없이 바로 진입 가능
+      // ── CUSTOMER: CU-05 조건 설정 (CU-03 완료 후 재진입) ──
       case 'CONDITION_SETUP':
-        Navigator.of(ctx).pushReplacement(
+        Navigator.of(ctx).pushAndRemoveUntil(
           MaterialPageRoute(
             builder: (ctx3) => ConditionSetupScreen(
               onComplete: () {
@@ -235,12 +286,14 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
               },
             ),
           ),
+          (route) => false,
         );
 
-      // ── 홈: 온보딩 완료 유저 ─────────────────────────────
-      default: // 'HOME' 또는 알 수 없는 값
-        Navigator.of(ctx).pushReplacement(
+      // ── CUSTOMER 홈 (기본/HOME) ──
+      default:
+        Navigator.of(ctx).pushAndRemoveUntil(
           MaterialPageRoute(builder: (_) => const HomeScreen()),
+          (route) => false,
         );
     }
   }
@@ -248,9 +301,7 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
   @override
   Widget build(BuildContext context) {
 
-    // ── 결제 왕복 리턴: 스플래시/로그인 건너뛰고 바로 결과 화면 ──
-    // 토스 결제위젯이 돌려보낸 쿼리(paymentStatus=success|fail)를
-    // _detectPaymentReturn 에서 파싱했으면 그 화면을 먼저 보여준다.
+    // ── 1. 결제 리턴 우선 ────────────────────────────
     if (_paymentReturn != null) {
       final info = _paymentReturn!;
       if (info.isSuccess) {
@@ -268,7 +319,7 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
       }
     }
 
-    // ── SharedPreferences 조회 중: 로딩 표시 ───────────────
+    // ── 2. 부팅 중 (로딩 인디케이터) ────────────────────
     if (_onboardingDone == null) {
       return const Scaffold(
         backgroundColor: AppColors.background,
@@ -276,7 +327,48 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
       );
     }
 
-    // ── 재실행 (온보딩 완료): 스플래시 건너뜀 → 로그인 화면 ─
+    // ── 3. 자동 로그인 성공 → 해당 화면으로 ───────────────
+    // 온보딩 미완료 사용자도 적절한 단계로 정확히 진입하도록 분기.
+    if (_autoLoginNextStep != null) {
+      switch (_autoLoginNextStep) {
+        case 'OWNER_PENDING':
+          return const OwnerPendingScreen();
+        case 'OWNER_HOME':
+          return const OwnerHomeScreen();
+        case 'PROFILE_SETUP':
+          // CU-03 → 끝나면 CU-05 → HomeScreen 순으로 자동 연결
+          return ProfileSetupScreen(
+            onNext: () {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(
+                  builder: (ctx) => ConditionSetupScreen(
+                    onComplete: () {
+                      Navigator.of(ctx).pushReplacement(
+                        MaterialPageRoute(builder: (_) => const HomeScreen()),
+                      );
+                    },
+                  ),
+                ),
+              );
+            },
+          );
+        case 'CONDITION_SETUP':
+          // CU-03 는 이미 끝났고 CU-05 만 남은 케이스
+          return ConditionSetupScreen(
+            onComplete: () {
+              Navigator.of(context).pushReplacement(
+                MaterialPageRoute(builder: (_) => const HomeScreen()),
+              );
+            },
+          );
+        case 'HOME':
+          return const HomeScreen();
+        default:
+          return const HomeScreen();
+      }
+    }
+
+    // ── 4. 재실행(온보딩 완료) → 로그인 화면 ─────────────
     if (_onboardingDone!) {
       return LoginScreen(
         onLoginSuccess: ({required String nextStep}) =>
@@ -284,7 +376,7 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
       );
     }
 
-    // ── 첫 실행: 스플래시 화면 표시 ─────────────────────────
+    // ── 5. 첫 실행 → 스플래시 → 로그인 ───────────────────
     return SplashScreen(
       onStart: () {
         Navigator.of(context).pushReplacement(
@@ -297,7 +389,6 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
         );
       },
       onBrowse: () {
-        // TODO: 둘러보기 모드 화면 완성 후 교체
         Navigator.of(context).pushReplacement(
           MaterialPageRoute(
             builder: (_) => const _PlaceholderScreen(title: '둘러보기 (준비 중)'),
@@ -308,11 +399,9 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
   }
 }
 
+
 // ─────────────────────────────────────────────────────────
-// _PaymentReturnInfo: 결제 왕복 후 URL 쿼리에서 복원한 결과 정보
-//
-// success: paymentKey/orderId/amount 가 모두 존재
-// fail   : code/message/orderId 중 일부만 존재해도 허용
+// _PaymentReturnInfo / _PlaceholderScreen — 기존 그대로
 // ─────────────────────────────────────────────────────────
 class _PaymentReturnInfo {
   const _PaymentReturnInfo._({
@@ -357,16 +446,10 @@ class _PaymentReturnInfo {
 }
 
 
-// ─────────────────────────────────────────────────────────
-// _PlaceholderScreen: 아직 만들지 않은 화면을 임시로 대체하는 화면
-//
-// 각 기능 화면이 완성되면 _RootNavigator에서 이 위젯을 해당 화면으로 교체합니다.
-// 앱을 실행하고 동작 흐름을 테스트할 때 유용합니다.
-// ─────────────────────────────────────────────────────────
 class _PlaceholderScreen extends StatelessWidget {
   const _PlaceholderScreen({required this.title});
 
-  final String title; // 임시 화면에 표시할 이름
+  final String title;
 
   @override
   Widget build(BuildContext context) {

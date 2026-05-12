@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -81,8 +82,7 @@ class KakaoAuthService {
       return KakaoLoginResult(kakaoAccessToken: accessToken);
     } catch (e) {
       // 로그인 전체 실패 (네트워크 오류, 사용자 취소 등)
-      // ignore: avoid_print
-      print('[KakaoAuth] 로그인 실패: $e');
+      debugPrint('[KakaoAuth] 로그인 실패: $e');
       return KakaoLoginResult(
         errorMessage: '카카오 로그인에 실패했어요.\n잠시 후 다시 시도해주세요.',
       );

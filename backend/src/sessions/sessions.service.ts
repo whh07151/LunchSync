@@ -1,7 +1,11 @@
 import {
   Injectable,
+  InternalServerErrorException,
   NotFoundException,
   ConflictException,
+  ForbiddenException,
+  BadRequestException,
+  Logger,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
@@ -9,26 +13,41 @@ import { SupabaseService } from '../supabase/supabase.service';
 // 파일 역할: 점심 세션 비즈니스 로직
 //
 // 세션이란?
-//   "오늘 점심 같이 먹자" 한 번의 이벤트를 의미.
+//   "오늘 점심 같이 먹자" 한 번의 이벤트.
 //   세션 생성 → 멤버 초대 → 추천 → 투표 → 확정 → 주문 흐름의 시작점.
 //
-// 상태 전이:
-//   WAITING → VOTING → ORDERED → DONE
+// 상태 전이 (보안 에이전트 권장 — 잘못된 전이 거부):
+//   WAITING → VOTING
+//   VOTING  → ORDERED | WAITING (투표 취소)
+//   ORDERED → DONE
+//   DONE    → (terminal — 변경 불가)
+//
+// 권한 정책 (보안 Critical):
+//   - updateSessionStatus / addMember / removeMember(타인) — 호스트만
+//   - removeMember(자기 자신) — 누구나 (세션 나가기)
 // ══════════════════════════════════════════════════════════
+
+// 허용된 상태 전이 매트릭스 — Critical 보안 패치 (2026-05-11)
+const VALID_SESSION_TRANSITIONS: Record<string, ReadonlyArray<string>> = {
+  WAITING: ['VOTING'],
+  VOTING: ['ORDERED', 'WAITING'],
+  ORDERED: ['DONE'],
+  DONE: [],
+};
 
 export interface CreateSessionDto {
   name: string;
-  scheduledAt?: string;  // ISO8601 형식 (예: 2026-04-14T12:00:00.000Z)
-  radius?: number;        // 식당 검색 반경 (단위: 미터, 예: 500)
-  budget?: number;        // 1인당 예산 상한 (단위: 원, 예: 15000)
-  returnMinutes?: number; // 복귀 여유 시간 (단위: 분, 예: 30)
-  memo?: string;          // 세션 메모 (선택, 자유 입력)
-  lat?: number;           // 세션 기준 위도 (호스트 세션 생성 시점 GPS)
-  lng?: number;           // 세션 기준 경도 (호스트 세션 생성 시점 GPS)
+  scheduledAt?: string;
+  radius?: number;
+  budget?: number;
+  returnMinutes?: number;
+  memo?: string;
+  lat?: number;
+  lng?: number;
 }
 
 export interface UpdateSessionStatusDto {
-  status: string; // WAITING | VOTING | ORDERED | DONE
+  status: string;
 }
 
 export interface AddMemberDto {
@@ -37,9 +56,10 @@ export interface AddMemberDto {
 
 @Injectable()
 export class SessionsService {
+  private readonly logger = new Logger(SessionsService.name);
+
   constructor(private readonly supabase: SupabaseService) {}
 
-  // ── 세션 상태 → 한글 레이블 변환 헬퍼 ───────────────────
   private statusLabel(status: string): string {
     const map: Record<string, string> = {
       WAITING: '대기 중',
@@ -50,70 +70,62 @@ export class SessionsService {
     return map[status] ?? status;
   }
 
-  // ── POST /sessions ────────────────────────────────────
-  // 세션 생성 + 생성자를 자동으로 멤버에 추가
-  async createSession(userId: string, dto: CreateSessionDto) {
-    // 1. sessions 테이블에 INSERT
-    // undefined 필드는 삽입하지 않음 (DB default 값 사용)
-    const insertData: Record<string, unknown> = {
-      name: dto.name,
-      created_by: userId,
-    };
-    if (dto.scheduledAt)     insertData.scheduled_at    = dto.scheduledAt;
-    if (dto.radius != null)  insertData.radius          = dto.radius;
-    if (dto.budget != null)  insertData.budget          = dto.budget;
-    if (dto.returnMinutes != null) insertData.return_minutes = dto.returnMinutes;
-    if (dto.memo)            insertData.memo            = dto.memo;
-    // 세션 기준 좌표 — 추천 엔진이 반경 필터에 사용
-    if (dto.lat != null)     insertData.lat             = dto.lat;
-    if (dto.lng != null)     insertData.lng             = dto.lng;
-
-    const { data: session, error } = await this.supabase.client
+  // ── 내부 헬퍼: 세션 호스트 검증 ─────────────────────────
+  // 권한 검증이 필요한 모든 변이 메서드(상태 변경/멤버 추가 등) 진입점에서 호출.
+  // 본인이 호스트가 아니면 403 ForbiddenException.
+  private async assertHost(sessionId: string, userId: string): Promise<void> {
+    const { data, error } = await this.supabase.client
       .from('sessions')
-      .insert(insertData)
-      .select('id, name, status, created_by, scheduled_at, radius, budget, return_minutes, memo, lat, lng, created_at')
+      .select('created_by')
+      .eq('id', sessionId)
       .single();
 
-    if (error || !session) {
-      throw new Error(`세션 생성 실패: ${error?.message}`);
+    if (error || !data) {
+      throw new NotFoundException('세션을 찾을 수 없습니다.');
+    }
+    if (data.created_by !== userId) {
+      throw new ForbiddenException('세션 호스트만 가능한 작업이에요.');
+    }
+  }
+
+  // ── POST /sessions ────────────────────────────────────
+  // 트랜잭션 보장 (2026-05-14):
+  //   create_session_with_host_member RPC 사용 — sessions + session_members
+  //   INSERT 가 PostgreSQL 함수 단일 트랜잭션으로 묶임.
+  //   중간 실패 시 전체 롤백 → "세션만 남고 호스트 미멤버" 정합성 버그 차단.
+  async createSession(userId: string, dto: CreateSessionDto) {
+    const { data, error } = await this.supabase.client.rpc(
+      'create_session_with_host_member',
+      {
+        p_name: dto.name,
+        p_created_by: userId,
+        p_scheduled_at: dto.scheduledAt ?? null,
+        p_radius: dto.radius ?? null,
+        p_budget: dto.budget ?? null,
+        p_return_minutes: dto.returnMinutes ?? null,
+        p_memo: dto.memo ?? null,
+        p_lat: dto.lat ?? null,
+        p_lng: dto.lng ?? null,
+      },
+    );
+
+    if (error || !data) {
+      this.logger.error(`세션 생성 RPC 오류 user=${userId}: ${error?.message}`);
+      throw new InternalServerErrorException(
+        '세션을 만들지 못했어요. 잠시 후 다시 시도해주세요.',
+      );
     }
 
-    // 2. 생성자를 session_members에 자동 추가
-    await this.supabase.client
-      .from('session_members')
-      .insert({ session_id: session.id, user_id: userId });
-
-    // 3. 생성자 이름 조회 (DTO: createdBy = { id, name } 객체)
-    const { data: creator } = await this.supabase.client
-      .from('users')
-      .select('id, name')
-      .eq('id', userId)
-      .single();
-
-    return {
-      id: session.id,
-      name: session.name,
-      status: session.status,
-      scheduledAt: session.scheduled_at,
-      radius: session.radius,
-      budget: session.budget,
-      returnMinutes: session.return_minutes,
-      memo: session.memo,
-      lat: session.lat,
-      lng: session.lng,
-      memberCount: 1,
-      createdBy: creator ? { id: creator.id, name: creator.name } : { id: userId, name: null },
-    };
+    // RPC가 이미 camelCase JSON 응답을 반환하므로 그대로 사용
+    return data;
   }
 
   // ── GET /sessions/today ───────────────────────────────
-  // 오늘 날짜 기준으로 내가 속한 세션 목록 조회
   async getTodaySessions(userId: string) {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayISO = today.toISOString();
 
-    // 내가 멤버인 세션의 ID 목록
     const { data: myMemberships } = await this.supabase.client
       .from('session_members')
       .select('session_id')
@@ -131,7 +143,6 @@ export class SessionsService {
 
     if (!sessions || sessions.length === 0) return [];
 
-    // 세션별 멤버 수 한 번에 조회 (N+1 방지)
     const { data: allMembers } = await this.supabase.client
       .from('session_members')
       .select('session_id')
@@ -142,7 +153,6 @@ export class SessionsService {
       memberCountMap[m.session_id] = (memberCountMap[m.session_id] ?? 0) + 1;
     });
 
-    // 생성자 이름 한 번에 조회
     const creatorIds = [...new Set(sessions.map((s) => s.created_by))];
     const { data: creators } = await this.supabase.client
       .from('users')
@@ -150,7 +160,9 @@ export class SessionsService {
       .in('id', creatorIds);
 
     const creatorMap: Record<string, string> = {};
-    (creators ?? []).forEach((u) => { creatorMap[u.id] = u.name; });
+    (creators ?? []).forEach((u) => {
+      creatorMap[u.id] = u.name;
+    });
 
     return sessions.map((s) => ({
       id: s.id,
@@ -167,7 +179,9 @@ export class SessionsService {
   async getSessionById(sessionId: string) {
     const { data, error } = await this.supabase.client
       .from('sessions')
-      .select('id, name, status, created_by, winner_restaurant_id, scheduled_at, radius, budget, return_minutes, memo, lat, lng, created_at')
+      .select(
+        'id, name, status, created_by, winner_restaurant_id, scheduled_at, radius, budget, return_minutes, memo, lat, lng, created_at',
+      )
       .eq('id', sessionId)
       .single();
 
@@ -175,7 +189,6 @@ export class SessionsService {
       throw new NotFoundException('세션을 찾을 수 없습니다.');
     }
 
-    // 생성자 이름 조회 (DTO: createdBy = { id, name } 객체)
     const { data: creator } = await this.supabase.client
       .from('users')
       .select('id, name')
@@ -195,12 +208,40 @@ export class SessionsService {
       lat: data.lat,
       lng: data.lng,
       createdAt: data.created_at,
-      createdBy: creator ? { id: creator.id, name: creator.name } : { id: data.created_by, name: null },
+      createdBy: creator
+        ? { id: creator.id, name: creator.name }
+        : { id: data.created_by, name: null },
     };
   }
 
   // ── PATCH /sessions/:id/status ────────────────────────
-  async updateSessionStatus(sessionId: string, dto: UpdateSessionStatusDto) {
+  // 보안 패치 (2026-05-11):
+  //   1) 호스트 검증 (assertHost)
+  //   2) 상태 전이 매트릭스 검증 (역방향/jumping 거부)
+  async updateSessionStatus(
+    sessionId: string,
+    requesterId: string,
+    dto: UpdateSessionStatusDto,
+  ) {
+    await this.assertHost(sessionId, requesterId);
+
+    // 현재 상태 조회 후 전이 매트릭스 검증
+    const { data: current, error: fetchError } = await this.supabase.client
+      .from('sessions')
+      .select('status')
+      .eq('id', sessionId)
+      .single();
+    if (fetchError || !current) {
+      throw new NotFoundException('세션을 찾을 수 없습니다.');
+    }
+
+    const allowed = VALID_SESSION_TRANSITIONS[current.status] ?? [];
+    if (!allowed.includes(dto.status)) {
+      throw new BadRequestException(
+        `${current.status} 상태에서 ${dto.status} 로는 전환할 수 없어요.`,
+      );
+    }
+
     const { data, error } = await this.supabase.client
       .from('sessions')
       .update({ status: dto.status })
@@ -209,17 +250,15 @@ export class SessionsService {
       .single();
 
     if (error || !data) {
-      throw new NotFoundException('세션을 찾을 수 없습니다.');
+      this.logger.error(`세션 상태 변경 DB 오류 session=${sessionId}: ${error?.message}`);
+      throw new InternalServerErrorException('세션 상태를 변경하지 못했어요.');
     }
 
     return { id: data.id, name: data.name, status: data.status };
   }
 
   // ── GET /sessions/:id/members ─────────────────────────
-  // DTO 기준: { totalCount, joinedCount, members[] }
-  // isHost: 세션 생성자 여부
   async getSessionMembers(sessionId: string) {
-    // 세션 생성자 확인 (isHost 판별용)
     const { data: session } = await this.supabase.client
       .from('sessions')
       .select('created_by')
@@ -234,7 +273,8 @@ export class SessionsService {
       .eq('session_id', sessionId);
 
     if (error) {
-      throw new Error(`멤버 조회 실패: ${error.message}`);
+      this.logger.error(`멤버 조회 DB 오류 session=${sessionId}: ${error.message}`);
+      throw new InternalServerErrorException('멤버를 불러오지 못했어요.');
     }
 
     const members = (data ?? []).map((m: any) => ({
@@ -254,31 +294,83 @@ export class SessionsService {
   }
 
   // ── POST /sessions/:id/members ────────────────────────
-  async addMember(sessionId: string, dto: AddMemberDto) {
+  // 보안 패치: 호스트만 멤버 추가 가능 + WAITING 상태에서만
+  async addMember(
+    sessionId: string,
+    requesterId: string,
+    dto: AddMemberDto,
+  ) {
+    await this.assertHost(sessionId, requesterId);
+    return this.addMemberInternal(sessionId, dto.userId, {
+      enforceWaiting: true,
+    });
+  }
+
+  // ── 내부 전용: 초대코드 수락 등 다른 모듈이 호출 ────────
+  // 호스트 검증을 건너뜀. 초대 코드 검증이 권한 게이트키 역할.
+  // - InvitationsService 가 코드 검증 후 호출하는 진입점
+  // - WAITING 상태에서만 추가 허용 (enforceWaiting 기본 true)
+  async addMemberInternal(
+    sessionId: string,
+    userId: string,
+    options: { enforceWaiting?: boolean } = {},
+  ) {
+    const enforceWaiting = options.enforceWaiting ?? true;
+
+    if (enforceWaiting) {
+      const { data: session } = await this.supabase.client
+        .from('sessions')
+        .select('status')
+        .eq('id', sessionId)
+        .single();
+      if (session && session.status !== 'WAITING') {
+        throw new ConflictException(
+          '투표가 시작된 세션엔 참가할 수 없어요.',
+        );
+      }
+    }
+
     const { error } = await this.supabase.client
       .from('session_members')
-      .insert({ session_id: sessionId, user_id: dto.userId });
+      .insert({ session_id: sessionId, user_id: userId });
 
     if (error) {
       if (error.code === '23505') {
-        throw new ConflictException('이미 세션에 참가한 멤버입니다.');
+        throw new ConflictException('이미 세션에 참가한 멤버예요.');
       }
-      throw new Error(`멤버 추가 실패: ${error.message}`);
+      this.logger.error(
+        `멤버 추가 DB 오류 session=${sessionId}: ${error.message}`,
+      );
+      throw new InternalServerErrorException('멤버를 추가하지 못했어요.');
     }
 
     return { success: true };
   }
 
   // ── DELETE /sessions/:id/members/:userId ───────────────
-  async removeMember(sessionId: string, userId: string) {
+  // 보안 패치:
+  //   - 본인이 자기 자신을 제거 — 허용 (세션 나가기)
+  //   - 호스트가 다른 멤버 제거 — 허용
+  //   - 그 외 — 거부
+  async removeMember(
+    sessionId: string,
+    requesterId: string,
+    targetUserId: string,
+  ) {
+    if (requesterId !== targetUserId) {
+      // 타인 제거는 호스트만
+      await this.assertHost(sessionId, requesterId);
+    }
+
     const { error } = await this.supabase.client
       .from('session_members')
       .delete()
       .eq('session_id', sessionId)
-      .eq('user_id', userId);
+      .eq('user_id', targetUserId);
 
     if (error) {
-      throw new Error(`멤버 제거 실패: ${error.message}`);
+      this.logger.error(`멤버 제거 DB 오류 session=${sessionId}: ${error.message}`);
+      throw new InternalServerErrorException('멤버를 제거하지 못했어요.');
     }
 
     return { success: true };

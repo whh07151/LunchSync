@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 토스페이먼츠 결제 승인 API 호출 서비스
@@ -74,15 +76,19 @@ class PaymentsApiService {
     required int amount,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/payments/confirm'),
-        headers: _headers(accessToken),
-        body: jsonEncode({
-          'paymentKey': paymentKey,
-          'orderId': orderId,
-          'amount': amount,
-        }),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/payments/confirm'),
+            headers: _headers(accessToken),
+            body: jsonEncode({
+              'paymentKey': paymentKey,
+              'orderId': orderId,
+              'amount': amount,
+            }),
+          )
+          // 결제 승인은 길어질 수 있으므로 기본보다 길게 (15s)
+          .timeout(const Duration(seconds: 15));
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -91,15 +97,13 @@ class PaymentsApiService {
         );
       }
 
-      // ignore: avoid_print
-      print(
+      debugPrint(
         '[PaymentsApiService] confirmPayment 실패: '
         '${response.statusCode} ${response.body}',
       );
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[PaymentsApiService] confirmPayment 에러: $e');
+      debugPrint('[PaymentsApiService] confirmPayment 에러: $e');
       return null;
     }
   }

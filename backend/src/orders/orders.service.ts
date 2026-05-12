@@ -1,4 +1,10 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  NotFoundException,
+  ForbiddenException,
+  BadRequestException,
+  InternalServerErrorException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
 // ══════════════════════════════════════════════════════════
@@ -43,7 +49,8 @@ export class OrdersService {
     // CORE-09: 메뉴 충돌 검증 — 모든 아이템이 같은 식당인지 확인
     const restaurantIds = new Set(menuItems.map((m) => m.restaurant_id));
     if (restaurantIds.size > 1) {
-      throw new Error('서로 다른 식당의 메뉴를 동시에 주문할 수 없습니다.');
+      // BadRequestException: 클라이언트 입력 오류 → 400 응답
+      throw new BadRequestException('서로 다른 식당의 메뉴를 동시에 주문할 수 없습니다.');
     }
     // orders.restaurant_id 컬럼에 들어갈 단일 값
     const restaurantId = menuItems[0].restaurant_id as string;
@@ -69,6 +76,8 @@ export class OrdersService {
 
     // 3. orders 테이블 INSERT
     // restaurant_id 는 NOT NULL 제약이 있어 반드시 포함해야 함
+    // payment_method: 사용자가 선택한 결제수단 그대로 저장 → 매출 통계 분리에 사용
+    const paymentMethod = this.normalizePaymentMethod(dto.paymentMethod);
     const { data: order, error: orderError } = await this.supabase.client
       .from('orders')
       .insert({
@@ -77,12 +86,16 @@ export class OrdersService {
         restaurant_id: restaurantId,
         total_price: totalPrice,
         status: 'PENDING',
+        payment_method: paymentMethod,
       })
       .select('id, status, total_price, created_at')
       .single();
 
     if (orderError || !order) {
-      throw new Error(`주문 생성 실패: ${orderError?.message}`);
+      // InternalServerErrorException: DB 쓰기 실패 → 500 응답 (운영 모니터링 대상)
+      throw new InternalServerErrorException(
+        `주문 생성 실패: ${orderError?.message}`,
+      );
     }
 
     // 4. order_items 테이블 INSERT
@@ -116,6 +129,17 @@ export class OrdersService {
     };
   }
 
+  // ── 결제수단 정규화 ────────────────────────────────
+  // 클라이언트가 보낸 다양한 표기를 DB ENUM(TOSS/CARD/CASH/SIMULATE) 으로 매핑.
+  // 모르는 값은 SIMULATE 로 기본 처리 (캡스톤 시연 안전 폴백).
+  private normalizePaymentMethod(raw?: string): 'TOSS' | 'CARD' | 'CASH' | 'SIMULATE' {
+    const v = (raw ?? '').toUpperCase();
+    if (v === 'TOSS' || v === 'TRANSFER' || v === 'KAKAOPAY' || v === 'BANK') return 'TOSS';
+    if (v === 'CARD') return 'CARD';
+    if (v === 'CASH') return 'CASH';
+    return 'SIMULATE';
+  }
+
   // ── CORE-10: 결제 처리 레이어 ─────────────────────────
   // SIMULATE/CASH: 서버에서 즉시 PAID 처리 (테스트/현금 결제)
   // TOSS: 프론트가 결제위젯 v2로 승인 요청 → 성공 시
@@ -144,7 +168,9 @@ export class OrdersService {
   }
 
   // ── GET /orders/:id ───────────────────────────────────
-  async getOrderById(orderId: string) {
+  // 2026-05-13 보안 패치: 본인 주문 또는 같은 세션 멤버만 조회 가능.
+  // 그룹 식사 특성상 같은 세션 멤버가 서로의 주문 상태/금액 확인할 수 있어야 함.
+  async getOrderById(orderId: string, requesterId: string) {
     const { data: order, error } = await this.supabase.client
       .from('orders')
       .select('id, session_id, user_id, status, total_price, payment_key, created_at, updated_at')
@@ -153,6 +179,19 @@ export class OrdersService {
 
     if (error || !order) {
       throw new NotFoundException('주문을 찾을 수 없습니다.');
+    }
+
+    // 본인 주문이 아니면 같은 세션 멤버인지 확인
+    if (order.user_id !== requesterId) {
+      const { data: membership } = await this.supabase.client
+        .from('session_members')
+        .select('user_id')
+        .eq('session_id', order.session_id)
+        .eq('user_id', requesterId)
+        .maybeSingle();
+      if (!membership) {
+        throw new ForbiddenException('주문 조회 권한이 없어요.');
+      }
     }
 
     // 주문 아이템 조회
@@ -193,7 +232,10 @@ export class OrdersService {
       .order('created_at', { ascending: false });
 
     if (error) {
-      throw new Error(`주문 조회 실패: ${error.message}`);
+      // InternalServerErrorException: DB 조회 실패 → 500 응답
+      throw new InternalServerErrorException(
+        `주문 조회 실패: ${error.message}`,
+      );
     }
 
     return (data ?? []).map((o) => ({
@@ -206,7 +248,43 @@ export class OrdersService {
   }
 
   // ── PATCH /orders/:id/status ──────────────────────────
-  async updateOrderStatus(orderId: string, dto: UpdateOrderStatusDto) {
+  // 보안 패치 (2026-05-12):
+  //   - 주문 소유자(user_id) 만 변경 가능 (사장은 별도 /pos/orders/:id/status 사용)
+  //   - 상태 전이 매트릭스 검증
+  async updateOrderStatus(
+    orderId: string,
+    requesterId: string,
+    dto: UpdateOrderStatusDto,
+  ) {
+    // 주문 조회 + 소유자 검증
+    const { data: order, error: orderError } = await this.supabase.client
+      .from('orders')
+      .select('id, user_id, status')
+      .eq('id', orderId)
+      .single();
+    if (orderError || !order) {
+      throw new NotFoundException('주문을 찾을 수 없어요.');
+    }
+    if (order.user_id !== requesterId) {
+      throw new ForbiddenException('본인의 주문만 변경할 수 있어요.');
+    }
+
+    // 상태 전이 매트릭스 (손님 입장)
+    const VALID_TRANSITIONS: Record<string, ReadonlyArray<string>> = {
+      PENDING: ['PAID', 'CANCELLED'],
+      PAID: [], // 이후는 POS 권한
+      PREPARING: [],
+      READY: [],
+      COMPLETED: [],
+      CANCELLED: [],
+    };
+    const allowed = VALID_TRANSITIONS[order.status] ?? [];
+    if (!allowed.includes(dto.status)) {
+      throw new BadRequestException(
+        `${order.status} 상태에서 ${dto.status} 로 변경할 수 없어요.`,
+      );
+    }
+
     const { data, error } = await this.supabase.client
       .from('orders')
       .update({ status: dto.status })
@@ -215,7 +293,7 @@ export class OrdersService {
       .single();
 
     if (error || !data) {
-      throw new NotFoundException('주문을 찾을 수 없습니다.');
+      throw new InternalServerErrorException('주문 상태를 변경하지 못했어요.');
     }
 
     return { id: data.id, status: data.status, updatedAt: data.updated_at };

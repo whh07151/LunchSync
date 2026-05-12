@@ -19,6 +19,9 @@ export interface UpdateUserDto {
   speed?: string;
   allergies?: string[];
   dislikes?: string[];
+  // OWNER 전용 — 사장 내정보 탭에서 상호/사업자번호 수정
+  businessName?: string;
+  businessNumber?: string;
 }
 
 @Injectable()
@@ -30,7 +33,9 @@ export class UsersService {
   async getMe(userId: string) {
     const { data, error } = await this.supabase.client
       .from('users')
-      .select('id, name, org, profile_image, radius, budget, speed, role, allergies, dislikes')
+      .select(
+        'id, name, org, profile_image, radius, budget, speed, role, status, auth_provider, email, phone_number, business_name, business_number, restaurant_id, allergies, dislikes',
+      )
       .eq('id', userId)
       .single();
 
@@ -48,6 +53,15 @@ export class UsersService {
       budget: data.budget,
       speed: data.speed,
       role: data.role,
+      // 회원가입/인증 결정(2026-05-07) 추가 필드
+      status: data.status,
+      authProvider: data.auth_provider,
+      email: data.email,
+      phoneNumber: data.phone_number,
+      businessName: data.business_name,
+      businessNumber: data.business_number,
+      // OWNER ↔ 운영 식당 매핑 (NULL이면 아직 매장 미연결 — 운영자가 콘솔에서 매핑)
+      restaurantId: data.restaurant_id,
       allergies: data.allergies ?? [],
       dislikes: data.dislikes ?? [],
     };
@@ -67,12 +81,17 @@ export class UsersService {
     if (dto.speed !== undefined) updateData.speed = dto.speed;
     if (dto.allergies !== undefined) updateData.allergies = dto.allergies;
     if (dto.dislikes !== undefined) updateData.dislikes = dto.dislikes;
+    // OWNER 전용 — DB 컬럼명도 snake_case
+    if (dto.businessName !== undefined) updateData.business_name = dto.businessName;
+    if (dto.businessNumber !== undefined) updateData.business_number = dto.businessNumber;
 
     const { data, error } = await this.supabase.client
       .from('users')
       .update(updateData)
       .eq('id', userId)
-      .select('id, name, org, profile_image, radius, budget, speed, allergies, dislikes')
+      .select(
+        'id, name, org, profile_image, radius, budget, speed, allergies, dislikes, business_name, business_number',
+      )
       .single();
 
     if (error || !data) {
@@ -89,6 +108,29 @@ export class UsersService {
       speed: data.speed,
       allergies: data.allergies ?? [],
       dislikes: data.dislikes ?? [],
+      // OWNER 정보 — 사장 정보 수정 직후 상태 동기화에 사용
+      businessName: data.business_name,
+      businessNumber: data.business_number,
     };
+  }
+
+  // ── POST /users/me/fcm-token ────────────────────────────
+  // Flutter 앱이 firebase_messaging.getToken() 으로 발급받은 토큰을 저장.
+  // 동일 사용자가 단말을 바꾸면 토큰이 갱신됨 — 항상 덮어쓰기 (UPSERT 단일 행).
+  //
+  // 정책:
+  //   - 빈 문자열 토큰은 NULL 처리 (로그아웃/푸시 비허용 대응)
+  //   - 토큰이 유효한지는 FCM 측이 검증 — 백엔드는 저장만 담당
+  async saveFcmToken(userId: string, token: string | null): Promise<void> {
+    const normalized = token && token.length > 0 ? token : null;
+
+    const { error } = await this.supabase.client
+      .from('users')
+      .update({ fcm_token: normalized })
+      .eq('id', userId);
+
+    if (error) {
+      throw new Error(`FCM 토큰 저장 실패: ${error.message}`);
+    }
   }
 }

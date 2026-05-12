@@ -1,6 +1,8 @@
 import 'dart:convert';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당/메뉴 관련 API 호출 서비스
@@ -97,7 +99,10 @@ class RestaurantsApiService {
       final uri = Uri.parse('${AppConfig.backendBaseUrl}/restaurants')
           .replace(queryParameters: params.isNotEmpty ? params : null);
 
-      final response = await http.get(uri, headers: _headers(accessToken));
+      final response = await http
+          .get(uri, headers: _headers(accessToken))
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -108,9 +113,37 @@ class RestaurantsApiService {
       }
       return [];
     } catch (e) {
-      // ignore: avoid_print
-      print('[RestaurantsApiService] getRestaurants 에러: $e');
+      debugPrint('[RestaurantsApiService] getRestaurants 에러: $e');
       return [];
+    }
+  }
+
+  // ── GET /api/restaurants/:id ───────────────────────────
+  // 단건 조회 — getRestaurants 전체 받고 필터링하던 비효율 제거용.
+  // 백엔드 응답은 RestaurantDto 단일 객체.
+  Future<RestaurantDto?> getRestaurantById({
+    required String accessToken,
+    required String restaurantId,
+  }) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/restaurants/$restaurantId'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = json['data'] as Map<String, dynamic>?;
+        if (data == null) return null;
+        return RestaurantDto.fromJson(data);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[RestaurantsApiService] getRestaurantById 에러: $e');
+      return null;
     }
   }
 
@@ -122,11 +155,14 @@ class RestaurantsApiService {
     required String restaurantId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse(
-            '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/menus'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/menus'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -138,8 +174,7 @@ class RestaurantsApiService {
       }
       return [];
     } catch (e) {
-      // ignore: avoid_print
-      print('[RestaurantsApiService] getMenus 에러: $e');
+      debugPrint('[RestaurantsApiService] getMenus 에러: $e');
       return [];
     }
   }

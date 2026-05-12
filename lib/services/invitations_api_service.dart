@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 초대 링크 관련 API 호출 서비스
@@ -46,11 +48,14 @@ class InvitationsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/invitations'),
-        headers: _headers(accessToken),
-        body: jsonEncode({'sessionId': sessionId}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/invitations'),
+            headers: _headers(accessToken),
+            body: jsonEncode({'sessionId': sessionId}),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -58,8 +63,7 @@ class InvitationsApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[InvitationsApiService] createInvitation 에러: $e');
+      debugPrint('[InvitationsApiService] createInvitation 에러: $e');
       return null;
     }
   }
@@ -74,10 +78,13 @@ class InvitationsApiService {
     required String code,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/invitations/$code/accept'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/invitations/$code/accept'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         final data = json['data'] as Map<String, dynamic>;

@@ -1,8 +1,10 @@
 import {
   BadRequestException,
+  ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -40,8 +42,12 @@ export class PaymentsService {
   // 프론트가 결제위젯으로 결제를 "요청"한 뒤 리다이렉트되면
   // 쿼리스트링으로 paymentKey/orderId/amount를 받고,
   // 이 엔드포인트로 넘기면 우리 서버가 토스에 최종 승인을 요청한다.
-  async confirmPayment(dto: ConfirmPaymentDto) {
-    // ── 1. 주문 존재 확인 + 금액 위변조 검증 ──────────────
+  //
+  // 권한 (2026-05-12 박검토A 긴급):
+  //   requesterUserId 인자가 들어오면 order.user_id 와 일치 검증.
+  //   다른 사용자의 orderId 로 임의 승인 차단.
+  async confirmPayment(dto: ConfirmPaymentDto, requesterUserId?: string) {
+    // ── 1. 주문 존재 확인 + 금액 위변조 검증 + 본인 검증 ──
     // 프론트에서 amount를 조작해도 DB의 total_price와 다르면 거부
     const { data: order, error: orderError } = await this.supabase.client
       .from('orders')
@@ -51,6 +57,14 @@ export class PaymentsService {
 
     if (orderError || !order) {
       throw new NotFoundException('주문을 찾을 수 없습니다.');
+    }
+
+    // 본인 주문만 승인 가능 — 다른 사용자 orderId 로 임의 승인 차단
+    if (!requesterUserId) {
+      throw new UnauthorizedException('인증 정보가 없습니다.');
+    }
+    if (order.user_id !== requesterUserId) {
+      throw new ForbiddenException('본인의 주문만 결제 승인할 수 있습니다.');
     }
 
     if (Number(order.total_price) !== Number(dto.amount)) {

@@ -1,6 +1,8 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ServeStaticModule } from '@nestjs/serve-static';
+import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
+import { APP_GUARD } from '@nestjs/core';
 import { join } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
@@ -40,6 +42,16 @@ import { NotificationsModule } from './notifications/notifications.module';
       isGlobal: true,
       envFilePath: '.env',
     }),
+
+    // Rate Limiting — 박검토 후 강화 (2026-05-12):
+    //   default: 모든 엔드포인트 기본 — 분당 100 요청
+    //   auth:    로그인/이메일 OTP — 분당 5회 (부르트포스 방어, login/email-otp 컨트롤러에서 @Throttle 로 지정)
+    //   signup:  가입 — 시간당 10회 (대량 가입 폭주로 Supabase quota 소진 방어)
+    ThrottlerModule.forRoot([
+      { name: 'default', ttl: 60_000, limit: 100 },
+      { name: 'auth', ttl: 60_000, limit: 5 },
+      { name: 'signup', ttl: 3_600_000, limit: 10 },
+    ]),
 
     // 정적 파일 서빙 (toss-checkout.html 등)
     // 모바일 앱에서 인앱 WebView로 결제 페이지 접근 시 사용
@@ -90,6 +102,13 @@ import { NotificationsModule } from './notifications/notifications.module';
     NotificationsModule,
   ],
   controllers: [AppController],
-  providers: [AppService],
+  providers: [
+    AppService,
+    // Rate limiting 전역 적용 (모든 엔드포인트)
+    {
+      provide: APP_GUARD,
+      useClass: ThrottlerGuard,
+    },
+  ],
 })
 export class AppModule {}

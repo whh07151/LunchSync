@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 import '../models/session.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -49,11 +51,14 @@ class SessionsApiService {
       if (lat != null)            body['lat']            = lat;
       if (lng != null)            body['lng']            = lng;
 
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions'),
-        headers: _headers(accessToken),
-        body: jsonEncode(body),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions'),
+            headers: _headers(accessToken),
+            body: jsonEncode(body),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -61,8 +66,7 @@ class SessionsApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[SessionsApiService] createSession 에러: $e');
+      debugPrint('[SessionsApiService] createSession 에러: $e');
       return null;
     }
   }
@@ -72,10 +76,13 @@ class SessionsApiService {
     required String accessToken,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions/today'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/today'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -86,8 +93,7 @@ class SessionsApiService {
       }
       return [];
     } catch (e) {
-      // ignore: avoid_print
-      print('[SessionsApiService] getTodaySessions 에러: $e');
+      debugPrint('[SessionsApiService] getTodaySessions 에러: $e');
       return [];
     }
   }
@@ -98,10 +104,13 @@ class SessionsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -109,9 +118,31 @@ class SessionsApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[SessionsApiService] getSessionById 에러: $e');
+      debugPrint('[SessionsApiService] getSessionById 에러: $e');
       return null;
+    }
+  }
+
+  // ── PATCH /api/sessions/:id/status ────────────────────
+  // 세션 상태 전이 (WAITING → VOTING → ORDERED → DONE).
+  // 백엔드가 호스트 권한 + 전이 유효성을 검증. 본 클라이언트는 단순 호출.
+  Future<bool> updateSessionStatus({
+    required String accessToken,
+    required String sessionId,
+    required String status,
+  }) async {
+    try {
+      final response = await http
+          .patch(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/status'),
+            headers: _headers(accessToken),
+            body: jsonEncode({'status': status}),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -123,10 +154,13 @@ class SessionsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -136,8 +170,7 @@ class SessionsApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[SessionsApiService] getSessionMembers 에러: $e');
+      debugPrint('[SessionsApiService] getSessionMembers 에러: $e');
       return null;
     }
   }
@@ -149,11 +182,14 @@ class SessionsApiService {
     required String userId,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
-        headers: _headers(accessToken),
-        body: jsonEncode({'userId': userId}),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
+            headers: _headers(accessToken),
+            body: jsonEncode({'userId': userId}),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (_) {
       return false;
@@ -167,11 +203,14 @@ class SessionsApiService {
     required String userId,
   }) async {
     try {
-      final response = await http.delete(
-        Uri.parse(
-            '${AppConfig.backendBaseUrl}/sessions/$sessionId/members/$userId'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .delete(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/sessions/$sessionId/members/$userId'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200;
     } catch (_) {
       return false;

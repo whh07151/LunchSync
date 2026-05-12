@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 알림(Notifications) API 호출 서비스
@@ -68,10 +70,13 @@ class NotificationsApiService {
     required String accessToken,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/notifications'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/notifications'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -82,8 +87,7 @@ class NotificationsApiService {
       }
       return [];
     } catch (e) {
-      // ignore: avoid_print
-      print('[NotificationsApiService] getMyNotifications 에러: $e');
+      debugPrint('[NotificationsApiService] getMyNotifications 에러: $e');
       return [];
     }
   }
@@ -94,11 +98,14 @@ class NotificationsApiService {
     required String notificationId,
   }) async {
     try {
-      final response = await http.patch(
-        Uri.parse(
-            '${AppConfig.backendBaseUrl}/notifications/$notificationId/read'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .patch(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/notifications/$notificationId/read'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -108,10 +115,13 @@ class NotificationsApiService {
   // ── PATCH /api/notifications/read-all ─────────────────
   Future<bool> markAllAsRead({required String accessToken}) async {
     try {
-      final response = await http.patch(
-        Uri.parse('${AppConfig.backendBaseUrl}/notifications/read-all'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .patch(
+            Uri.parse('${AppConfig.backendBaseUrl}/notifications/read-all'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200;
     } catch (_) {
       return false;

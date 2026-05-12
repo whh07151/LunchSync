@@ -7,7 +7,9 @@
 
 name: Deploy Backend to EC2
 
-# ── 트리거: main, temp 브랜치에 backend/ 코드 변경 시 ──
+# ── 트리거 ──
+#   1) main / temp 브랜치에 backend/ 또는 본 워크플로 자체 변경 push 시
+#   2) workflow_dispatch — Actions 탭에서 수동 실행 (배포 강제 재시도)
 on:
   push:
     branches:
@@ -15,6 +17,18 @@ on:
       - temp
     paths:
       - 'backend/**'
+      - '.github/workflows/deploy-backend.yml'
+  workflow_dispatch:
+    inputs:
+      branch:
+        description: '배포할 브랜치 (수동 실행 시)'
+        required: false
+        default: 'temp'
+
+# 동시 실행 방지 — 같은 브랜치의 이전 배포가 끝날 때까지 다음 대기
+concurrency:
+  group: deploy-backend-${{ github.ref }}
+  cancel-in-progress: false
 
 jobs:
   deploy:
@@ -22,33 +36,79 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      # 1단계: 코드 체크아웃
+      # 1단계: 코드 체크아웃 (참조용 — 실제 빌드는 EC2 에서)
       - name: 코드 체크아웃
         uses: actions/checkout@v4
 
-      # 2단계: SSH로 EC2 접속 후 배포 실행
+      # 2단계: SSH 로 EC2 접속 후 배포 실행
+      #   - GH_TOKEN: 워크플로 자동 발급 토큰을 EC2 로 전달해서
+      #     git pull HTTPS 인증을 통과시킨다 (EC2 의 git credential
+      #     설정 없이도 PAT 없이 동작).
       - name: EC2 배포
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.EC2_HOST }}
           username: ${{ secrets.EC2_USERNAME }}
           key: ${{ secrets.EC2_SSH_KEY }}
+          envs: GH_TOKEN,REF_NAME,REPO
+          script_stop: true      # 중간 실패 시 즉시 중단 (fatal 무시 방지)
           script: |
-            echo "===== 배포 시작 ====="
+            set -e
+            echo "===== 배포 시작: branch=$REF_NAME repo=$REPO ====="
 
-            # 백엔드 디렉토리로 이동
-            cd /home/ubuntu/LunchSync/backend
+            cd /home/ubuntu/LunchSync
 
-            # 최신 코드 pull
-            git -C /home/ubuntu/LunchSync pull origin ${{ github.ref_name }}
+            # 토큰을 URL 에 직접 박아 인증 — HTTPS remote 의 username 프롬프트 회피
+            # x-access-token 은 GitHub Actions GITHUB_TOKEN 의 표준 username.
+            REMOTE_URL="https://x-access-token:${GH_TOKEN}@github.com/${REPO}.git"
 
-            # 의존성 설치 (새 패키지 추가된 경우)
-            npm install --production=false
+            git fetch --prune "$REMOTE_URL" "$REF_NAME"
+            git reset --hard FETCH_HEAD
 
-            # NestJS 빌드
-            npm run build
+            # 백엔드 디렉토리로 이동 후 빌드/재시작
+            cd backend
+            echo "----- ENV -----"
+            echo "pwd: $(pwd)"
+            echo "node: $(node -v)"
+            echo "npm: $(npm -v)"
+            echo "----- NPM INSTALL -----"
+            npm install 2>&1 | tail -20
+            echo "----- BUILD (nest build, output captured) -----"
+            rm -rf dist
+            npm run build > /tmp/build.log 2>&1
+            BUILD_EXIT=$?
+            echo "build exit code: $BUILD_EXIT"
+            echo "----- BUILD 출력 (last 80 lines) -----"
+            tail -80 /tmp/build.log || true
+            if [ $BUILD_EXIT -ne 0 ]; then
+              echo "❌ build 실패 (exit $BUILD_EXIT)"
+              exit 1
+            fi
+            echo "----- DIST 산출물 -----"
+            ls -la dist/ 2>&1 || echo "dist 디렉토리 없음"
+            find dist -name "main.js" -type f 2>/dev/null | head -5
+            if [ ! -f dist/main.js ]; then
+              echo "❌ dist/main.js 가 없음 — 빌드 실패"
+              exit 1
+            fi
+            echo "✓ dist/main.js 존재 확인"
+            pm2 reload lunchsync-backend --update-env || pm2 restart lunchsync-backend --update-env
 
-            # pm2로 서버 재시작
-            pm2 restart lunchsync-backend
+            # 부팅 안정화 대기 후 상태/로그 출력 (진단용)
+            sleep 4
+            echo "----- PM2 STATUS -----"
+            pm2 status lunchsync-backend || true
+            echo "----- PM2 LOGS OUT (LAST 30) -----"
+            pm2 logs lunchsync-backend --lines 30 --nostream --out || true
+            echo "----- PM2 LOGS ERR (LAST 50) -----"
+            pm2 logs lunchsync-backend --lines 50 --nostream --err || true
+            echo "----- HEALTHCHECK -----"
+            curl -sf --max-time 5 http://localhost:3000/api/health \
+              && echo "HEALTHCHECK OK" \
+              || (echo "HEALTHCHECK FAIL" && exit 1)
 
             echo "===== 배포 완료 ====="
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          REF_NAME: ${{ inputs.branch || github.ref_name }}
+          REPO: ${{ github.repository }}

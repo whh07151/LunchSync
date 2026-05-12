@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 주문(Orders) 관련 API 호출 서비스
@@ -187,11 +189,14 @@ class OrdersApiService {
         'paymentMethod': paymentMethod,
       });
 
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/orders'),
-        headers: _headers(accessToken),
-        body: body,
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/orders'),
+            headers: _headers(accessToken),
+            body: body,
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -200,15 +205,13 @@ class OrdersApiService {
         );
       }
 
-      // ignore: avoid_print
-      print(
+      debugPrint(
         '[OrdersApiService] createOrder 실패: '
         '${response.statusCode} ${response.body}',
       );
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[OrdersApiService] createOrder 에러: $e');
+      debugPrint('[OrdersApiService] createOrder 에러: $e');
       return null;
     }
   }
@@ -218,10 +221,13 @@ class OrdersApiService {
     required String accessToken,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/orders/today'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/orders/today'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -232,8 +238,7 @@ class OrdersApiService {
       }
       return [];
     } catch (e) {
-      // ignore: avoid_print
-      print('[OrdersApiService] getTodayOrders 에러: $e');
+      debugPrint('[OrdersApiService] getTodayOrders 에러: $e');
       return [];
     }
   }
@@ -245,10 +250,13 @@ class OrdersApiService {
     required String orderId,
   }) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/orders/$orderId'),
-        headers: _headers(accessToken),
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/orders/$orderId'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -256,8 +264,7 @@ class OrdersApiService {
       }
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[OrdersApiService] getOrderById 에러: $e');
+      debugPrint('[OrdersApiService] getOrderById 에러: $e');
       return null;
     }
   }

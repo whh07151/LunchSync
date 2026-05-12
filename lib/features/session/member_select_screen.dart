@@ -8,7 +8,6 @@ import '../../providers/session_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/invitations_api_service.dart';
 import '../../services/sessions_api_service.dart';
-import 'package:flutter/services.dart';
 import 'session_lobby_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -195,7 +194,7 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
     );
 
     if (session == null) {
-      if (!mounted) return;
+      if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('세션 생성에 실패했어요.')),
       );
@@ -207,10 +206,9 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
       sessionId: session.id,
     );
 
-    if (!mounted) return;
+    if (!context.mounted) return;
 
     if (invitation != null) {
-      if (!mounted) return;
       // 세션 로비 화면으로 이동 (호스트 모드 — inviteCode 포함)
       // createSession 응답을 initialSession으로 넘겨 불필요한 재조회 방지
       Navigator.of(context).pushReplacement(
@@ -223,7 +221,6 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
         ),
       );
     } else {
-      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('초대 링크 생성에 실패했어요.')),
       );

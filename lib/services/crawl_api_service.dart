@@ -1,6 +1,8 @@
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당 크롤링 API 호출 서비스
@@ -61,26 +63,28 @@ class CrawlApiService {
     int radius = 1000,
   }) async {
     try {
-      final response = await http.post(
-        Uri.parse('${AppConfig.backendBaseUrl}/crawl/restaurants'),
-        headers: _headers(accessToken),
-        body: jsonEncode({
-          'lat': lat,
-          'lng': lng,
-          'radius': radius,
-        }),
-      );
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/crawl/restaurants'),
+            headers: _headers(accessToken),
+            body: jsonEncode({
+              'lat': lat,
+              'lng': lng,
+              'radius': radius,
+            }),
+          )
+          // 크롤링은 카카오 + 네이버 + Gemini AI 호출까지 길어질 수 있음
+          .timeout(const Duration(seconds: 30));
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         return CrawlResult.fromJson(json['data'] as Map<String, dynamic>);
       }
-      // ignore: avoid_print
-      print('[CrawlApiService] 응답 실패: ${response.statusCode}');
+      debugPrint('[CrawlApiService] 응답 실패: ${response.statusCode}');
       return null;
     } catch (e) {
-      // ignore: avoid_print
-      print('[CrawlApiService] crawlRestaurants 에러: $e');
+      debugPrint('[CrawlApiService] crawlRestaurants 에러: $e');
       return null;
     }
   }
