@@ -5,6 +5,7 @@ import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'core/theme/theme.dart';
 import 'core/config/app_config.dart';
+import 'core/api/api_auth_hooks.dart';
 import 'firebase_options.dart';
 import 'features/splash/splash_screen.dart';
 import 'features/auth/login_screen.dart';
@@ -119,6 +120,19 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
   @override
   void initState() {
     super.initState();
+    // 401 자동 로그아웃 글로벌 콜백 등록 — 토큰 만료 시 userProvider 자동 클리어.
+    // _RootNavigator 상태에 있을 때는 setState 로 build() 재호출 → LoginScreen 으로
+    // 자연 전환. 다른 화면(HomeScreen 등) 에 있으면 토큰만 클리어되고, 사용자가
+    // 앱 재시작 또는 다음 진입 시 LoginScreen 으로 빠짐.
+    ApiAuthHooks.onUnauthorized = () async {
+      debugPrint('[ApiAuthHooks] 401 감지 → userProvider clear');
+      await ref.read(userProvider.notifier).clear();
+      if (mounted) {
+        setState(() {
+          _autoLoginNextStep = null;
+        });
+      }
+    };
     _detectPaymentReturn();
     _bootSequence();
   }

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: AI 추천(CORE-07/08) API 호출 서비스
@@ -84,6 +85,7 @@ class RecommendationsApiService {
           )
           // 추천은 LLM 호출 가능성 있어 길게 (15s)
           .timeout(const Duration(seconds: 15));
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;

@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 import '../models/session.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -57,6 +58,7 @@ class SessionsApiService {
             body: jsonEncode(body),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -80,6 +82,7 @@ class SessionsApiService {
             headers: _headers(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -107,6 +110,7 @@ class SessionsApiService {
             headers: _headers(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -135,6 +139,7 @@ class SessionsApiService {
             body: jsonEncode({'status': status}),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (_) {
       return false;
@@ -155,6 +160,7 @@ class SessionsApiService {
             headers: _headers(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -183,6 +189,7 @@ class SessionsApiService {
             body: jsonEncode({'userId': userId}),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (_) {
       return false;
@@ -203,6 +210,7 @@ class SessionsApiService {
             headers: _headers(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200;
     } catch (_) {
       return false;

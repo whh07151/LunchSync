@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 사장/POS 메뉴 관리 API 호출 서비스
@@ -67,6 +68,7 @@ class PosMenusApiService {
             headers: {'Authorization': 'Bearer $accessToken'},
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       if (response.statusCode != 200) return const [];
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       final list = (body['data'] as List<dynamic>?) ?? const [];
@@ -107,6 +109,7 @@ class PosMenusApiService {
             }),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
         return PosMenuItem.fromJson(body['data'] as Map<String, dynamic>);
@@ -147,6 +150,7 @@ class PosMenusApiService {
             body: jsonEncode(body),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       if (response.statusCode == 200) {
         final resBody = jsonDecode(response.body) as Map<String, dynamic>;
         return PosMenuItem.fromJson(resBody['data'] as Map<String, dynamic>);
@@ -169,6 +173,7 @@ class PosMenusApiService {
             headers: {'Authorization': 'Bearer $accessToken'},
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200;
     } catch (_) {
       return false;

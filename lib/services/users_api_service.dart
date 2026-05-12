@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 유저 관련 API 호출 서비스
@@ -85,14 +86,21 @@ class UsersApiService {
   // DB에서 내 프로필 최신 정보 조회
   // accessToken: userProvider에서 가져온 JWT
   // 반환: UserProfile (성공) / null (실패)
+  //
+  // timeout 적용 (2026-05-12 박검토B 긴급):
+  //   main.dart `_bootSequence` 가 이 호출을 await 하므로 네트워크 끊김 시
+  //   스플래시 화면 무한 로딩으로 멈춤. AppConfig.apiTimeout 으로 강제 종료.
   Future<UserProfile?> getMe(String accessToken) async {
     try {
-      final response = await http.get(
-        Uri.parse('${AppConfig.backendBaseUrl}/users/me'),
-        headers: {
-          'Authorization': 'Bearer $accessToken',
-        },
-      );
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/users/me'),
+            headers: {
+              'Authorization': 'Bearer $accessToken',
+            },
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -148,6 +156,7 @@ class UsersApiService {
             body: jsonEncode(body),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       return response.statusCode == 200;
     } catch (_) {

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당/메뉴 관련 API 호출 서비스
@@ -101,6 +102,7 @@ class RestaurantsApiService {
       final response = await http
           .get(uri, headers: _headers(accessToken))
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -130,6 +132,7 @@ class RestaurantsApiService {
             headers: _headers(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -159,6 +162,7 @@ class RestaurantsApiService {
             headers: _headers(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;

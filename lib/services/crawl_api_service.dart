@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당 크롤링 API 호출 서비스
@@ -74,6 +75,7 @@ class CrawlApiService {
           )
           // 크롤링은 카카오 + 네이버 + Gemini AI 호출까지 길어질 수 있음
           .timeout(const Duration(seconds: 30));
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;

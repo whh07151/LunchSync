@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
+import '../core/api/api_auth_hooks.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 사장님 화면(OWNER 모드)에서 호출하는 POS API 클라이언트
@@ -166,6 +167,7 @@ class PosApiService {
             headers: {'Authorization': 'Bearer $accessToken'},
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode != 200) return const [];
 
@@ -207,6 +209,7 @@ class PosApiService {
             headers: {'Authorization': 'Bearer $accessToken'},
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode != 200) return PosStats.empty;
 
@@ -242,6 +245,7 @@ class PosApiService {
             body: jsonEncode({'status': status}),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200;
     } catch (_) {
       return false;
@@ -266,6 +270,7 @@ class PosApiService {
             body: jsonEncode({'reason': ?reason}),
           )
           .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200;
     } catch (_) {
       return false;
