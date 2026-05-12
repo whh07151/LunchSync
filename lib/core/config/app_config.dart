@@ -81,12 +81,32 @@ class AppConfig {
   /// https://developers.tosspayments.com/ → API 키 → 테스트 → 클라이언트 키
   static const String tossClientKey = 'test_gck_docs_Ovk5rk1EwkEbP0W43n07xlzm';
 
+  // ── 결제 콜백 URL — 빌드 환경별 dart-define 우선 ────────
+  //
+  // 운영(HTTPS) 빌드 시:
+  //   --dart-define=TOSS_SUCCESS_URL=https://<도메인>/payment/success
+  //   --dart-define=TOSS_FAIL_URL=https://<도메인>/payment/fail
+  //
+  // 미지정 시 로컬 개발 기본값 사용.
+  static const String _tossSuccessOverride = String.fromEnvironment(
+    'TOSS_SUCCESS_URL',
+    defaultValue: '',
+  );
+  static const String _tossFailOverride = String.fromEnvironment(
+    'TOSS_FAIL_URL',
+    defaultValue: '',
+  );
+
   /// 결제 성공 시 리다이렉트될 경로 (Flutter 웹 라우트)
   /// 토스 결제창에서 승인 완료 후 이 URL로 paymentKey, orderId, amount가 쿼리스트링으로 전달됨
-  static const String tossSuccessUrl = 'http://localhost:8080/payment/success';
+  static const String tossSuccessUrl = _tossSuccessOverride.length > 0
+      ? _tossSuccessOverride
+      : 'http://localhost:8080/payment/success';
 
   /// 결제 실패 시 리다이렉트될 경로
-  static const String tossFailUrl = 'http://localhost:8080/payment/fail';
+  static const String tossFailUrl = _tossFailOverride.length > 0
+      ? _tossFailOverride
+      : 'http://localhost:8080/payment/fail';
 
   // ══════════════════════════════════════════════════════════
   // 네트워크 안정성 (프론트 에이전트 권장 — 2026-05-11)
