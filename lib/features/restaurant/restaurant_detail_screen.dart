@@ -7,6 +7,7 @@ import '../../core/utils/distance_calculator.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/restaurants_api_service.dart';
+import '../../services/sessions_api_service.dart';
 import '../../services/external_map_launcher.dart';
 import '../../services/geolocation_service.dart';
 import '../menu/menu_screen.dart';
@@ -48,6 +49,7 @@ class RestaurantDetailScreen extends ConsumerStatefulWidget {
 class _RestaurantDetailScreenState
     extends ConsumerState<RestaurantDetailScreen> {
   static const _restaurantsApi = RestaurantsApiService();
+  static const _sessionsApi = SessionsApiService();
   static const _mapLauncher = ExternalMapLauncher();
 
   RestaurantDto? _restaurant;
@@ -61,6 +63,16 @@ class _RestaurantDetailScreenState
   double? _userLat;
   double? _userLng;
 
+  // ── 활성 점심 세션 ID 캐시 (C1 수정) ─────────────────────
+  // CU-16 메뉴 화면으로 넘어갈 때 "어느 세션에 주문을 박을지" 결정해야
+  // 한다. 이전엔 메뉴 화면이 시드 UUID 를 하드코딩해 사용했지만, 이제는
+  // 상세 화면에서 sessions/today 를 한 번 조회해 활성 세션 ID 를 미리
+  // 들고 있다가 MenuScreen 생성자에 넘겨주는 것이 기본이다.
+  //
+  // null 이면 MenuScreen 이 한 번 더 조회하지만, 호출부에서 미리 넘기면
+  // 사용자 체감 지연이 줄어든다.
+  String? _activeSessionId;
+
   @override
   void initState() {
     super.initState();
@@ -69,6 +81,25 @@ class _RestaurantDetailScreenState
       _loadDetail();
       _loadMenus();
       _loadUserLocation();
+      _loadActiveSession();
+    });
+  }
+
+  // ── 활성 점심 세션 1회 조회 ────────────────────────────
+  // GET /api/sessions/today 응답 중 DONE 이 아닌 첫 세션을 채택.
+  // 결과는 _activeSessionId 에 캐시되어 _goToFullMenu 에서 전달된다.
+  // 활성 세션이 없으면 null 그대로 두고, MenuScreen 이 가드로 처리.
+  Future<void> _loadActiveSession() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+
+    final sessions = await _sessionsApi.getTodaySessions(accessToken: token);
+    if (!mounted) return;
+
+    final active = sessions.where((s) => s.status != 'DONE').toList();
+    if (active.isEmpty) return;
+    setState(() {
+      _activeSessionId = active.first.id;
     });
   }
 
@@ -189,6 +220,12 @@ class _RestaurantDetailScreenState
   // ⚠️ 반드시 widget.restaurantId 를 함께 넘겨야 한다.
   //   - 미전달 시 MenuScreen 이 어느 식당을 조회해야 할지 모르고
   //     예전엔 시드 식당(11111111-...) 의 mock 메뉴만 보이는 버그가 있었음.
+  //
+  // [C1 수정] sessionId 도 함께 전달.
+  //   - 활성 세션 ID 를 미리 조회해 둔 _activeSessionId 를 그대로 넘기면
+  //     메뉴 화면 진입 직후 "주문하기" 버튼이 바로 활성화된다.
+  //   - 아직 조회가 끝나지 않았거나 활성 세션이 없으면 null 로 두고,
+  //     MenuScreen 이 자체 가드로 처리(시드 UUID 사용 금지).
   void _goToFullMenu() {
     final name = _restaurant?.name ?? widget.initialName ?? '식당';
     Navigator.of(context).push(
@@ -196,6 +233,7 @@ class _RestaurantDetailScreenState
         builder: (_) => MenuScreen(
           restaurantId: widget.restaurantId,
           restaurantName: name,
+          sessionId: _activeSessionId,
         ),
       ),
     );

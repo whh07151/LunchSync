@@ -7,6 +7,7 @@ import '../../models/menu_item.dart';
 import '../../providers/cart_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/restaurants_api_service.dart';
+import '../../services/sessions_api_service.dart';
 import '../payment/order_review_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -24,6 +25,13 @@ import '../payment/order_review_screen.dart';
 //     restaurant_detail_screen.dart 가 restaurantId 를 안 넘기고,
 //     이 화면이 _mockMenuItems 만 그려서 발생.
 //   - 2026-05-13 수정: restaurantId 인자 추가 + 실 API 연동 + 빈 상태 처리.
+//   - 2026-05-13 추가 수정(C1): "주문하기" 버튼이 시드 sessionId
+//     ('22222222-...') 를 하드코딩하던 문제 해결. 활성 세션(WAITING/
+//     VOTING/ORDERED) 이 있을 때만 주문 가능하도록 가드 추가.
+//     - sessionId 인자 우선 사용(호출부에서 명시 전달).
+//     - 미전달 시 GET /api/sessions/today 로 활성 세션 자동 조회.
+//     - 활성 세션이 없으면 주문 버튼 비활성 + "먼저 점심 세션을
+//       만들어 봐요" 안내. 시드 fallback 절대 사용 금지.
 //
 // 와이어프레임 기준 구성 요소 (브레이크다운 v3 CU-16):
 //   - 상단 앱바: 식당 이름 + 뒤로가기
@@ -51,6 +59,7 @@ class MenuScreen extends ConsumerStatefulWidget {
     super.key,
     required this.restaurantId,   // 현재 진입한 식당의 UUID
     required this.restaurantName, // 식당 이름 (앱바 제목으로 표시)
+    this.sessionId,               // 주문을 묶을 점심 세션 ID (없으면 자동 조회)
   });
 
   /// 메뉴를 조회할 식당의 UUID
@@ -59,6 +68,17 @@ class MenuScreen extends ConsumerStatefulWidget {
 
   /// 상단에 표시할 식당 이름
   final String restaurantName;
+
+  /// 주문을 어느 점심 세션에 묶을지 결정하는 세션 UUID.
+  ///
+  /// [전달 규칙]
+  ///   - 호출부(restaurant_detail_screen 등)에서 명시적으로 활성 세션 ID 를
+  ///     전달하면 그 값을 그대로 사용.
+  ///   - null 이면 화면 진입 시 GET /api/sessions/today 로 자동 조회 후,
+  ///     활성 세션(WAITING/VOTING/ORDERED) 첫 번째를 사용.
+  ///   - 끝까지 활성 세션을 찾지 못하면 "주문하기" 버튼은 비활성 상태로
+  ///     유지되며, 시연용 시드 UUID fallback 은 절대 사용하지 않는다.
+  final String? sessionId;
 
   @override
   ConsumerState<MenuScreen> createState() => _MenuScreenState();
@@ -75,14 +95,32 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
   // 탭 변경 시 이 값을 기준으로 메뉴 목록을 필터링합니다.
   MenuCategory _selectedCategory = MenuCategory.all;
 
-  // ── 식당/메뉴 API 서비스 ─────────────────────────────────
+  // ── 식당/메뉴/세션 API 서비스 ────────────────────────────
   static const _restaurantsApi = RestaurantsApiService();
+  static const _sessionsApi = SessionsApiService();
 
   // ── 메뉴 상태 ────────────────────────────────────────────
   // null = 아직 로딩 중, [] = 빈 응답(메뉴 없음), [..] = 정상 응답
   List<MenuItem>? _menuItems;
   bool _isLoading = true;
   String? _loadError;
+
+  // ── 활성 점심 세션 상태 ──────────────────────────────────
+  // C1 수정: 주문 버튼이 어느 세션에 주문을 박을지 결정하기 위한 캐시.
+  //
+  // [상태 의미]
+  //   - _resolvedSessionId == null && _isResolvingSession == true:
+  //       sessions/today 응답을 기다리는 중. 주문 버튼은 비활성.
+  //   - _resolvedSessionId == null && _isResolvingSession == false:
+  //       활성 세션이 없음. 주문 버튼 비활성 + 안내 토스트 트리거.
+  //   - _resolvedSessionId != null:
+  //       이 UUID 로 OrderReviewScreen 진입.
+  //
+  // [우선순위]
+  //   1) widget.sessionId 가 명시 전달되어 있으면 즉시 그대로 사용
+  //   2) 아니면 GET /api/sessions/today 호출 후 활성 세션 첫 번째 채택
+  String? _resolvedSessionId;
+  bool _isResolvingSession = true;
 
   // ── 현재 카테고리에 맞게 필터링된 메뉴 목록 ─────────────
   // getter: 탭 선택 때마다 재계산
@@ -119,6 +157,59 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       DebugToast.show(context, 'CU-16');
       _loadMenus();
+      _resolveActiveSession();
+    });
+  }
+
+  // ── 활성 점심 세션 자동 조회 ────────────────────────────
+  // C1 수정: 호출부에서 sessionId 를 명시 전달하지 않은 경우,
+  // 손님이 어느 세션에 주문을 박을지 결정해 줘야 한다.
+  //
+  // [흐름]
+  //   1) widget.sessionId 가 이미 있으면 그대로 채택 (네트워크 호출 생략)
+  //   2) 토큰 없으면 비활성 처리 (로그인 안 된 상태)
+  //   3) GET /api/sessions/today 호출
+  //   4) 응답 중 WAITING/VOTING/ORDERED 상태인 첫 세션 채택
+  //      (DONE 은 이미 끝난 세션이므로 후보에서 제외)
+  //   5) 끝까지 활성 세션을 못 찾으면 _resolvedSessionId == null 유지.
+  //      → 주문 버튼은 계속 비활성 + 안내 카피 노출.
+  Future<void> _resolveActiveSession() async {
+    // 1) 명시 전달 케이스: 그대로 채택
+    final passed = widget.sessionId;
+    if (passed != null && passed.isNotEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _resolvedSessionId = passed;
+        _isResolvingSession = false;
+      });
+      return;
+    }
+
+    // 2) 로그인 안 된 케이스: 자동 조회 불가
+    final token = ref.read(userProvider).accessToken;
+    if (token == null || token.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _resolvedSessionId = null;
+        _isResolvingSession = false;
+      });
+      return;
+    }
+
+    // 3) sessions/today 호출 → 4) 활성 세션 첫 번째 채택
+    final sessions = await _sessionsApi.getTodaySessions(accessToken: token);
+    if (!mounted) return;
+
+    // DONE 은 이미 종료된 세션이므로 주문 받을 수 없음.
+    // 그 외 상태(WAITING/VOTING/ORDERED) 는 아직 주문을 추가할 수 있다고
+    // 보고 첫 번째 항목을 채택. 우선순위는 백엔드 정렬을 신뢰.
+    final active = sessions
+        .where((s) => s.status != 'DONE')
+        .toList();
+
+    setState(() {
+      _resolvedSessionId = active.isEmpty ? null : active.first.id;
+      _isResolvingSession = false;
     });
   }
 
@@ -647,19 +738,47 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
           // ── "주문하기" 버튼 ───────────────────────────────
           // CU-17 주문 검토 화면으로 이동 → CU-18/19 토스 결제로 이어짐
           //
-          // sessionId 는 아직 점심 세션 흐름과 직접 연결되어 있지 않아
-          // seed-test-data.ts 의 고정 UUID 를 사용합니다.
-          // TODO: sessionProvider 에 currentSessionId 가 들어오면 그걸 사용.
-          AppPrimaryButton(
-            label: '주문하기 ($formattedTotal)',
-            onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                  builder: (_) => OrderReviewScreen(
-                    sessionId: '22222222-2222-2222-2222-222222222222',
-                    restaurantName: widget.restaurantName,
-                  ),
-                ),
+          // [C1 가드 — 시드 sessionId 하드코딩 제거]
+          //   이전엔 어떤 식당이든 '22222222-...' 시드 세션으로 주문이
+          //   박혀 사장 화면(OW-10) 에 잘못 노출될 위험이 있었다.
+          //   이제는 widget.sessionId 또는 sessions/today 자동 조회로
+          //   확보한 _resolvedSessionId 가 있을 때만 주문을 진행하고,
+          //   없으면 버튼을 비활성 상태로 두고 친근한 카피로 안내한다.
+          //
+          //   - _isResolvingSession == true: 활성 세션 조회 중 → 비활성
+          //   - _resolvedSessionId == null: 활성 세션 없음 → 비활성 +
+          //     탭 시 "먼저 점심 세션을 만들어 봐요" 안내 토스트
+          //   - _resolvedSessionId != null: 정상 진입
+          Builder(
+            builder: (_) {
+              final resolved = _resolvedSessionId;
+              final canOrder =
+                  !_isResolvingSession && resolved != null && resolved.isNotEmpty;
+
+              // 버튼 라벨: 세션 미확정 상태에서도 사용자가 상황을 빠르게
+              // 이해할 수 있도록 친근한 톤("~봐요") 으로 안내.
+              final label = _isResolvingSession
+                  ? '세션 확인 중…'
+                  : (canOrder
+                      ? '주문하기 ($formattedTotal)'
+                      : '먼저 점심 세션을 만들어 봐요');
+
+              return AppPrimaryButton(
+                label: label,
+                // canOrder == false 면 onPressed 를 null 로 두어
+                // AppPrimaryButton 의 기본 비활성 스타일을 그대로 활용.
+                onPressed: canOrder
+                    ? () {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) => OrderReviewScreen(
+                              sessionId: resolved,
+                              restaurantName: widget.restaurantName,
+                            ),
+                          ),
+                        );
+                      }
+                    : null,
               );
             },
           ),

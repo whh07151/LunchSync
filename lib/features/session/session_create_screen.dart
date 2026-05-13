@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import '../../core/constants/app_constants.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
@@ -38,9 +39,20 @@ import 'session_lobby_screen.dart';
 // ══════════════════════════════════════════════════════════
 
 // ── 기본값 상수 ──────────────────────────────────────────
-const _kDefaultRadius        = 500;
-const _kDefaultBudget        = 15000;
-const _kDefaultReturnMinutes = 30;
+// 매직 넘버는 lib/core/constants/app_constants.dart 의 SessionDefaults 로 이전.
+// 아래는 파일 내부 가독성용 별칭 — 의미·의도는 SessionDefaults 주석 참조.
+const _kDefaultRadius        = SessionDefaults.radiusMeters;        // 500m
+const _kDefaultBudget        = SessionDefaults.budgetPerPersonWon;  // 15,000원
+const _kDefaultReturnMinutes = SessionDefaults.returnMinutes;       // 30분
+
+/// 호스트 GPS 조회 안전망 타임아웃.
+///
+/// 왜 8초?
+///   - 카카오맵/플레이스 API 호출 전 단계라 너무 짧으면 정상 권한 응답까지 끊김.
+///   - 너무 길면 권한 거부/스트림 이슈 시 사용자가 "세션 생성 중..." 로딩에 갇힘.
+///   - GeolocationService 내부에도 동일한 timeLimit 을 넘겨 외부/내부가 일치하게 함
+///     (이전: 외부 8s vs 내부 10s 로 내부 타임아웃이 죽은 코드였음).
+const _kGpsLookupTimeout = Duration(seconds: 8);
 
 class SessionCreateScreen extends ConsumerStatefulWidget {
   const SessionCreateScreen({super.key});
@@ -167,15 +179,18 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
       // 기준으로 반경 내 식당만 후보로 추린다. 위치 실패 시 null로 전달하면
       // 백엔드가 반경 필터를 생략하고 DB 전체 식당을 대상으로 폴백.
       //
-      // GeolocationService.getCurrentPosition 내부에 10초 timeLimit이 있지만
-      // 웹 환경에서는 권한 팝업/스트림 이슈로 무한 대기 가능성이 있어
-      // 외부에서 8초 안전망을 한 번 더 걸어준다. 타임아웃 시 null로 폴백.
+      // 타임아웃 정책 (2026-05-13 정리):
+      //   이전에는 GeolocationService 내부 10초 + 외부 8초로 중복이라 내부 10초가
+      //   사실상 죽은 코드였음. 이제 내부 timeLimit 을 외부와 동일한 8초로
+      //   넘겨 단일 진실 원천(_kGpsLookupTimeout)으로 통일.
+      //   외부 .timeout()은 geolocator 가 timeLimit 을 무시할 수 있는
+      //   웹/플랫폼 엣지 케이스 안전망으로 유지(이중 방어).
       Position? hostPos;
       try {
         hostPos = await _geoService
-            .getCurrentPosition()
-            .timeout(const Duration(seconds: 8), onTimeout: () {
-          debugPrint('[SessionCreate] GPS 조회 8초 타임아웃 — null로 폴백');
+            .getCurrentPosition(timeLimit: _kGpsLookupTimeout)
+            .timeout(_kGpsLookupTimeout, onTimeout: () {
+          debugPrint('[SessionCreate] GPS 조회 ${_kGpsLookupTimeout.inSeconds}초 타임아웃 — null로 폴백');
           return null;
         });
         debugPrint('[SessionCreate] GPS 조회 결과: '

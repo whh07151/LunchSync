@@ -194,12 +194,14 @@ export class RecommendationsService {
       }
 
       // ── (B) 가격 적합도: 예산 대비 비율로 선형 차등 ──
-      //   price_range는 1~4 정도의 등급(저렴~고급)을 1만원 단위로 환산.
+      //   price_range 값은 출처가 3가지(시드/크롤/Gemini)라 단순 곱셈으로
+      //   환산하면 시드(예: 5500) × 10000 = 5천5백만원 같은 폭주가 발생.
+      //   estimatePriceFromRange() 휴리스틱으로 출처를 추정해 합리적인
+      //   원 단위로 환산한 뒤 예산 비율을 계산한다.
       //   minBudget 대비 50% 이하: +15 / 80% 이하: +10 / 100% 이하: +5
       //   100% 초과: 초과 비율에 비례해 -30까지 감점.
       if (minBudget != null && minBudget > 0) {
-        // price_range는 1~4 스케일이라 가정(1=저렴, 4=고급). 만원 단위로 환산.
-        const estimatedPrice = r.price_range * 10000;
+        const estimatedPrice = estimatePriceFromRange(r.price_range);
         const priceRatio = estimatedPrice / minBudget;
         if (priceRatio <= 0.5) {
           score += 15;
@@ -240,19 +242,24 @@ export class RecommendationsService {
       const idHash = hashStringToRange(r.id, 6);
       score += idHash;
 
-      // ── (E) 알레르기 충돌 검사 ─────────────────────
-      const categoryLower = (r.category ?? '').toLowerCase();
+      // ── (E) 알레르기 충돌 검사 (정확 토큰 매칭) ────
+      //   기존 includes() 부분 매치는 "유" 입력 시 "우유"/"유부"가 함께
+      //   걸리는 false-positive가 발생. 알레르기는 안전성과 직결되므로
+      //   카테고리 문자열을 토큰화(쉼표/슬래시/공백) → 정확 일치로 변경.
+      //   ⚠️ 메뉴 단위 알레르기는 향후 도입. 현재는 카테고리 토큰만 비교.
+      const categoryTokens = tokenizeCategory(r.category);
       const allergyConflict = allAllergies.some((a) =>
-        categoryLower.includes(a.toLowerCase()),
+        matchesToken(categoryTokens, a),
       );
       if (allergyConflict) {
         score -= 50;
         reasons.push('알레르기 주의');
       }
 
-      // ── (F) 비선호 음식 검사 ──────────────────────
+      // ── (F) 비선호 음식 검사 (정확 토큰 매칭) ──────
+      //   알레르기와 동일하게 토큰 단위 정확 매치로 false-positive 제거.
       const dislikeConflict = allDislikes.some((d) =>
-        categoryLower.includes(d.toLowerCase()),
+        matchesToken(categoryTokens, d),
       );
       if (dislikeConflict) {
         score -= 25;
@@ -330,4 +337,123 @@ function hashStringToRange(input: string, maxExclusive: number): number {
   }
   // 음수 가능성 제거 후 모듈로
   return Math.abs(hash) % maxExclusive;
+}
+
+// ══════════════════════════════════════════════════════════
+// price_range 출처별 휴리스틱 환산 (TS 포트)
+//
+// 원본: lib/core/utils/normalizer.dart `formatRestaurantPriceRange`
+//
+// restaurants.price_range 컬럼은 데이터 출처에 따라 의미가 다름:
+//   ① 시드 데이터 (backend/scripts/seed-restaurants.ts)
+//      → 실제 평균 가격(원). 예: 5500, 8000, 15000
+//   ② 카카오 크롤 (backend/src/crawl/crawl.service.ts:339)
+//      → Math.round(avgPrice / 1000). 예: 평균 13000원 → 13
+//        또는 메뉴가 없으면 기본값 2
+//   ③ Gemini AI 가상 식당 (backend/src/gemini/gemini.service.ts)
+//      → 1~5 척도 (1: 저렴, 5: 고급, clamp 처리됨)
+//
+// 단순 `r.price_range * 10000` 곱셈은 시드 5500이 들어오면
+// 5천5백만원으로 환산되어 항상 예산 페널티 -30점이 부과되는 회귀 발생.
+//
+// 휴리스틱 분기 표(입력값 → 환산 원 단위):
+//   ─────────────────────────────────────────────────────────
+//   입력  | 추정 출처     | 환산 원       | 비고
+//   ─────────────────────────────────────────────────────────
+//      1  | Gemini 척도   |    5,000원   | 분식·도시락 수준
+//      2  | Gemini 척도   |   10,000원   | 한식·일식 일반
+//      3  | Gemini 척도   |   15,000원   | 일식·양식 일반
+//      4  | Gemini 척도   |   25,000원   | 양식·고급 한식
+//      5  | Gemini 척도   |   35,000원   | 고급
+//      7  | 카카오 크롤   |    7,000원   | 7 × 1000
+//     12  | 카카오 크롤   |   12,000원   | 12 × 1000
+//   5500  | 시드          |    5,500원   | 실제 원 단위
+//   8000  | 시드          |    8,000원   |
+//  15000  | 시드          |   15,000원   |
+//   null  | 알 수 없음    |   10,000원   | 평균 가격으로 폴백
+//   ─────────────────────────────────────────────────────────
+// ══════════════════════════════════════════════════════════
+
+// Gemini 1~5 척도 → 대표 원 단위 매핑
+const GEMINI_SCALE_TO_WON: Record<number, number> = {
+  1: 5000,
+  2: 10000,
+  3: 15000,
+  4: 25000,
+  5: 35000,
+};
+
+// 휴리스틱 임계값 (출처 추정 경계)
+const GEMINI_SCALE_MAX = 5; // 이하: Gemini 척도로 간주
+const CRAWL_UNIT_MAX = 999; // 미만: 카카오 크롤의 1000원 단위로 간주
+const PRICE_FALLBACK_WON = 10000; // null/0 일 때 평균치 폴백
+
+/**
+ * price_range 값을 합리적인 원 단위로 환산.
+ *
+ * Flutter `formatRestaurantPriceRange`와 동일한 휴리스틱을 사용.
+ * 추천 점수 계산 단계에서 "예산 적합도" 가중치 산정에 쓰인다.
+ */
+function estimatePriceFromRange(priceRange: number | null): number {
+  // null 또는 0 이하 → 평균치로 폴백 (페널티 폭주 방지)
+  if (priceRange == null || priceRange <= 0) {
+    return PRICE_FALLBACK_WON;
+  }
+
+  // ① 1~5: Gemini 척도로 간주, 대표 원 단위로 환산
+  if (priceRange <= GEMINI_SCALE_MAX) {
+    return GEMINI_SCALE_TO_WON[priceRange] ?? PRICE_FALLBACK_WON;
+  }
+
+  // ② 6~999: 카카오 크롤의 1000원 단위 (예: 13 → 13,000원)
+  if (priceRange <= CRAWL_UNIT_MAX) {
+    return priceRange * 1000;
+  }
+
+  // ③ 1000 이상: 시드 데이터의 실제 원 단위 (예: 5500, 8000, 15000)
+  return priceRange;
+}
+
+// ══════════════════════════════════════════════════════════
+// 카테고리 토큰화 + 정확 매칭 헬퍼
+//
+// 기존 `categoryLower.includes(a.toLowerCase())` 부분 매치 문제:
+//   - 알레르기 "유"  → "우유"/"유부" 모두 매치 (false-positive)
+//   - 알레르기 "밀" → "밀면"/"옥수수밀" 모두 매치
+//
+// 해결 전략:
+//   카테고리 문자열을 쉼표(,) · 슬래시(/) · 공백 기준으로 split하여
+//   토큰 배열을 만들고, 알레르기/비선호 항목과 trim·소문자 후 `===` 비교.
+//   매핑 코드(예: 'dairy')와 한글 라벨(예: '유제품') 양쪽을 모두 검사하면
+//   더 안전하지만 현재 DB는 한글 카테고리만 저장되므로 1차 단계는
+//   문자열 정확 매치로 충분.
+// ══════════════════════════════════════════════════════════
+
+// 카테고리 split 구분자: 쉼표 / 슬래시 / 공백 (전각 공백 포함)
+const CATEGORY_SPLIT_REGEX = /[,/\s　]+/;
+
+/**
+ * 식당 카테고리 문자열을 토큰 배열로 분해.
+ * 예: "한식, 분식" → ["한식", "분식"]
+ *     "일식/라멘"  → ["일식", "라멘"]
+ *     "양식"       → ["양식"]
+ */
+function tokenizeCategory(category: string | null | undefined): string[] {
+  if (!category) return [];
+  return category
+    .toLowerCase()
+    .split(CATEGORY_SPLIT_REGEX)
+    .map((t) => t.trim())
+    .filter((t) => t.length > 0);
+}
+
+/**
+ * 토큰 배열에 keyword가 정확히 포함되는지 검사.
+ * trim + 소문자 후 `===` 비교 → 부분 매치 false-positive 차단.
+ */
+function matchesToken(tokens: string[], keyword: string): boolean {
+  if (!keyword) return false;
+  const normalized = keyword.trim().toLowerCase();
+  if (normalized.length === 0) return false;
+  return tokens.includes(normalized);
 }

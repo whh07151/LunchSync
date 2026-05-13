@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../providers/user_provider.dart';
 import '../../services/pos_api_service.dart';
@@ -671,21 +672,21 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
     );
   }
 
+  // ── 빈 상태 위젯 — AppEmptyState 컴포넌트로 일관화 ────
+  // 다른 빈 상태 화면(order_list/notification 등)이 모두 AppEmptyState 를 쓰는데
+  // 사장 홈만 인라인이라 디자이너 가이드 P0(컴포넌트 일관화)와 어긋났음.
+  // 카피는 사장 맥락에 맞춰 다듬되 톤(친근체)은 유지.
+  // - title:       한 줄 핵심 메시지 (호출 측에서 넘김)
+  // - description: 상태별 부연 설명 — 매장 매핑 대기 vs 새 주문 대기
   Widget _buildEmptyOrders(String message) {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.receipt_long_rounded,
-              size: 48, color: AppColors.iconInactive),
-          const SizedBox(height: AppSpacing.sm),
-          Text(
-            message,
-            style: AppTextStyles.bodyMedium
-                .copyWith(color: AppColors.textSecondary),
-          ),
-        ],
-      ),
+    // 매핑 대기 케이스인지 메시지로 식별 — 두 케이스만 있어 단순 분기.
+    final isAwaitingMapping = message.contains('매장 매핑');
+    return AppEmptyState(
+      icon: Icons.receipt_long_rounded,
+      title: message,
+      description: isAwaitingMapping
+          ? '운영자가 매장을 연결하면 여기에 주문이 차근차근 쌓여요'
+          : '새 주문이 들어오면 자동으로 이 자리에 표시돼요',
     );
   }
 
