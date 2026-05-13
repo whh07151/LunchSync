@@ -347,20 +347,68 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
 
   // ── 친구 목록 위젯 ──────────────────────────────────────────
   // 검색 결과가 없으면 안내 문구, 있으면 항목 목록 표시
+  //
+  // 2026-05-14: 가짜 친구 8명 제거 후 빈 상태 안내 강화.
+  //   - 검색어 없을 때: "혼자 시작도 OK" 친근 안내 + 초대 코드 흐름 환기
+  //   - 검색어 있을 때: "검색 결과 없음" 유지
   Widget _buildFriendList() {
     final friends = _filteredFriends;
 
-    // 검색 결과 없음 상태
+    // 비어있을 때 — 검색어 유무에 따라 안내 분기
     if (friends.isEmpty) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xl),
-        child: Center(
-          child: Text(
-            '검색 결과가 없어요',
-            style: AppTextStyles.bodyMedium.copyWith(
-              color: AppColors.textSecondary,
+      final primary = Theme.of(context).colorScheme.primary;
+      // 검색어 있을 때는 단순 안내
+      if (_searchQuery.isNotEmpty) {
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: AppSpacing.xl),
+          child: Center(
+            child: Text(
+              '검색 결과가 없어요',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
+        );
+      }
+
+      // 검색어 없을 때 — 친근 빈 상태 + 다음 액션 명확 환기
+      return Container(
+        margin: const EdgeInsets.symmetric(vertical: AppSpacing.lg),
+        padding: const EdgeInsets.all(AppSpacing.lg),
+        decoration: BoxDecoration(
+          color: primary.withAlpha(15),
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          border: Border.all(color: primary.withAlpha(40)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Icon(Icons.group_add_rounded, color: primary, size: 22),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    '아직 친구 목록이 비어 있어요',
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      color: primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Text(
+              '괜찮아요! "조건 설정하기"를 눌러 혼자 진행하거나,\n'
+              '아래 "초대 링크 복사하기"로 친구를 불러봐요.',
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.textSecondary,
+                height: 1.5,
+              ),
+            ),
+          ],
         ),
       );
     }

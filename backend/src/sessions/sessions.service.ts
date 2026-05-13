@@ -180,9 +180,13 @@ export class SessionsService {
     const sessionIds = myMemberships?.map((m) => m.session_id) ?? [];
     if (sessionIds.length === 0) return [];
 
+    // 2026-05-14 추가: budget/radius/return_minutes/memo 포함
+    //   사장님 시연 발견 — 홈에서 로비 진입 시 정보 박스(예산·반경·복귀)가 안 보였음.
+    //   원인: getTodaySessions select에 위 필드 누락 → Session 객체가 null 박스라
+    //   _buildConditionChips가 칩을 0개 그림.
     const { data: sessions } = await this.supabase.client
       .from('sessions')
-      .select('id, name, status, created_by, scheduled_at, created_at')
+      .select('id, name, status, created_by, scheduled_at, created_at, radius, budget, return_minutes, memo')
       .in('id', sessionIds)
       .gte('created_at', todayISO)
       .order('created_at', { ascending: false });
@@ -218,6 +222,11 @@ export class SessionsService {
       scheduledAt: s.scheduled_at,
       memberCount: memberCountMap[s.id] ?? 0,
       createdBy: { id: s.created_by, name: creatorMap[s.created_by] ?? null },
+      // 2026-05-14 추가 — 로비 정보 박스용
+      radius: s.radius,
+      budget: s.budget,
+      returnMinutes: s.return_minutes,
+      memo: s.memo,
     }));
   }
 
