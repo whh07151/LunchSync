@@ -5,6 +5,7 @@ import {
   NotFoundException,
   BadRequestException,
   InternalServerErrorException,
+  UnauthorizedException,
   Logger,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -113,7 +114,18 @@ export class VotesService {
 
   // ── CU-15: 투표 결과 집계 + 최다 득표 식당 확정 ────────
   // 보안 패치: 호스트만 가능 + VOTING 상태에서만
+  //
+  // 2026-05-13 견고화: sessions.service.assertHost 와 동일한 정책 적용.
+  //   - requesterId 가 falsy(POS 토큰/JWT 누락) → 401
+  //   - UUID 비교를 trim/lowercase 정규화 → "호스트인데 호스트가 아니래" 오탐 차단
   async tallyAndDecide(sessionId: string, requesterId: string) {
+    // 0단계: 사용자 식별 누락 → 명확한 401
+    if (!requesterId) {
+      throw new UnauthorizedException(
+        '사용자 인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+    }
+
     // 호스트 + 상태 검증
     const { data: session, error: sessionError } = await this.supabase.client
       .from('sessions')
@@ -123,7 +135,14 @@ export class VotesService {
     if (sessionError || !session) {
       throw new NotFoundException('세션을 찾을 수 없어요.');
     }
-    if (session.created_by !== requesterId) {
+
+    const hostId = String(session.created_by ?? '').trim().toLowerCase();
+    const reqId = String(requesterId).trim().toLowerCase();
+    if (hostId !== reqId) {
+      this.logger.warn(
+        `[tallyAndDecide] 호스트 불일치 session=${sessionId} ` +
+          `host=${hostId || '(empty)'} requester=${reqId}`,
+      );
       throw new ForbiddenException('세션 호스트만 결과를 확정할 수 있어요.');
     }
     if (session.status !== 'VOTING') {

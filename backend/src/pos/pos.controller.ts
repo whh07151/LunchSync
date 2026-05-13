@@ -1,5 +1,9 @@
 import { Body, Controller, Get, Param, Patch, Post, Query, Req, UseGuards } from '@nestjs/common';
 import { IsIn, IsOptional, IsString, MaxLength } from 'class-validator';
+// 2026-05-13 SkipThrottle: POS 단말이 주문 목록/통계를 폴링하면서 글로벌
+//   throttler(분당 100) 한도를 빠르게 소모해 429 유발. 폴링성 GET 만 제외하고
+//   상태 변경(PATCH)·취소(POST)는 보안 유지 위해 throttle 적용 그대로 둠.
+import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { assertPosAccessTo } from '../auth/pos-ownership.util';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
@@ -42,6 +46,8 @@ export class PosController {
 
   // ── OW-10: 식당별 주문 목록 (정식 경로) ───────────────
   // 권한: POS 토큰의 매장 ID 와 path 매장 ID 일치 필수 (2026-05-12 박검토A)
+  // 폴링 엔드포인트 → throttler 제외 (2026-05-13)
+  @SkipThrottle()
   @Get('restaurants/:id/orders')
   async getOrders(
     @Req() req: AuthedRequest,
@@ -57,6 +63,8 @@ export class PosController {
   }
 
   // ── 별칭: LSPOS POS_BUILD_GUIDE 명세 호환 ─────────────
+  // 폴링 엔드포인트 → throttler 제외 (2026-05-13)
+  @SkipThrottle()
   @Get('orders/:restaurantId')
   async getOrdersAlias(
     @Req() req: AuthedRequest,
@@ -67,6 +75,8 @@ export class PosController {
   }
 
   // ── POS-08: 결제 상태 통계 (정식 경로) ────────────────
+  // 폴링 엔드포인트 → throttler 제외 (2026-05-13)
+  @SkipThrottle()
   @Get('restaurants/:id/stats')
   async getStats(
     @Req() req: AuthedRequest,
@@ -78,6 +88,8 @@ export class PosController {
   }
 
   // ── 별칭: LSPOS POS_BUILD_GUIDE 명세 호환 ─────────────
+  // 폴링 엔드포인트 → throttler 제외 (2026-05-13)
+  @SkipThrottle()
   @Get('orders/:restaurantId/stats')
   async getStatsAlias(
     @Req() req: AuthedRequest,

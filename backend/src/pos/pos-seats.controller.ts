@@ -1,6 +1,10 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { IsArray, IsIn, IsNumber, IsOptional, IsString } from 'class-validator';
 import { Type } from 'class-transformer';
+// 2026-05-13 SkipThrottle: LSPOS 데모 단말 진입 시 좌석 5개를 연속 POST 로
+//   시드하다 6번째부터 429 발생. 좌석 목록 폴링 GET 과 시드용 POST 를 throttle
+//   에서 제외. JWT + assertPosAccessTo 로 본인 매장만 접근하므로 영향 한정.
+import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { assertPosAccessTo } from '../auth/pos-ownership.util';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
@@ -47,6 +51,8 @@ class UpdateSeatDto {
 export class PosSeatsController {
   constructor(private readonly seatsService: PosSeatsService) {}
 
+  // 좌석 목록 폴링 → throttler 제외 (2026-05-13)
+  @SkipThrottle()
   @Get(':restaurantId')
   async list(
     @Req() req: AuthedRequest,
@@ -57,6 +63,8 @@ export class PosSeatsController {
     return { success: true, data };
   }
 
+  // 좌석 시드 일괄 (데모 진입 시 5개 연속 POST) → throttler 제외 (2026-05-13)
+  @SkipThrottle()
   @Post(':restaurantId')
   async create(
     @Req() req: AuthedRequest,

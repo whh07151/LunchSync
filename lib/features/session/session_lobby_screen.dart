@@ -255,7 +255,8 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
                     await Clipboard.setData(ClipboardData(text: shareMessage));
                     messenger.showSnackBar(
                       const SnackBar(
-                        content: Text('초대 메시지가 복사됐어요. 카톡에 붙여 넣어주세요.'),
+                        // 다음 액션 명시 — 어디에 붙여넣을지 안내
+        content: Text('초대 메시지를 복사했어요! 카톡에 붙여 넣어 보내봐요'),
                         duration: Duration(seconds: 2),
                       ),
                     );
@@ -423,7 +424,8 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
           Expanded(
             child: _membersData == null || _membersData!.members.isEmpty
                 ? Center(
-                    child: Text('아직 참여한 멤버가 없어요',
+                    // 빈 상태 — 초대 코드 공유라는 다음 액션을 동시에 환기
+                    child: Text('초대 코드를 공유해 멤버를 불러보세요',
                         style: AppTextStyles.bodyMedium.copyWith(
                             color: AppColors.textSecondary)),
                   )

@@ -5,16 +5,25 @@ import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../models/menu_item.dart';
 import '../../providers/cart_provider.dart';
+import '../../providers/user_provider.dart';
+import '../../services/restaurants_api_service.dart';
 import '../payment/order_review_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-16 메뉴 목록 / 장바구니 화면
 //
-// [연결 예정 데이터]
-//   - lib/data/seeds/menu_seeds.dart → _mockMenuItems 교체
-//   - lib/data/seeds/restaurant_seeds.dart → restaurantId로 해당 식당 메뉴 필터링
-//   - lib/core/constants/ui_texts.dart (DetailTexts) → 섹션 제목, 품절 문구 등
-//   - lib/models/restaurant.dart → restaurantName을 Restaurant 모델로 교체
+// [데이터 소스]
+//   - 진입 시 받은 widget.restaurantId 로
+//     GET /api/restaurants/:id/menus 호출 → MenuItemDto 리스트 수신
+//   - 백엔드 응답을 MenuItem 모델로 매핑해서 _menuItems 상태에 저장
+//   - 카테고리 탭 변경 시 _filteredMenuItems getter 로 필터링
+//
+// [버그 히스토리]
+//   - 2026-05-13 이전: 어느 식당에 들어가도 항상 시드 RESTAURANT_ID
+//     ('11111111-...') 의 하드코딩된 12개 mock 메뉴만 보였음.
+//     restaurant_detail_screen.dart 가 restaurantId 를 안 넘기고,
+//     이 화면이 _mockMenuItems 만 그려서 발생.
+//   - 2026-05-13 수정: restaurantId 인자 추가 + 실 API 연동 + 빈 상태 처리.
 //
 // 와이어프레임 기준 구성 요소 (브레이크다운 v3 CU-16):
 //   - 상단 앱바: 식당 이름 + 뒤로가기
@@ -26,20 +35,10 @@ import '../payment/order_review_screen.dart';
 //
 // 동작 흐름:
 //   홈(CU-06) 식당 카드 탭
-//     → (CU-13 식당 상세, 장다연 담당 — 현재 생략)
-//       → 이 화면 (메뉴 목록 + 장바구니 구성)
+//     → CU-13 식당 상세 (전체 보기 버튼)
+//       → 이 화면 (restaurantId 로 메뉴 조회 + 장바구니 구성)
 //         → "주문하기" 버튼
-//           → CU-20 그룹 주문 검토 (안태환 담당 — 현재 Placeholder)
-//
-// 브레이크다운 v3 필수 버튼:
-//   담기 / 수량+ / 수량- / 삭제
-//   (옵션 버튼: 현재 Placeholder, 추후 옵션 선택 바텀시트로 구현 예정)
-//
-// Mock 데이터 사용 이유:
-//   실제 메뉴 데이터는 안태환 씨가 담당하는
-//   GET /restaurants/{id}/menus API에서 받아와야 합니다.
-//   연동 전까지 코드 안에 직접 적힌 가짜 데이터(Mock)를 사용합니다.
-//   → API 연동 시: _mockMenuItems 리스트를 API 응답으로 교체
+//           → CU-17 그룹 주문 검토 (OrderReviewScreen)
 //
 // Riverpod 연동:
 //   장바구니 상태(담기/수량변경/제거)는 cartProvider로 전역 관리합니다.
@@ -50,11 +49,15 @@ import '../payment/order_review_screen.dart';
 class MenuScreen extends ConsumerStatefulWidget {
   const MenuScreen({
     super.key,
+    required this.restaurantId,   // 현재 진입한 식당의 UUID
     required this.restaurantName, // 식당 이름 (앱바 제목으로 표시)
   });
 
+  /// 메뉴를 조회할 식당의 UUID
+  /// (restaurant_detail_screen.dart 에서 widget.restaurantId 전달)
+  final String restaurantId;
+
   /// 상단에 표시할 식당 이름
-  /// TODO: CU-13(식당 상세, 장다연 담당) 연동 시 Restaurant 모델로 교체
   final String restaurantName;
 
   @override
@@ -72,133 +75,21 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
   // 탭 변경 시 이 값을 기준으로 메뉴 목록을 필터링합니다.
   MenuCategory _selectedCategory = MenuCategory.all;
 
-  // ── Mock 메뉴 데이터 ─────────────────────────────────────
-  // ⚠️ id / restaurantId 는 backend/scripts/seed-test-data.ts 의
-  //    UUID 와 동일해야 /api/orders 호출 시 menu_items 조회가 성공합니다.
-  //    seed 실행:  cd backend && npx ts-node scripts/seed-test-data.ts
-  //
-  // TODO: 실제 GET /restaurants/{id}/menus API 연동 시 전부 제거
-  //
-  // ── [SEED 연결 포인트] ──────────────────────────────────
-  // 이 하드코딩된 UUID 리스트는 seed-test-data.ts 의 MENU_ITEMS 배열과
-  // 1:1 대응됩니다. 한쪽이 바뀌면 반드시 양쪽을 동시에 수정하세요.
-  static const String _seedRestaurantId =
-      '11111111-1111-1111-1111-111111111111';
+  // ── 식당/메뉴 API 서비스 ─────────────────────────────────
+  static const _restaurantsApi = RestaurantsApiService();
 
-  static const List<MenuItem> _mockMenuItems = [
-    // ── 추천 메뉴 (카테고리만 recommended 로 표기) ────────
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000001',
-      restaurantId: _seedRestaurantId,
-      name: '불고기 덮밥',
-      description: '달콤한 불고기 소스와 부드러운 소고기가 밥 위에 올려진 메뉴',
-      price: 8900,
-      category: MenuCategory.recommended,
-    ),
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000002',
-      restaurantId: _seedRestaurantId,
-      name: '치즈 돈까스',
-      description: '두툼한 돼지고기 커틀릿에 진한 치즈 소스',
-      price: 9500,
-      category: MenuCategory.recommended,
-    ),
-
-    // ── 밥류 ────────────────────────────────────────────
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000003',
-      restaurantId: _seedRestaurantId,
-      name: '제육볶음 정식',
-      description: '매콤한 제육볶음 + 공깃밥 + 국 + 반찬 3종',
-      price: 9000,
-      category: MenuCategory.rice,
-    ),
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000004',
-      restaurantId: _seedRestaurantId,
-      name: '김치찌개 정식',
-      description: '묵은지로 끓인 진한 김치찌개 + 밥 + 반찬',
-      price: 8500,
-      category: MenuCategory.rice,
-    ),
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000005',
-      restaurantId: _seedRestaurantId,
-      name: '비빔밥',
-      description: '신선한 야채와 고추장으로 비벼 먹는 건강 한 끼',
-      price: 8000,
-      category: MenuCategory.rice,
-    ),
-
-    // ── 면류 ────────────────────────────────────────────
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000006',
-      restaurantId: _seedRestaurantId,
-      name: '잔치국수',
-      description: '멸치 육수에 소면을 넣은 담백한 국수',
-      price: 7000,
-      category: MenuCategory.noodle,
-    ),
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000007',
-      restaurantId: _seedRestaurantId,
-      name: '비빔국수',
-      description: '새콤달콤한 양념장에 비벼 먹는 여름 별미',
-      price: 7500,
-      category: MenuCategory.noodle,
-    ),
-
-    // ── 분식 ────────────────────────────────────────────
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000008',
-      restaurantId: _seedRestaurantId,
-      name: '떡볶이',
-      description: '쫄깃한 가래떡에 매콤달콤한 소스. 순한맛/매운맛 선택',
-      price: 6000,
-      category: MenuCategory.snack,
-    ),
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000009',
-      restaurantId: _seedRestaurantId,
-      name: '김밥 (1줄)',
-      description: '참기름 향 가득한 참치김밥. 야채·참치·계란 구성',
-      price: 4000,
-      category: MenuCategory.snack,
-    ),
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000010',
-      restaurantId: _seedRestaurantId,
-      name: '순대볶음',
-      description: '당면이 가득한 순대를 매콤하게 볶은 메뉴',
-      price: 8000,
-      category: MenuCategory.snack,
-      isSoldOut: true, // 오늘 품절 예시
-    ),
-
-    // ── 음료 ────────────────────────────────────────────
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000011',
-      restaurantId: _seedRestaurantId,
-      name: '아이스 아메리카노',
-      description: '깔끔한 에스프레소에 얼음을 가득 넣은 아이스 커피',
-      price: 2500,
-      category: MenuCategory.drink,
-    ),
-    MenuItem(
-      id: 'aaaaaaaa-0000-4000-8000-000000000012',
-      restaurantId: _seedRestaurantId,
-      name: '식혜',
-      description: '전통 발효 음료. 달달하고 시원한 맛',
-      price: 2000,
-      category: MenuCategory.drink,
-    ),
-  ];
+  // ── 메뉴 상태 ────────────────────────────────────────────
+  // null = 아직 로딩 중, [] = 빈 응답(메뉴 없음), [..] = 정상 응답
+  List<MenuItem>? _menuItems;
+  bool _isLoading = true;
+  String? _loadError;
 
   // ── 현재 카테고리에 맞게 필터링된 메뉴 목록 ─────────────
   // getter: 탭 선택 때마다 재계산
   List<MenuItem> get _filteredMenuItems {
-    if (_selectedCategory == MenuCategory.all) return _mockMenuItems;
-    return _mockMenuItems
+    final items = _menuItems ?? const <MenuItem>[];
+    if (_selectedCategory == MenuCategory.all) return items;
+    return items
         .where((item) => item.category == _selectedCategory)
         .toList();
   }
@@ -224,10 +115,94 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
       });
     });
 
-    // 디버그 토스트: 현재 화면 CU 번호 표시 (릴리즈 빌드에서 자동 비활성)
+    // 첫 프레임 이후 토스트 + 메뉴 로딩 시작
     WidgetsBinding.instance.addPostFrameCallback((_) {
       DebugToast.show(context, 'CU-16');
+      _loadMenus();
     });
+  }
+
+  // ── 메뉴 목록 로딩 ──────────────────────────────────────
+  // 백엔드의 GET /api/restaurants/:id/menus 를 호출해서
+  // 현재 진입한 식당의 실제 메뉴를 받아옵니다.
+  // - JWT 없으면 로그인 안내 상태로 종료
+  // - 응답 카테고리 문자열을 MenuCategory enum 으로 매핑
+  Future<void> _loadMenus() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null || token.isEmpty) {
+      if (!mounted) return;
+      setState(() {
+        _isLoading = false;
+        _loadError = '로그인 정보가 없어 메뉴를 불러올 수 없어요.';
+      });
+      return;
+    }
+
+    final dtoList = await _restaurantsApi.getMenus(
+      accessToken: token,
+      restaurantId: widget.restaurantId,
+    );
+
+    if (!mounted) return;
+
+    // DTO → 화면용 MenuItem 모델 변환
+    // - 백엔드 category 문자열을 enum 으로 매핑
+    // - description 누락 시 빈 문자열로 폴백
+    final mapped = dtoList
+        .map((dto) => MenuItem(
+              id: dto.id,
+              restaurantId: widget.restaurantId,
+              name: dto.name,
+              description: dto.description ?? '',
+              price: dto.price,
+              category: _mapCategory(dto.category),
+              imageUrl: dto.imageUrl,
+            ))
+        .toList();
+
+    setState(() {
+      _menuItems = mapped;
+      _isLoading = false;
+      _loadError = null;
+    });
+  }
+
+  // ── 백엔드 카테고리 문자열 → MenuCategory enum 매핑 ─────
+  // 백엔드에서 어떤 키워드로 카테고리를 내려주는지에 따라
+  // 적절한 enum 으로 변환. 매칭 안 되면 "전체" 로 표시되지 않게
+  // recommended(추천) 로 떨어뜨려 사용자에게는 보이도록 한다.
+  //
+  // 매핑 규칙(우리 시드/팀 네이밍 컨벤션 기준):
+  //   "추천" / "recommended"  → MenuCategory.recommended
+  //   "밥" 또는 "정식" 포함     → MenuCategory.rice
+  //   "면" 또는 "국수" 포함     → MenuCategory.noodle
+  //   "분식"                    → MenuCategory.snack
+  //   "음료" / "디저트"         → MenuCategory.drink
+  //   그 외 / null              → MenuCategory.recommended (보이게)
+  MenuCategory _mapCategory(String? raw) {
+    if (raw == null || raw.isEmpty) return MenuCategory.recommended;
+    final lower = raw.toLowerCase();
+
+    if (raw.contains('추천') || lower.contains('recommend')) {
+      return MenuCategory.recommended;
+    }
+    if (raw.contains('밥') || raw.contains('정식') || lower.contains('rice')) {
+      return MenuCategory.rice;
+    }
+    if (raw.contains('면') || raw.contains('국수') || lower.contains('noodle')) {
+      return MenuCategory.noodle;
+    }
+    if (raw.contains('분식') || lower.contains('snack')) {
+      return MenuCategory.snack;
+    }
+    if (raw.contains('음료') ||
+        raw.contains('디저트') ||
+        lower.contains('drink') ||
+        lower.contains('beverage')) {
+      return MenuCategory.drink;
+    }
+    // 알 수 없는 카테고리는 일단 "추천" 탭에 묶어 노출 (전체 탭에서도 보임)
+    return MenuCategory.recommended;
   }
 
   // ── 생명주기: TabController 메모리 해제 ─────────────────
@@ -254,13 +229,13 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
       // ── 상단 앱바 + 카테고리 탭바 ─────────────────────────
       appBar: _buildAppBarWithTabs(),
 
-      // ── 본문: 카테고리별 메뉴 목록 ─────────────────────────
+      // ── 본문: 로딩 / 에러 / 빈 상태 / 카테고리별 메뉴 목록 ─
       body: Column(
         children: [
 
           // 메뉴 목록 (Expanded로 남은 공간 모두 차지)
           Expanded(
-            child: _buildMenuList(cartItems),
+            child: _buildBody(cartItems),
           ),
 
           // ── 하단 장바구니 요약 바 ─────────────────────────
@@ -272,9 +247,50 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     );
   }
 
+  // ── 본문 분기 위젯 ──────────────────────────────────────
+  // 로딩 / 에러 / 빈 / 정상 4가지 상태 처리
+  Widget _buildBody(List<CartItem> cartItems) {
+    if (_isLoading) {
+      return const Center(child: CircularProgressIndicator());
+    }
+    if (_loadError != null) {
+      return Center(
+        child: Padding(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          child: Text(
+            _loadError!,
+            textAlign: TextAlign.center,
+            style: AppTextStyles.bodyMedium.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ),
+      );
+    }
+    final allItems = _menuItems ?? const <MenuItem>[];
+    if (allItems.isEmpty) {
+      // 식당 자체에 메뉴가 1개도 없는 경우 (등록 전 식당 등)
+      // 빈 상태 — 사장님 메뉴 등록 대기 안내, 친근한 톤
+      return Center(
+        child: Text(
+          '메뉴는 사장님이 곧 올려주실 거예요',
+          style: AppTextStyles.bodyMedium.copyWith(
+            color: AppColors.textSecondary,
+          ),
+        ),
+      );
+    }
+    return _buildMenuList(cartItems);
+  }
+
   // ── 앱바 + 탭바 위젯 ────────────────────────────────────
   // PreferredSizeWidget을 반환해야 Scaffold의 appBar에 사용 가능
   PreferredSizeWidget _buildAppBarWithTabs() {
+    // 메뉴 개수: 로딩 중이면 "..." 로 표시
+    final countLabel = _isLoading
+        ? '메뉴 불러오는 중...'
+        : '메뉴 ${(_menuItems ?? const []).length}개';
+
     return AppBar(
       // 뒤로가기 버튼 자동 추가 (이전 화면으로 돌아갈 수 있음)
       leading: const BackButton(),
@@ -288,7 +304,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
           ),
           // 메뉴 개수 안내
           Text(
-            '메뉴 ${_mockMenuItems.length}개',
+            countLabel,
             style: AppTextStyles.caption.copyWith(
               color: AppColors.textSecondary,
             ),
@@ -328,11 +344,12 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
   Widget _buildMenuList(List<CartItem> cartItems) {
     final items = _filteredMenuItems;
 
-    // 해당 카테고리에 메뉴가 없을 때
+    // 해당 카테고리에 메뉴가 없을 때 (전체 식당에는 메뉴 있지만 탭 필터로 0개)
     if (items.isEmpty) {
+      // 빈 상태 — 다른 탭에는 있을 수 있다는 점을 안내해 다음 액션 유도
       return Center(
         child: Text(
-          '해당 카테고리에 메뉴가 없어요',
+          '이 카테고리는 비어있어요. 다른 탭을 둘러보세요',
           style: AppTextStyles.bodyMedium.copyWith(
             color: AppColors.textSecondary,
           ),
@@ -372,7 +389,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
         children: [
 
           // ── 메뉴 이미지 영역 ─────────────────────────────
-          // TODO: API 연동 시 (안태환 씨) — item.imageUrl이 있으면 Image.network로 교체
+          // item.imageUrl 이 있으면 Image.network, 없으면 음식 아이콘
           Container(
             width: 88,
             height: 88,
@@ -630,8 +647,9 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
           // ── "주문하기" 버튼 ───────────────────────────────
           // CU-17 주문 검토 화면으로 이동 → CU-18/19 토스 결제로 이어짐
           //
-          // sessionId 는 seed-test-data.ts 로 생성한 고정 UUID 사용.
-          // (실제 세션 흐름 연결 시 sessionProvider 에서 읽어오도록 교체)
+          // sessionId 는 아직 점심 세션 흐름과 직접 연결되어 있지 않아
+          // seed-test-data.ts 의 고정 UUID 를 사용합니다.
+          // TODO: sessionProvider 에 currentSessionId 가 들어오면 그걸 사용.
           AppPrimaryButton(
             label: '주문하기 ($formattedTotal)',
             onPressed: () {

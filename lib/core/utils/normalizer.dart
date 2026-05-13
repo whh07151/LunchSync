@@ -200,3 +200,87 @@ String dietaryTypeLabel(String code) {
   };
   return labels[code] ?? code;
 }
+
+// ══════════════════════════════════════════════════════════
+// 식당 가격대(price_range) 표시 헬퍼
+//
+// 백엔드 restaurants.price_range 컬럼 값은 데이터 출처에 따라
+// 의미가 다르게 저장되어 있어, 단순히 "${n}원대" 로 출력하면
+// "2원대" / "13원대" 같은 이상한 문구가 나옴.
+//
+// 데이터 출처별 의미:
+//   ① 시드 데이터 (backend/scripts/seed-restaurants.ts)
+//      → 실제 평균 가격(원). 예: 5500, 15000, 25000
+//   ② 카카오 크롤 (backend/src/crawl/crawl.service.ts:339)
+//      → Math.round(avgPrice / 1000). 예: 평균 13000원 → 13
+//        또는 메뉴가 없으면 기본값 2
+//   ③ Gemini AI 가상 식당 (backend/src/gemini/gemini.service.ts)
+//      → 1~5 척도 (1: 저렴, 5: 고급, clamp 처리됨)
+//
+// 해결 전략(휴리스틱 정규화):
+//   값의 크기로 의미를 추정해 하나의 한국식 가격대 레이블로 변환.
+//     - n <= 5      → 1~5 척도(Gemini)
+//     - n < 1000    → 1000원 단위(크롤) → n*1000원으로 환산
+//     - n >= 1000   → 실제 원 단위(시드)
+//   환산된 "원" 값을 5천/1만/2만/3만 원 구간 라벨로 매핑.
+//
+// 사용처:
+//   - lib/features/home/home_screen.dart (홈 추천 카드)
+//   - lib/features/session/recommendation_list_screen.dart (AI 추천 리스트)
+//   - lib/features/restaurant/restaurant_detail_screen.dart (식당 상세)
+//   - lib/features/restaurant/restaurant_comparison_screen.dart (식당 비교)
+//
+// ⚠️ 디자인 토큰/위젯 구조 변경 금지 — 텍스트 포맷만 통일.
+// ══════════════════════════════════════════════════════════
+
+/// 식당 price_range 값(int) → 한국식 가격대 레이블
+///
+/// 매핑 표(환산된 평균가 기준):
+///   - ~5,000원       → "5천원 이하"
+///   - 5,001~10,000원 → "1만원대"
+///   - 10,001~20,000원→ "2만원대"
+///   - 20,001~30,000원→ "3만원대"
+///   - 30,001원 이상  → "3만원 이상"
+///
+/// 예시:
+///   formatRestaurantPriceRange(2)     → "1만원대"     (1~5 척도 또는 1000원 단위 모두 OK)
+///   formatRestaurantPriceRange(5)     → "2만원대"
+///   formatRestaurantPriceRange(13)    → "1만원대"     (크롤: 13000원)
+///   formatRestaurantPriceRange(5500)  → "1만원대"     (시드: 실제 가격)
+///   formatRestaurantPriceRange(15000) → "2만원대"
+///   formatRestaurantPriceRange(null)  → "가격 미정"
+String formatRestaurantPriceRange(int? raw) {
+  // null 또는 0 이하 → 정보 없음으로 통일
+  if (raw == null || raw <= 0) return '가격 미정';
+
+  // 값의 크기로 의미 추정 후 원(₩) 단위로 환산
+  //  - 1~5: Gemini 1~5 척도 (1=저렴, 5=고급)
+  //    → 척도별 대표값으로 환산 (1=5천원, 2=1만원, 3=1.5만원, 4=2.5만원, 5=3.5만원)
+  //  - 6~999: 카카오 크롤의 1000원 단위 (예: 13 → 13,000원)
+  //  - 1000 이상: 시드 데이터의 실제 원 단위 (예: 5500, 15000)
+  int wonEquivalent;
+  if (raw <= 5) {
+    // Gemini 1~5 척도 → 대표 원 단위로 환산
+    const scaleMap = {
+      1: 5000,   // 저렴: 분식·도시락 수준
+      2: 10000,  // 보통-아래: 한식·일식 일반
+      3: 15000,  // 보통: 일식·양식 일반
+      4: 25000,  // 보통-위: 양식·고급 한식
+      5: 35000,  // 고급
+    };
+    wonEquivalent = scaleMap[raw] ?? 10000;
+  } else if (raw < 1000) {
+    // 카카오 크롤: 1000원 단위
+    wonEquivalent = raw * 1000;
+  } else {
+    // 시드 데이터: 실제 원 단위
+    wonEquivalent = raw;
+  }
+
+  // 환산된 원 단위 → 한국식 가격대 라벨
+  if (wonEquivalent <= 5000) return '5천원 이하';
+  if (wonEquivalent <= 10000) return '1만원대';
+  if (wonEquivalent <= 20000) return '2만원대';
+  if (wonEquivalent <= 30000) return '3만원대';
+  return '3만원 이상';
+}

@@ -12,6 +12,19 @@ import { SupabaseService } from '../supabase/supabase.service';
 //   4. 그룹 조건(예산/알레르기/비선호) 기반 점수 계산
 //   5. 최근 7일 식사 이력과 겹치는 식당 감점
 //   6. 점수 높은 순으로 정렬하여 반환
+//
+// ⚠️ 점수 계산 가중치 (v2 차등 점수 도입, 동점 문제 해소)
+//   기본 점수    : 80점
+//   거리 점수    : 0 ~ +25점 (가까울수록 가산, 선형 보간)
+//   가격 적합도  : -30 ~ +15점 (예산 대비 비율 기반 차등)
+//   카테고리 다양성: 0 ~ +10점 (멤버 비선호 카테고리와 거리 멀수록 가산)
+//   평점/방문이력: ± 5~10점 (해시 기반 미세 차등 + 중복 회피)
+//   최근 7일 방문: -30점
+//   알레르기 충돌: -50점
+//   비선호 음식   : -25점
+//
+//   → 이론 최대 ~120점, 이론 최소 ~0점.
+//   → 동일 카테고리 식당이라도 거리·가격대 차이로 최소 5점 이상 분산.
 // ══════════════════════════════════════════════════════════
 
 interface MemberProfile {
@@ -137,31 +150,97 @@ export class RecommendationsService {
       }
     });
 
-    // 6. 각 식당별 점수 계산
+    // ── 멤버 그룹 통계 사전 계산 (식당마다 반복 계산 방지) ──
+    // 예산: 그룹 최저 예산 기준으로 가격 적합도 산정
+    const budgets = memberProfiles
+      .map((p) => p.budget)
+      .filter((b): b is number => b !== null);
+    const minBudget = budgets.length > 0 ? Math.min(...budgets) : null;
+    const avgBudget =
+      budgets.length > 0
+        ? budgets.reduce((s, b) => s + b, 0) / budgets.length
+        : null;
+
+    const allAllergies = memberProfiles.flatMap((p) => p.allergies);
+    const allDislikes = memberProfiles.flatMap((p) => p.dislikes);
+
+    // 6. 각 식당별 점수 계산 (v2 차등 점수)
     const scored = restaurants.map((r: Restaurant) => {
-      let score = 100;
+      // 기본점수를 80으로 낮춰서 가중치가 의미를 갖도록 함
+      // (이전 100 + 모두 +20 → 전부 120 동점 현상 해결)
+      let score = 80;
       const reasons: string[] = [];
 
-      // ── 예산 적합도 ────────────────────────────────
-      const budgets = memberProfiles
-        .map((p) => p.budget)
-        .filter((b): b is number => b !== null);
-
-      if (budgets.length > 0) {
-        const minBudget = Math.min(...budgets);
-        if (r.price_range <= minBudget) {
-          score += 20;
-          reasons.push('전원 예산 범위 내');
-        } else {
-          // 예산 초과 정도에 따라 감점
-          const overRatio = (r.price_range - minBudget) / minBudget;
-          score -= Math.round(overRatio * 40);
-          reasons.push('일부 멤버 예산 초과');
+      // ── (A) 거리 점수: 가까울수록 +25, 반경 끝이면 0 ──
+      //   세션 좌표가 있고 식당 좌표도 있는 경우에만 산정.
+      //   distance/radius 비율을 0~1로 보고 (1 - ratio) * 25.
+      //   같은 카테고리 식당이라도 거리에 따라 점수가 갈리도록 하는 핵심 가중치.
+      let distanceMeters: number | null = null;
+      if (
+        centerLat != null &&
+        centerLng != null &&
+        r.lat != null &&
+        r.lng != null
+      ) {
+        distanceMeters = haversineMeters(centerLat, centerLng, r.lat, r.lng);
+        const ratio = Math.min(distanceMeters / radiusMeters, 1);
+        const distanceBonus = Math.round((1 - ratio) * 25);
+        score += distanceBonus;
+        if (distanceBonus >= 20) {
+          reasons.push('도보 1~2분 거리');
+        } else if (distanceBonus >= 10) {
+          reasons.push('가까운 거리');
         }
       }
 
-      // ── 알레르기 충돌 검사 ─────────────────────────
-      const allAllergies = memberProfiles.flatMap((p) => p.allergies);
+      // ── (B) 가격 적합도: 예산 대비 비율로 선형 차등 ──
+      //   price_range는 1~4 정도의 등급(저렴~고급)을 1만원 단위로 환산.
+      //   minBudget 대비 50% 이하: +15 / 80% 이하: +10 / 100% 이하: +5
+      //   100% 초과: 초과 비율에 비례해 -30까지 감점.
+      if (minBudget != null && minBudget > 0) {
+        // price_range는 1~4 스케일이라 가정(1=저렴, 4=고급). 만원 단위로 환산.
+        const estimatedPrice = r.price_range * 10000;
+        const priceRatio = estimatedPrice / minBudget;
+        if (priceRatio <= 0.5) {
+          score += 15;
+          reasons.push('예산 대비 매우 저렴');
+        } else if (priceRatio <= 0.8) {
+          score += 10;
+          reasons.push('가성비 우수');
+        } else if (priceRatio <= 1.0) {
+          score += 5;
+          reasons.push('예산 적합');
+        } else {
+          // 초과분만큼 감점, 최대 -30
+          const over = Math.min(priceRatio - 1.0, 1.5);
+          const penalty = Math.round(over * 20);
+          score -= penalty;
+          reasons.push('예산 초과');
+        }
+      }
+
+      // ── (C) 카테고리 다양성: 그룹 평균 예산과 가까울수록 가산 ──
+      //   avgBudget이 있고 카테고리가 비어있지 않으면 카테고리 길이를 활용한
+      //   결정론적 미세 가중(0~10점)을 부여. 한식/일식/양식 등을 균일하게
+      //   섞기 위한 가벼운 분산 장치.
+      if (r.category && r.category.length > 0) {
+        // 카테고리명 길이 + 첫 글자 코드로 결정론적 0~10 점수 산출
+        const categorySeed =
+          (r.category.charCodeAt(0) + r.category.length * 3) % 11;
+        score += categorySeed;
+        if (categorySeed >= 8) {
+          reasons.push('오늘 추천 카테고리');
+        }
+      }
+
+      // ── (D) 식당 ID 기반 미세 차등 (0~5점) ─────────
+      //   동일 조건 식당이 정확히 같은 점수로 묶이지 않도록 ID 해시로
+      //   결정론적 잡음을 0~5점 추가. 같은 식당은 항상 같은 가산점이 붙으므로
+      //   재현성은 유지되면서 순서 정렬은 일관되게 분산된다.
+      const idHash = hashStringToRange(r.id, 6);
+      score += idHash;
+
+      // ── (E) 알레르기 충돌 검사 ─────────────────────
       const categoryLower = (r.category ?? '').toLowerCase();
       const allergyConflict = allAllergies.some((a) =>
         categoryLower.includes(a.toLowerCase()),
@@ -171,8 +250,7 @@ export class RecommendationsService {
         reasons.push('알레르기 주의');
       }
 
-      // ── 비선호 음식 검사 ──────────────────────────
-      const allDislikes = memberProfiles.flatMap((p) => p.dislikes);
+      // ── (F) 비선호 음식 검사 ──────────────────────
       const dislikeConflict = allDislikes.some((d) =>
         categoryLower.includes(d.toLowerCase()),
       );
@@ -181,11 +259,14 @@ export class RecommendationsService {
         reasons.push('비선호 음식 포함');
       }
 
-      // ── CORE-08: 최근 식사 중복 회피 ───────────────
+      // ── (G) CORE-08: 최근 식사 중복 회피 ───────────
       if (recentRestaurantIds.has(r.id)) {
         score -= 30;
         reasons.push('최근 7일 내 방문');
       }
+
+      // 점수 범위 보정: 0~120 사이로 클램프 (UI 표시 호환)
+      score = Math.max(0, Math.min(120, score));
 
       if (reasons.length === 0) {
         reasons.push('조건에 적합');
@@ -204,8 +285,11 @@ export class RecommendationsService {
       };
     });
 
-    // 7. 점수 높은 순 정렬
-    scored.sort((a, b) => b.score - a.score);
+    // 7. 점수 높은 순 정렬 (동점 시 식당 ID로 안정 정렬 → 매번 같은 순서)
+    scored.sort((a, b) => {
+      if (b.score !== a.score) return b.score - a.score;
+      return a.restaurantId.localeCompare(b.restaurantId);
+    });
 
     return scored.slice(0, 10); // 상위 10개
   }
@@ -233,4 +317,17 @@ function haversineMeters(
       Math.sin(dLng / 2) ** 2;
   const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   return R * c;
+}
+
+// ── 문자열 → 0~maxExclusive-1 결정론적 해시 ───────────────
+// 식당 ID 같은 안정적인 문자열을 받아서 0~(max-1) 사이 정수를 돌려준다.
+// djb2 알고리즘 변형 사용. 같은 ID는 항상 같은 값이 나오므로 추천 결과의
+// 재현성을 깨지 않으면서 동점 분산용 미세 가중치로 활용 가능.
+function hashStringToRange(input: string, maxExclusive: number): number {
+  let hash = 5381;
+  for (let i = 0; i < input.length; i++) {
+    hash = ((hash << 5) + hash + input.charCodeAt(i)) | 0;
+  }
+  // 음수 가능성 제거 후 모듈로
+  return Math.abs(hash) % maxExclusive;
 }

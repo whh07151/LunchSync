@@ -131,6 +131,24 @@ class SessionsApiService {
     required String sessionId,
     required String status,
   }) async {
+    final result = await updateSessionStatusDetailed(
+      accessToken: accessToken,
+      sessionId: sessionId,
+      status: status,
+    );
+    return result.isSuccess;
+  }
+
+  // ── PATCH /api/sessions/:id/status (상세 응답) ─────────
+  // 2026-05-13 추가: 단순 bool 만으로는 "왜 실패했는지" 알 수 없어
+  // 호스트가 아닌 사용자에게도 "호스트만 시작할 수 있어요" 가 떠서 진단이 어려웠음.
+  // 백엔드가 던지는 401/403/400/404 를 상태코드/메시지로 그대로 전달해
+  // UI 가 정확한 안내(재로그인/상태 오류/세션 없음 등) 를 보여줄 수 있게 함.
+  Future<SessionStatusUpdateResult> updateSessionStatusDetailed({
+    required String accessToken,
+    required String sessionId,
+    required String status,
+  }) async {
     try {
       final response = await http
           .patch(
@@ -140,9 +158,59 @@ class SessionsApiService {
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
-      return response.statusCode == 200 || response.statusCode == 201;
-    } catch (_) {
-      return false;
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        return const SessionStatusUpdateResult.success();
+      }
+
+      // 백엔드 에러 메시지 추출 (NestJS 표준 응답 구조)
+      String message;
+      switch (response.statusCode) {
+        case 401:
+          // 친근한 안내 + 정확한 사유(로그인 만료) 유지
+          message = '로그인이 풀렸어요. 다시 로그인하고 시도해봐요';
+          break;
+        case 403:
+          // 권한 부족 — 누가 가능한지 + 다음 액션(방장에게 부탁) 안내
+          message = '방장만 투표를 시작할 수 있어요. 방장에게 부탁해봐요!';
+          break;
+        case 404:
+          // 세션 자체가 사라진 경우 — 새로고침이라는 다음 액션 유도
+          message = '세션이 사라졌어요. 화면을 새로고침해봐요';
+          break;
+        case 400:
+          // 상태 전이 불가 — 가장 흔한 원인(이미 진행 중)을 함께 안내
+          message = '지금은 투표를 시작할 수 없어요. 이미 진행 중인지 확인해봐요';
+          break;
+        default:
+          message = '투표 시작이 안 됐어요. 잠시 후 다시 시도해봐요';
+      }
+      // 백엔드가 더 구체적인 message 를 내려주면 그걸 우선 사용
+      try {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final raw = json['message'];
+        if (raw is String && raw.isNotEmpty) {
+          message = raw;
+        } else if (raw is List && raw.isNotEmpty) {
+          message = raw.first.toString();
+        }
+      } catch (_) {}
+
+      debugPrint(
+        '[SessionsApiService] updateSessionStatus 실패: '
+        '${response.statusCode} body=${response.body}',
+      );
+      return SessionStatusUpdateResult.failure(
+        statusCode: response.statusCode,
+        message: message,
+      );
+    } catch (e) {
+      debugPrint('[SessionsApiService] updateSessionStatus 예외: $e');
+      // 네트워크 오류 — 인터넷 점검이라는 다음 액션 안내
+      return const SessionStatusUpdateResult.failure(
+        statusCode: 0,
+        message: '서버에 닿지 못했어요. 인터넷 연결을 확인해봐요',
+      );
     }
   }
 
@@ -216,4 +284,28 @@ class SessionsApiService {
       return false;
     }
   }
+}
+
+
+// ══════════════════════════════════════════════════════════
+// SessionStatusUpdateResult — updateSessionStatusDetailed() 응답 래퍼
+//
+// 단순 bool 반환은 "왜 실패했는지" 를 호출부가 알 수 없어 사용자에게
+// 잘못된 안내가 나가는 문제(예: 인증 만료인데 "호스트가 아니에요" 토스트)
+// 의 원인이 됐다. 이 래퍼는 statusCode + 사람용 메시지를 함께 전달.
+// ══════════════════════════════════════════════════════════
+class SessionStatusUpdateResult {
+  const SessionStatusUpdateResult.success()
+      : isSuccess = true,
+        statusCode = 200,
+        message = null;
+
+  const SessionStatusUpdateResult.failure({
+    required this.statusCode,
+    required this.message,
+  }) : isSuccess = false;
+
+  final bool isSuccess;
+  final int statusCode; // 0 = 네트워크/예외, 그 외 = HTTP 상태코드
+  final String? message; // UI 토스트에 그대로 표시할 한국어 메시지
 }

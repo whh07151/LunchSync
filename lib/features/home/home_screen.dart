@@ -6,6 +6,8 @@ import 'package:geolocator/geolocator.dart';
 import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../../core/utils/normalizer.dart';
+import '../../core/utils/distance_calculator.dart';
 import '../session/member_select_screen.dart';
 import '../session/session_create_screen.dart';
 import '../session/join_session_screen.dart';
@@ -86,6 +88,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   static const _kCrawlCooldown   = Duration(minutes: 5);   // 동일 위치라도 5분 대기
   static const _kCrawlRadiusM    = 1000;                   // 크롤 반경(미터)
   static const _kCrawlMoveFilter = 500;                    // 재크롤 기준 이동 거리(미터)
+
+  // ── 사용자 현재 위치(거리 표시용) ──────────────────────
+  // 자동 크롤 스트림에서 받은 좌표를 그대로 재사용 — Geolocator 권한이 없거나
+  // 위치 서비스가 꺼져 있으면 영구히 null. 식당 카드의 "거리" 라인은
+  // null 인 동안 자체적으로 숨겨진다(distanceLabel 이 null 반환).
+  double? _userLat;
+  double? _userLng;
 
   // ── 생명주기: 화면이 처음 만들어질 때 ──────────────────
   @override
@@ -191,7 +200,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // 1) 진입 시 1회 스냅샷 기반 크롤링
     () async {
       final pos = await const GeolocationService().getCurrentPosition();
-      if (pos != null) await _triggerCrawlIfCooled(pos);
+      if (pos != null) {
+        _updateUserCoord(pos);            // 거리 표기용 좌표 갱신
+        await _triggerCrawlIfCooled(pos);
+      }
     }();
 
     // 2) 이동 감지 스트림 구독 — 500m 이상 이동 시에만 이벤트 발행
@@ -199,6 +211,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         .positionStream(distanceFilterMeters: _kCrawlMoveFilter)
         .listen(
           (pos) {
+            _updateUserCoord(pos);  // 이동 시마다 거리 표기용 좌표도 갱신
             // async 함수를 await 없이 호출해 스트림 콜백은 즉시 반환
             _triggerCrawlIfCooled(pos);
           },
@@ -206,6 +219,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             // 스트림 에러는 GeolocationService에서 이미 로깅됨 — UI 무시
           },
         );
+  }
+
+  // ── 거리 표기용 사용자 좌표 갱신 ───────────────────────
+  // 자동 크롤 흐름과 별도로 카드 거리 라인에 사용. setState 로 식당 카드
+  // 리빌드하여 "거리 320m" 같은 한 줄이 자동 업데이트되도록 한다.
+  void _updateUserCoord(Position pos) {
+    if (!mounted) return;
+    // 위/경도가 동일하면 굳이 setState 안 함 — 불필요한 리빌드 방지.
+    if (_userLat == pos.latitude && _userLng == pos.longitude) return;
+    setState(() {
+      _userLat = pos.latitude;
+      _userLng = pos.longitude;
+    });
   }
 
   // ── 쿨다운 통과 시에만 크롤링 API 호출 ──────────────────
@@ -670,14 +696,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Text(
-              '오늘 예정된 세션이 없어요',
+              // 빈 상태 카피 — 친근한 인사로 다음 행동 자연 유도 (Toss/카카오뱅크 톤)
+              '오늘 점심 뭐 드실래요?',
               style: AppTextStyles.bodyMedium.copyWith(
                 fontWeight: FontWeight.w600,
               ),
             ),
             const SizedBox(height: 4),
             Text(
-              '점심 세션을 만들어 친구를 초대해보세요',
+              // 다음 액션 안내 — "함께"라는 단어로 협업 느낌 강조
+              '동료를 초대해 점심을 함께 정해봐요',
               style: AppTextStyles.bodySmall.copyWith(
                 color: AppColors.textSecondary,
               ),
@@ -839,7 +867,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           itemCount: 3,
           separatorBuilder: (_, _) =>
               const SizedBox(width: AppSpacing.sm + 4),
-          itemBuilder: (_, _) => _buildRestaurantSkeleton(),
+          // 회색 박스 스켈레톤 카드 — 데이터 로드 완료 시 실제 카드로 자동 교체.
+          // 위젯 정의는 lib/core/widgets/skeleton_card.dart (재사용 위해 분리).
+          itemBuilder: (_, _) => const RestaurantSkeletonCard(),
         ),
       );
     }
@@ -923,61 +953,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
-  // ── 식당 카드 스켈레톤 (로딩 표시용) ────────────────────
-  // 실제 카드와 같은 너비/높이로 페이지 점프 방지.
-  Widget _buildRestaurantSkeleton() {
-    return Container(
-      padding: const EdgeInsets.all(AppSpacing.sm + 4),
-      decoration: BoxDecoration(
-        color: AppColors.surface,
-        borderRadius: BorderRadius.circular(AppRadius.card),
-        border: Border.all(color: AppColors.border),
-      ),
-      child: SizedBox(
-        width: 150,
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Container(
-              height: 72,
-              decoration: BoxDecoration(
-                color: AppColors.backgroundGrey,
-                borderRadius: BorderRadius.circular(AppRadius.small),
-              ),
-            ),
-            const SizedBox(height: AppSpacing.sm),
-            _skeletonBar(width: 110, height: 12),
-            const SizedBox(height: 6),
-            _skeletonBar(width: 70, height: 10),
-            const Spacer(),
-            _skeletonBar(width: 50, height: 12),
-          ],
-        ),
-      ),
-    );
-  }
+  // 식당 카드 스켈레톤은 lib/core/widgets/skeleton_card.dart 의
+  // RestaurantSkeletonCard 로 분리 — 추천 리스트 등 다른 화면에서도 재사용 예정.
 
-  Widget _skeletonBar({required double width, required double height}) {
-    return Container(
-      width: width,
-      height: height,
-      decoration: BoxDecoration(
-        color: AppColors.backgroundGrey,
-        borderRadius: BorderRadius.circular(4),
-      ),
-    );
-  }
-
-  // 식당 카드 위젯 하나 (이름 / 카테고리 / 가격)
-  // RestaurantDto는 priceRange(int) / address / lat / lng만 제공.
-  // rating, 거리, 리뷰 수는 백엔드에 아직 없어서 카드 레이아웃 간소화.
+  // 식당 카드 위젯 하나 (이름 / 카테고리 / 가격 / 거리)
+  // RestaurantDto는 priceRange(int) / address / lat / lng를 제공.
+  // 거리(distance)는 사용자 위치(_userLat/_userLng) 가 있을 때만 한 줄 추가.
+  // rating, 리뷰 수는 백엔드에 아직 없어서 카드 레이아웃 간소화.
   Widget _buildRestaurantCard(RestaurantDto restaurant) {
     final primary = Theme.of(context).colorScheme.primary;
 
-    // 가격 레이블: 정수면 "X,XXX원~", null이면 "가격 미정"
-    final priceLabel = restaurant.priceRange != null
-        ? '${_formatWithComma(restaurant.priceRange!)}원~'
-        : '가격 미정';
+    // 가격 레이블은 공통 헬퍼로 통일.
+    // price_range 값이 시드/크롤/Gemini 출처별로 의미가 달라
+    // ("5500원" vs "13" vs "2") 단순 출력 시 "13원~", "2원~" 같은
+    // 부자연스러운 문구가 보여 정규화 헬퍼로 통일했음.
+    final priceLabel = formatRestaurantPriceRange(restaurant.priceRange);
+
+    // 거리 라벨 — 사용자 위치/식당 좌표 둘 중 하나라도 없으면 null.
+    // null이면 거리 줄을 그리지 않음(디자인 유지: 새 줄을 "추가" 만 함).
+    final distance = distanceLabel(
+      userLat: _userLat,
+      userLng: _userLng,
+      targetLat: restaurant.lat,
+      targetLng: restaurant.lng,
+    );
 
     return AppCard(
       // 식당 카드 탭 → CU-13 식당 상세 화면으로 이동
@@ -1044,23 +1043,27 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 color: AppColors.textPrimary,
               ),
             ),
+
+            // ── 거리(distance) ───────────────────────────
+            // 사용자 위치/식당 좌표 둘 다 있을 때만 한 줄 추가.
+            // 디자인 토큰 변경 없이 caption + textSecondary 색만 사용.
+            if (distance != null) ...[
+              const SizedBox(height: 2),
+              Text(
+                distance,
+                style: AppTextStyles.caption.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
           ],
         ),
       ),
     );
   }
 
-  // ── 정수 → "12,345" 형태 천단위 콤마 포맷 ──────────────
-  String _formatWithComma(int value) {
-    final s = value.toString();
-    final buffer = StringBuffer();
-    for (int i = 0; i < s.length; i++) {
-      // 오른쪽 끝에서 3자리마다 쉼표 삽입
-      if (i > 0 && (s.length - i) % 3 == 0) buffer.write(',');
-      buffer.write(s[i]);
-    }
-    return buffer.toString();
-  }
+  // 가격대 표기는 normalizer.dart 의 formatRestaurantPriceRange 로 통일.
+  // 홈 카드에서 천단위 콤마 포맷은 더 이상 사용하지 않아 제거했음.
 
   // ── 하단 탭바 위젯 ──────────────────────────────────────────
   // 손님앱 주요 5개 섹션 탭 (홈 / 점심세션 / 주문현황 / 내역 / 내정보)
@@ -1121,7 +1124,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           const SizedBox(height: 4),
           Text(
             sessions.isEmpty
-                ? '오늘 참여 중인 세션이 없어요. 새로 만들거나 코드로 참가해보세요.'
+                // 빈 상태 — 두 가지 다음 액션(만들기/참가)을 자연스럽게 안내
+                ? '아직 비어있어요. 새로 만들거나 초대 코드로 참가해봐요'
                 : '오늘 ${sessions.length}개 세션에 참여 중',
             style: AppTextStyles.bodySmall
                 .copyWith(color: AppColors.textSecondary),
@@ -1190,7 +1194,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   ),
                   const SizedBox(height: AppSpacing.sm),
                   Text(
-                    '오늘 예정된 점심 세션이 없어요',
+                    // 빈 상태 — 위의 액션 버튼(만들기/코드로 참가)을 자연 연결
+                    '오늘 점심, 위 버튼으로 시작해봐요',
                     style: AppTextStyles.bodySmall
                         .copyWith(color: AppColors.textSecondary),
                   ),

@@ -5,6 +5,7 @@ import {
   ConflictException,
   ForbiddenException,
   BadRequestException,
+  UnauthorizedException,
   Logger,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -73,7 +74,26 @@ export class SessionsService {
   // ── 내부 헬퍼: 세션 호스트 검증 ─────────────────────────
   // 권한 검증이 필요한 모든 변이 메서드(상태 변경/멤버 추가 등) 진입점에서 호출.
   // 본인이 호스트가 아니면 403 ForbiddenException.
-  private async assertHost(sessionId: string, userId: string): Promise<void> {
+  //
+  // 2026-05-13 견고화:
+  //   - userId 가 falsy(POS 토큰/잘못된 JWT 등) 면 즉시 401.
+  //     기존엔 undefined !== <uuid> 비교로 무조건 403 이 떴는데, 이게 호스트인
+  //     실사용자가 "호스트만 시작할 수 있어요" 토스트를 보는 핵심 원인이었음.
+  //   - String/trim 으로 비교 — UUID 양끝 공백/대소문자 차이로 인한 오탐 차단.
+  //   - 비교 실패 시 디버그 로그(host vs requester) 로 향후 원인 추적 용이.
+  private async assertHost(
+    sessionId: string,
+    userId: string | undefined,
+  ): Promise<void> {
+    // 0단계: JWT payload 에서 userId 가 빠진 경우(POS 토큰 등) 명확한 401 반환.
+    //   기존 코드는 undefined !== <hostId> 로 무조건 403 을 던졌고, 사용자에겐
+    //   "호스트만 시작할 수 있어요" 메시지가 떠서 진짜 원인(미인증)을 가렸음.
+    if (!userId) {
+      throw new UnauthorizedException(
+        '사용자 인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+    }
+
     const { data, error } = await this.supabase.client
       .from('sessions')
       .select('created_by')
@@ -83,7 +103,19 @@ export class SessionsService {
     if (error || !data) {
       throw new NotFoundException('세션을 찾을 수 없습니다.');
     }
-    if (data.created_by !== userId) {
+
+    // UUID 양끝 공백 등 잠재 이질감 제거 후 비교.
+    // PostgreSQL UUID 컬럼은 일반적으로 정규화된 소문자 string 으로 직렬화되지만
+    // 외부 시드/스크립트가 다른 표기를 박았을 가능성을 방어.
+    const hostId = String(data.created_by ?? '').trim().toLowerCase();
+    const requesterId = String(userId).trim().toLowerCase();
+
+    if (hostId !== requesterId) {
+      // 운영 로그에 host vs requester 노출 — 응답 본문엔 노출 X (보안).
+      this.logger.warn(
+        `[assertHost] 호스트 불일치 session=${sessionId} ` +
+          `host=${hostId || '(empty)'} requester=${requesterId}`,
+      );
       throw new ForbiddenException('세션 호스트만 가능한 작업이에요.');
     }
   }
@@ -93,7 +125,16 @@ export class SessionsService {
   //   create_session_with_host_member RPC 사용 — sessions + session_members
   //   INSERT 가 PostgreSQL 함수 단일 트랜잭션으로 묶임.
   //   중간 실패 시 전체 롤백 → "세션만 남고 호스트 미멤버" 정합성 버그 차단.
-  async createSession(userId: string, dto: CreateSessionDto) {
+  //
+  // 2026-05-13 견고화:
+  //   userId 가 falsy 면 RPC 에 NULL 이 들어가 sessions.created_by NOT NULL 위반.
+  //   사전에 401 로 차단해 의미 없는 INSERT 실패 로그를 줄임.
+  async createSession(userId: string | undefined, dto: CreateSessionDto) {
+    if (!userId) {
+      throw new UnauthorizedException(
+        '사용자 인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+    }
     const { data, error } = await this.supabase.client.rpc(
       'create_session_with_host_member',
       {
@@ -121,7 +162,12 @@ export class SessionsService {
   }
 
   // ── GET /sessions/today ───────────────────────────────
-  async getTodaySessions(userId: string) {
+  async getTodaySessions(userId: string | undefined) {
+    if (!userId) {
+      throw new UnauthorizedException(
+        '사용자 인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+    }
     const today = new Date();
     today.setHours(0, 0, 0, 0);
     const todayISO = today.toISOString();
@@ -220,7 +266,7 @@ export class SessionsService {
   //   2) 상태 전이 매트릭스 검증 (역방향/jumping 거부)
   async updateSessionStatus(
     sessionId: string,
-    requesterId: string,
+    requesterId: string | undefined,
     dto: UpdateSessionStatusDto,
   ) {
     await this.assertHost(sessionId, requesterId);
@@ -297,7 +343,7 @@ export class SessionsService {
   // 보안 패치: 호스트만 멤버 추가 가능 + WAITING 상태에서만
   async addMember(
     sessionId: string,
-    requesterId: string,
+    requesterId: string | undefined,
     dto: AddMemberDto,
   ) {
     await this.assertHost(sessionId, requesterId);
@@ -354,9 +400,14 @@ export class SessionsService {
   //   - 그 외 — 거부
   async removeMember(
     sessionId: string,
-    requesterId: string,
+    requesterId: string | undefined,
     targetUserId: string,
   ) {
+    if (!requesterId) {
+      throw new UnauthorizedException(
+        '사용자 인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+    }
     if (requesterId !== targetUserId) {
       // 타인 제거는 호스트만
       await this.assertHost(sessionId, requesterId);

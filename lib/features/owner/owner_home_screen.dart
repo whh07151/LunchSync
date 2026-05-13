@@ -650,7 +650,8 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
           physics: const AlwaysScrollableScrollPhysics(),
           children: [
             const SizedBox(height: 80),
-            _buildEmptyOrders('아직 들어온 주문이 없어요'),
+            // 빈 상태 — 사장님 대기 화면, 곧 들어올 거라는 기대치 형성
+            _buildEmptyOrders('새 주문을 기다리는 중이에요'),
           ],
         ),
       );

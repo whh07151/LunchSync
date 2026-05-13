@@ -117,11 +117,22 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
   //   2. POST /sessions → Session 객체 반환
   //   3. POST /invitations (초대코드 생성)
   //   4. SessionLobbyScreen(호스트 모드)으로 이동
+  //
+  // 라우팅 누락 버그 방지(2026-05-13 수정):
+  //   - 전체 흐름을 try/catch/finally로 감싸 어떤 단계에서 예외가 나도
+  //     반드시 _isLoading=false 로 복귀하고 사용자에게 안내한다.
+  //   - GPS 조회에 명시적 안전망 타임아웃(8초)을 걸어 웹 권한 팝업에서
+  //     무한 대기하는 케이스를 차단한다(GeolocationService 내부 10초와 별개).
+  //   - 각 단계마다 debugPrint 로그를 남겨 어디서 멈췄는지 콘솔에서
+  //     즉시 진단 가능하도록 한다.
   Future<void> _handleCreate() async {
     if (_isLoading) return;
 
     final token = ref.read(userProvider).accessToken;
-    if (token == null) return;
+    if (token == null) {
+      _showError('로그인이 필요해요. 다시 로그인해주세요.');
+      return;
+    }
 
     // ── 1. 입력값 파싱 ─────────────────────────────────
     final name   = _nameController.text.trim();
@@ -148,70 +159,119 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
     }
 
     setState(() => _isLoading = true);
+    debugPrint('[SessionCreate] 세션 생성 시작 — name=$name, radius=$radius, budget=$budget');
 
-    // ── 3. 세션 생성 API 호출 ─────────────────────────
-    // 호스트의 현재 GPS 좌표를 세션에 함께 저장 — 추천 엔진이 이 좌표를
-    // 기준으로 반경 내 식당만 후보로 추린다. 위치 실패 시 null로 전달하면
-    // 백엔드가 반경 필터를 생략하고 DB 전체 식당을 대상으로 폴백.
-    final hostPos = await _geoService.getCurrentPosition();
-    final session = await _sessionsApi.createSession(
-      accessToken:   token,
-      name:          name,
-      scheduledAt:   scheduledAt,
-      radius:        radius,
-      budget:        budget,
-      returnMinutes: returnMinutes,
-      memo:          memo.isEmpty ? null : memo,
-      lat:           hostPos?.latitude,
-      lng:           hostPos?.longitude,
-    );
+    try {
+      // ── 3. 호스트 GPS 조회 (외부 안전망 타임아웃 적용) ──
+      // 호스트의 현재 GPS 좌표를 세션에 함께 저장 — 추천 엔진이 이 좌표를
+      // 기준으로 반경 내 식당만 후보로 추린다. 위치 실패 시 null로 전달하면
+      // 백엔드가 반경 필터를 생략하고 DB 전체 식당을 대상으로 폴백.
+      //
+      // GeolocationService.getCurrentPosition 내부에 10초 timeLimit이 있지만
+      // 웹 환경에서는 권한 팝업/스트림 이슈로 무한 대기 가능성이 있어
+      // 외부에서 8초 안전망을 한 번 더 걸어준다. 타임아웃 시 null로 폴백.
+      Position? hostPos;
+      try {
+        hostPos = await _geoService
+            .getCurrentPosition()
+            .timeout(const Duration(seconds: 8), onTimeout: () {
+          debugPrint('[SessionCreate] GPS 조회 8초 타임아웃 — null로 폴백');
+          return null;
+        });
+        debugPrint('[SessionCreate] GPS 조회 결과: '
+            '${hostPos == null ? "null(미확보)" : "${hostPos.latitude},${hostPos.longitude}"}');
+      } catch (e) {
+        debugPrint('[SessionCreate] GPS 조회 예외 — null로 폴백: $e');
+        hostPos = null;
+      }
 
-    if (!mounted) return;
+      // ── 4. 세션 생성 API 호출 ─────────────────────────
+      debugPrint('[SessionCreate] POST /sessions 호출');
+      final session = await _sessionsApi.createSession(
+        accessToken:   token,
+        name:          name,
+        scheduledAt:   scheduledAt,
+        radius:        radius,
+        budget:        budget,
+        returnMinutes: returnMinutes,
+        memo:          memo.isEmpty ? null : memo,
+        lat:           hostPos?.latitude,
+        lng:           hostPos?.longitude,
+      );
 
-    if (session == null) {
-      setState(() => _isLoading = false);
-      _showError('세션 생성에 실패했어요. 다시 시도해주세요.');
-      return;
-    }
+      if (!mounted) return;
 
-    // ── 4. 초대코드 생성 ──────────────────────────────
-    final invitation = await _invitationsApi.createInvitation(
-      accessToken: token,
-      sessionId:   session.id,
-    );
+      if (session == null) {
+        debugPrint('[SessionCreate] createSession 응답 null — 실패 처리');
+        _showError('세션을 만들지 못했어요. 잠시 후 다시 시도해봐요');
+        return;
+      }
+      debugPrint('[SessionCreate] 세션 생성 성공: id=${session.id}');
 
-    if (!mounted) return;
+      // ── 5. 초대코드 생성 ──────────────────────────────
+      debugPrint('[SessionCreate] POST /invitations 호출');
+      final invitation = await _invitationsApi.createInvitation(
+        accessToken: token,
+        sessionId:   session.id,
+      );
 
-    if (invitation == null) {
-      setState(() => _isLoading = false);
-      _showError('초대 코드 생성에 실패했어요.');
-      return;
-    }
+      if (!mounted) return;
 
-    // ── 5. 주변 식당 크롤링 트리거 (비동기, 실패해도 흐름에 영향 없음) ──
-    // 호스트의 GPS를 기준으로 반경 내 실제 식당을 DB에 채운다.
-    // 추천 엔진은 이 데이터를 기반으로 점수화.
-    // 결과를 기다리지 않고 fire-and-forget — 로비 진입 후 백그라운드 완료.
-    // 위의 세션 생성 단계에서 이미 얻어둔 hostPos를 재사용해 GPS 중복 조회 방지.
-    _triggerCrawlInBackground(
-      token: token,
-      radiusMeters: radius,
-      hostPos: hostPos,
-    );
+      if (invitation == null) {
+        debugPrint('[SessionCreate] createInvitation 응답 null — 실패 처리');
+        _showError('초대 코드를 만들지 못했어요. 다시 시도해봐요');
+        return;
+      }
+      debugPrint('[SessionCreate] 초대코드 생성 성공: ${invitation.inviteCode}');
 
-    // ── 6. 세션 생성 완료 → sessionProvider 초기화 후 로비 진입 ──
-    // selectedMembers는 이미 역할을 다했으므로 초기화
-    ref.read(sessionProvider.notifier).clearSession();
+      // ── 6. 주변 식당 크롤링 트리거 (비동기, 실패해도 흐름에 영향 없음) ──
+      // 호스트의 GPS를 기준으로 반경 내 실제 식당을 DB에 채운다.
+      // 추천 엔진은 이 데이터를 기반으로 점수화.
+      // 결과를 기다리지 않고 fire-and-forget — 로비 진입 후 백그라운드 완료.
+      // 위의 세션 생성 단계에서 이미 얻어둔 hostPos를 재사용해 GPS 중복 조회 방지.
+      _triggerCrawlInBackground(
+        token: token,
+        radiusMeters: radius,
+        hostPos: hostPos,
+      );
 
-    Navigator.of(context).pushReplacement(
-      MaterialPageRoute(
-        builder: (_) => SessionLobbyScreen(
-          sessionId:      session.id,
-          inviteCode:     invitation.inviteCode,
-          initialSession: session, // 생성 응답을 바로 넘겨 재조회 생략
+      // ── 7. 세션 생성 완료 → sessionProvider 초기화 후 로비 진입 ──
+      // selectedMembers는 이미 역할을 다했으므로 초기화.
+      // clearSession에서 예외가 나도 라우팅은 진행되도록 try로 보호.
+      try {
+        ref.read(sessionProvider.notifier).clearSession();
+      } catch (e) {
+        debugPrint('[SessionCreate] clearSession 예외(무시): $e');
+      }
+
+      if (!mounted) return;
+      debugPrint('[SessionCreate] SessionLobbyScreen으로 라우팅');
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => SessionLobbyScreen(
+            sessionId:      session.id,
+            inviteCode:     invitation.inviteCode,
+            initialSession: session, // 생성 응답을 바로 넘겨 재조회 생략
+          ),
         ),
-      ),
-    );
+      );
+    } catch (e, st) {
+      // ── 예외 안전망 ─────────────────────────────────
+      // API 서비스 내부에서 잡지 못한 예외나 라우팅/Provider 단계의 예외가
+      // 여기로 올라오면 사용자에게 안내하고 로딩 상태를 반드시 해제한다.
+      debugPrint('[SessionCreate] 예기치 못한 예외: $e');
+      debugPrint('[SessionCreate] 스택: $st');
+      if (mounted) {
+        _showError('세션을 만드는 중 문제가 생겼어요. 다시 시도해봐요');
+      }
+    } finally {
+      // ── 로딩 상태 복귀 보장 ────────────────────────
+      // pushReplacement 이후에도 mounted면 setState 호출 가능.
+      // 라우팅 성공 시에는 위젯이 unmount되므로 mounted=false → no-op.
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    }
   }
 
   // ── 주변 식당 크롤링을 백그라운드로 실행 ──────────────

@@ -196,7 +196,8 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
     if (session == null) {
       if (!context.mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('세션 생성에 실패했어요.')),
+        // 친근한 톤 + 다음 액션(재시도) 자연 유도
+        const SnackBar(content: Text('세션을 만들지 못했어요. 잠시 후 다시 시도해봐요')),
       );
       return;
     }
@@ -222,7 +223,8 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
       );
     } else {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('초대 링크 생성에 실패했어요.')),
+        // 친근한 톤 + 다음 액션 안내
+        const SnackBar(content: Text('초대 링크를 만들지 못했어요. 다시 시도해봐요')),
       );
     }
   }

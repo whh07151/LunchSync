@@ -84,14 +84,15 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen> {
         physics: const AlwaysScrollableScrollPhysics(),
         children: [
           const SizedBox(height: AppSpacing.xxl),
+          // 빈 상태 — 두 모드(히스토리/오늘) 모두 다음 액션 유도형 문구로 통일
           AppEmptyState(
             icon: Icons.receipt_long_outlined,
             title: widget.historyMode
-                ? '아직 주문 내역이 없어요'
-                : '오늘 주문 내역이 없어요',
+                ? '아직 주문 기록이 없어요'
+                : '오늘은 아직 주문이 없어요',
             description: widget.historyMode
-                ? '첫 점심 주문을 만들어볼까요?'
-                : '오늘은 어떤 점심을 함께할까요?',
+                ? '첫 점심 주문을 시작해볼까요?'
+                : '동료들과 오늘 점심을 함께 정해봐요',
           ),
         ],
       );

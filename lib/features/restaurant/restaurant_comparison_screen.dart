@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../../core/utils/normalizer.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../services/recommendations_api_service.dart';
 
@@ -96,9 +97,10 @@ class _ComparisonCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final primary = Theme.of(context).colorScheme.primary;
-    final priceLabel = rec.priceRange != null
-        ? '${_formatComma(rec.priceRange!)}원대'
-        : '가격 미정';
+    // 가격대 표시는 공통 헬퍼로 통일.
+    // price_range 값이 출처별로 의미가 달라(원/1000원 단위/1~5 척도)
+    // 단순 출력 시 "13원대" 같은 부자연스러운 문구가 나오는 버그를 정규화로 해결.
+    final priceLabel = formatRestaurantPriceRange(rec.priceRange);
 
     return SizedBox(
       width: 260,
@@ -196,15 +198,8 @@ class _ComparisonCard extends StatelessWidget {
     );
   }
 
-  String _formatComma(int value) {
-    final s = value.toString();
-    final buffer = StringBuffer();
-    for (int i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buffer.write(',');
-      buffer.write(s[i]);
-    }
-    return buffer.toString();
-  }
+  // 가격대 표기는 normalizer.dart 의 formatRestaurantPriceRange 로 통일.
+  // 기존의 천단위 콤마 포맷터는 이 화면에서 더 이상 사용하지 않아 제거했음.
 }
 
 // ── 비교 속성 한 줄 (레이블 + 값) ──────────────────────

@@ -1,0 +1,230 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>LunchSync 캡처 모음</title>
+<style>
+  :root { --bg:#fff; --fg:#1a1a1a; --muted:#6b6b6b; --accent:#ff6b35; --card:#f5f5f7; }
+  * { box-sizing: border-box; }
+  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Pretendard', system-ui, sans-serif;
+         margin: 0; padding: 0 24px 80px; color: var(--fg); background: var(--bg); }
+  header { padding: 40px 0 16px; border-bottom: 2px solid var(--accent); margin-bottom: 32px; }
+  h1 { margin: 0; font-size: 28px; }
+  .meta { color: var(--muted); margin-top: 8px; font-size: 14px; }
+  .toc { display: flex; flex-wrap: wrap; gap: 12px; margin: 24px 0; }
+  .toc a { background: var(--card); padding: 8px 14px; border-radius: 999px;
+           text-decoration: none; color: var(--fg); font-size: 14px; }
+  .toc a:hover { background: var(--accent); color: #fff; }
+  section { margin-bottom: 56px; }
+  h2 { font-size: 22px; margin-bottom: 4px; border-left: 4px solid var(--accent);
+       padding-left: 12px; }
+  .desc { color: var(--muted); margin: 6px 0 18px; font-size: 14px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+          gap: 16px; }
+  .item { background: var(--card); border-radius: 10px; padding: 8px;
+          transition: transform .1s; }
+  .item:hover { transform: translateY(-2px); }
+  .item img { width: 100%; height: 160px; object-fit: cover; border-radius: 6px;
+              cursor: zoom-in; background:#fff; }
+  .item .name { font-size: 12px; color: var(--muted); margin-top: 6px;
+                word-break: break-all; text-align: center; }
+  .empty { color: var(--muted); font-style: italic; padding: 12px; }
+  /* lightbox */
+  #lb { display: none; position: fixed; inset: 0; background: rgba(0,0,0,.92);
+        z-index: 999; align-items: center; justify-content: center;
+        flex-direction: column; padding: 24px; cursor: zoom-out; }
+  #lb.on { display: flex; }
+  #lb img { max-width: 95vw; max-height: 88vh; object-fit: contain; }
+  #lb .cap { color: #ccc; margin-top: 12px; font-size: 14px; }
+  .count { background: var(--accent); color: #fff; font-size: 12px;
+           padding: 2px 8px; border-radius: 999px; margin-left: 8px; vertical-align: middle; }
+</style>
+</head>
+<body>
+<header>
+<h1>🍱 LunchSync 캡처 모음 (제출용)</h1>
+<div class="meta">생성: 2026-05-13 16:39 · 총 
+<span class="count">104장</span></div>
+<div class="toc">
+<a href="#01-auth">1. 인증 / 회원가입 / 로그인 (24)</a>
+<a href="#02-customer-home">2. 손님 홈 화면 / 탭 (21)</a>
+<a href="#03-session">3. 점심 세션 (생성·로비·AI 추천·투표) (18)</a>
+<a href="#04-restaurant-menu">4. 식당 / 메뉴 화면 (3)</a>
+<a href="#05-payment-order">5. 결제 / 주문 (7)</a>
+<a href="#06-owner">6. 사장 화면 (0)</a>
+<a href="#07-pos">7. POS 단말 (LunchSync-LSPOS) (11)</a>
+<a href="#99-misc">9. 기타 (반응형 / 부팅 / 임시) (20)</a>
+</div>
+</header>
+<section id="01-auth">
+<h2>1. 인증 / 회원가입 / 로그인<span class="count">24장</span></h2>
+<p class="desc">스플래시, 온보딩, 로그인 화면, 회원가입 폼(손님/사장), 이메일 OTP, 휴대폰 인증, 카카오 로그인 버튼</p>
+<div class="grid">
+<div class="item"><img src="screenshots/01-auth/01-splash.png" alt="01-splash.png" loading="lazy" data-cap="01-splash.png" /><div class="name">01-splash.png</div></div>
+<div class="item"><img src="screenshots/01-auth/02-login.png" alt="02-login.png" loading="lazy" data-cap="02-login.png" /><div class="name">02-login.png</div></div>
+<div class="item"><img src="screenshots/01-auth/03-login-demo.png" alt="03-login-demo.png" loading="lazy" data-cap="03-login-demo.png" /><div class="name">03-login-demo.png</div></div>
+<div class="item"><img src="screenshots/01-auth/04-kakao-splash.png" alt="04-kakao-splash.png" loading="lazy" data-cap="04-kakao-splash.png" /><div class="name">04-kakao-splash.png</div></div>
+<div class="item"><img src="screenshots/01-auth/05-kakao-after-splash.png" alt="05-kakao-after-splash.png" loading="lazy" data-cap="05-kakao-after-splash.png" /><div class="name">05-kakao-after-splash.png</div></div>
+<div class="item"><img src="screenshots/01-auth/06-kakao-after-click.png" alt="06-kakao-after-click.png" loading="lazy" data-cap="06-kakao-after-click.png" /><div class="name">06-kakao-after-click.png</div></div>
+<div class="item"><img src="screenshots/01-auth/07-flow-splash.png" alt="07-flow-splash.png" loading="lazy" data-cap="07-flow-splash.png" /><div class="name">07-flow-splash.png</div></div>
+<div class="item"><img src="screenshots/01-auth/08-flow-login.png" alt="08-flow-login.png" loading="lazy" data-cap="08-flow-login.png" /><div class="name">08-flow-login.png</div></div>
+<div class="item"><img src="screenshots/01-auth/09-vis-splash.png" alt="09-vis-splash.png" loading="lazy" data-cap="09-vis-splash.png" /><div class="name">09-vis-splash.png</div></div>
+<div class="item"><img src="screenshots/01-auth/0a-vis-login.png" alt="0a-vis-login.png" loading="lazy" data-cap="0a-vis-login.png" /><div class="name">0a-vis-login.png</div></div>
+<div class="item"><img src="screenshots/01-auth/0b-first-screen.png" alt="0b-first-screen.png" loading="lazy" data-cap="0b-first-screen.png" /><div class="name">0b-first-screen.png</div></div>
+<div class="item"><img src="screenshots/01-auth/0c-login-screen.png" alt="0c-login-screen.png" loading="lazy" data-cap="0c-login-screen.png" /><div class="name">0c-login-screen.png</div></div>
+<div class="item"><img src="screenshots/01-auth/0d-test-splash.png" alt="0d-test-splash.png" loading="lazy" data-cap="0d-test-splash.png" /><div class="name">0d-test-splash.png</div></div>
+<div class="item"><img src="screenshots/01-auth/0e-test-login.png" alt="0e-test-login.png" loading="lazy" data-cap="0e-test-login.png" /><div class="name">0e-test-login.png</div></div>
+<div class="item"><img src="screenshots/01-auth/0f-test-login-viewport.png" alt="0f-test-login-viewport.png" loading="lazy" data-cap="0f-test-login-viewport.png" /><div class="name">0f-test-login-viewport.png</div></div>
+<div class="item"><img src="screenshots/01-auth/10-phone-verify.png" alt="10-phone-verify.png" loading="lazy" data-cap="10-phone-verify.png" /><div class="name">10-phone-verify.png</div></div>
+<div class="item"><img src="screenshots/01-auth/20-login-fresh.png" alt="20-login-fresh.png" loading="lazy" data-cap="20-login-fresh.png" /><div class="name">20-login-fresh.png</div></div>
+<div class="item"><img src="screenshots/01-auth/21-signup-empty.png" alt="21-signup-empty.png" loading="lazy" data-cap="21-signup-empty.png" /><div class="name">21-signup-empty.png</div></div>
+<div class="item"><img src="screenshots/01-auth/22-signup-customer.png" alt="22-signup-customer.png" loading="lazy" data-cap="22-signup-customer.png" /><div class="name">22-signup-customer.png</div></div>
+<div class="item"><img src="screenshots/01-auth/23-signup-owner-toggle.png" alt="23-signup-owner-toggle.png" loading="lazy" data-cap="23-signup-owner-toggle.png" /><div class="name">23-signup-owner-toggle.png</div></div>
+<div class="item"><img src="screenshots/01-auth/24-signup-owner-filled.png" alt="24-signup-owner-filled.png" loading="lazy" data-cap="24-signup-owner-filled.png" /><div class="name">24-signup-owner-filled.png</div></div>
+<div class="item"><img src="screenshots/01-auth/25-email-otp.png" alt="25-email-otp.png" loading="lazy" data-cap="25-email-otp.png" /><div class="name">25-email-otp.png</div></div>
+<div class="item"><img src="screenshots/01-auth/26-kakao-button.png" alt="26-kakao-button.png" loading="lazy" data-cap="26-kakao-button.png" /><div class="name">26-kakao-button.png</div></div>
+<div class="item"><img src="screenshots/01-auth/27-kakao-click.png" alt="27-kakao-click.png" loading="lazy" data-cap="27-kakao-click.png" /><div class="name">27-kakao-click.png</div></div>
+</div>
+</section>
+<section id="02-customer-home">
+<h2>2. 손님 홈 화면 / 탭<span class="count">21장</span></h2>
+<p class="desc">홈 화면, 알림, 네 개 탭(점심세션·주문현황·내역·내정보), 카카오맵 영역</p>
+<div class="grid">
+<div class="item"><img src="screenshots/02-customer-home/10-home.png" alt="10-home.png" loading="lazy" data-cap="10-home.png" /><div class="name">10-home.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/11-home-full.png" alt="11-home-full.png" loading="lazy" data-cap="11-home-full.png" /><div class="name">11-home-full.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/12-home-phase4.png" alt="12-home-phase4.png" loading="lazy" data-cap="12-home-phase4.png" /><div class="name">12-home-phase4.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/13-notifications.png" alt="13-notifications.png" loading="lazy" data-cap="13-notifications.png" /><div class="name">13-notifications.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/14-home-after-login.png" alt="14-home-after-login.png" loading="lazy" data-cap="14-home-after-login.png" /><div class="name">14-home-after-login.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/15-home-current.png" alt="15-home-current.png" loading="lazy" data-cap="15-home-current.png" /><div class="name">15-home-current.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/16-home-scrolled-ai.png" alt="16-home-scrolled-ai.png" loading="lazy" data-cap="16-home-scrolled-ai.png" /><div class="name">16-home-scrolled-ai.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/17-home-with-session.png" alt="17-home-with-session.png" loading="lazy" data-cap="17-home-with-session.png" /><div class="name">17-home-with-session.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/18-tab-lunch-session.png" alt="18-tab-lunch-session.png" loading="lazy" data-cap="18-tab-lunch-session.png" /><div class="name">18-tab-lunch-session.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/19-tab-orders.png" alt="19-tab-orders.png" loading="lazy" data-cap="19-tab-orders.png" /><div class="name">19-tab-orders.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/20-tab-history.png" alt="20-tab-history.png" loading="lazy" data-cap="20-tab-history.png" /><div class="name">20-tab-history.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/21-tab-profile.png" alt="21-tab-profile.png" loading="lazy" data-cap="21-tab-profile.png" /><div class="name">21-tab-profile.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/22-verify-home.png" alt="22-verify-home.png" loading="lazy" data-cap="22-verify-home.png" /><div class="name">22-verify-home.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/23-verify-full.png" alt="23-verify-full.png" loading="lazy" data-cap="23-verify-full.png" /><div class="name">23-verify-full.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/24-sim-home.png" alt="24-sim-home.png" loading="lazy" data-cap="24-sim-home.png" /><div class="name">24-sim-home.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/25-sim-home-loaded.png" alt="25-sim-home-loaded.png" loading="lazy" data-cap="25-sim-home-loaded.png" /><div class="name">25-sim-home-loaded.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/26-browse-mode.png" alt="26-browse-mode.png" loading="lazy" data-cap="26-browse-mode.png" /><div class="name">26-browse-mode.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/27-vis-final.png" alt="27-vis-final.png" loading="lazy" data-cap="27-vis-final.png" /><div class="name">27-vis-final.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/28-vis-browse.png" alt="28-vis-browse.png" loading="lazy" data-cap="28-vis-browse.png" /><div class="name">28-vis-browse.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/29-demo-final.png" alt="29-demo-final.png" loading="lazy" data-cap="29-demo-final.png" /><div class="name">29-demo-final.png</div></div>
+<div class="item"><img src="screenshots/02-customer-home/2a-demo-browse.png" alt="2a-demo-browse.png" loading="lazy" data-cap="2a-demo-browse.png" /><div class="name">2a-demo-browse.png</div></div>
+</div>
+</section>
+<section id="03-session">
+<h2>3. 점심 세션 (생성·로비·AI 추천·투표)<span class="count">18장</span></h2>
+<p class="desc">세션 생성 3단계, 로비, 멤버 입장, AI 추천 카드, 점수, 투표 시작, 결과, 경로 안내</p>
+<div class="grid">
+<div class="item"><img src="screenshots/03-session/30-session-detail.png" alt="30-session-detail.png" loading="lazy" data-cap="30-session-detail.png" /><div class="name">30-session-detail.png</div></div>
+<div class="item"><img src="screenshots/03-session/31-ai-recommendations.png" alt="31-ai-recommendations.png" loading="lazy" data-cap="31-ai-recommendations.png" /><div class="name">31-ai-recommendations.png</div></div>
+<div class="item"><img src="screenshots/03-session/32-vote-result.png" alt="32-vote-result.png" loading="lazy" data-cap="32-vote-result.png" /><div class="name">32-vote-result.png</div></div>
+<div class="item"><img src="screenshots/03-session/33-session-create-step1.png" alt="33-session-create-step1.png" loading="lazy" data-cap="33-session-create-step1.png" /><div class="name">33-session-create-step1.png</div></div>
+<div class="item"><img src="screenshots/03-session/34-session-create-step2.png" alt="34-session-create-step2.png" loading="lazy" data-cap="34-session-create-step2.png" /><div class="name">34-session-create-step2.png</div></div>
+<div class="item"><img src="screenshots/03-session/35-after-create.png" alt="35-after-create.png" loading="lazy" data-cap="35-after-create.png" /><div class="name">35-after-create.png</div></div>
+<div class="item"><img src="screenshots/03-session/36-routing-result.png" alt="36-routing-result.png" loading="lazy" data-cap="36-routing-result.png" /><div class="name">36-routing-result.png</div></div>
+<div class="item"><img src="screenshots/03-session/37-ai-scores.png" alt="37-ai-scores.png" loading="lazy" data-cap="37-ai-scores.png" /><div class="name">37-ai-scores.png</div></div>
+<div class="item"><img src="screenshots/03-session/38-ai-scores-final.png" alt="38-ai-scores-final.png" loading="lazy" data-cap="38-ai-scores-final.png" /><div class="name">38-ai-scores-final.png</div></div>
+<div class="item"><img src="screenshots/03-session/39-members-checked.png" alt="39-members-checked.png" loading="lazy" data-cap="39-members-checked.png" /><div class="name">39-members-checked.png</div></div>
+<div class="item"><img src="screenshots/03-session/3a-session-detail-2.png" alt="3a-session-detail-2.png" loading="lazy" data-cap="3a-session-detail-2.png" /><div class="name">3a-session-detail-2.png</div></div>
+<div class="item"><img src="screenshots/03-session/3b-step2-conditions.png" alt="3b-step2-conditions.png" loading="lazy" data-cap="3b-step2-conditions.png" /><div class="name">3b-step2-conditions.png</div></div>
+<div class="item"><img src="screenshots/03-session/3c-step3-ai-recommend.png" alt="3c-step3-ai-recommend.png" loading="lazy" data-cap="3c-step3-ai-recommend.png" /><div class="name">3c-step3-ai-recommend.png</div></div>
+<div class="item"><img src="screenshots/03-session/3d-step3-ai-after-wait.png" alt="3d-step3-ai-after-wait.png" loading="lazy" data-cap="3d-step3-ai-after-wait.png" /><div class="name">3d-step3-ai-after-wait.png</div></div>
+<div class="item"><img src="screenshots/03-session/3e-vote-start.png" alt="3e-vote-start.png" loading="lazy" data-cap="3e-vote-start.png" /><div class="name">3e-vote-start.png</div></div>
+<div class="item"><img src="screenshots/03-session/3f-ai-recommend.png" alt="3f-ai-recommend.png" loading="lazy" data-cap="3f-ai-recommend.png" /><div class="name">3f-ai-recommend.png</div></div>
+<div class="item"><img src="screenshots/03-session/3g-verify-ai-cards.png" alt="3g-verify-ai-cards.png" loading="lazy" data-cap="3g-verify-ai-cards.png" /><div class="name">3g-verify-ai-cards.png</div></div>
+<div class="item"><img src="screenshots/03-session/3h-sim-session-create.png" alt="3h-sim-session-create.png" loading="lazy" data-cap="3h-sim-session-create.png" /><div class="name">3h-sim-session-create.png</div></div>
+</div>
+</section>
+<section id="04-restaurant-menu">
+<h2>4. 식당 / 메뉴 화면<span class="count">3장</span></h2>
+<p class="desc">식당 목록·상세, 메뉴 화면</p>
+<div class="grid">
+<div class="item"><img src="screenshots/04-restaurant-menu/40-restaurant-detail.png" alt="40-restaurant-detail.png" loading="lazy" data-cap="40-restaurant-detail.png" /><div class="name">40-restaurant-detail.png</div></div>
+<div class="item"><img src="screenshots/04-restaurant-menu/41-menu-screen.png" alt="41-menu-screen.png" loading="lazy" data-cap="41-menu-screen.png" /><div class="name">41-menu-screen.png</div></div>
+<div class="item"><img src="screenshots/04-restaurant-menu/42-restaurant-new-copy.png" alt="42-restaurant-new-copy.png" loading="lazy" data-cap="42-restaurant-new-copy.png" /><div class="name">42-restaurant-new-copy.png</div></div>
+</div>
+</section>
+<section id="05-payment-order">
+<h2>5. 결제 / 주문<span class="count">7장</span></h2>
+<p class="desc">토스 위젯, 결제 성공/실패 콜백, Flutter 초기화면</p>
+<div class="grid">
+<div class="item"><img src="screenshots/05-payment-order/50-flutter-initial.png" alt="50-flutter-initial.png" loading="lazy" data-cap="50-flutter-initial.png" /><div class="name">50-flutter-initial.png</div></div>
+<div class="item"><img src="screenshots/05-payment-order/51-toss-widget.png" alt="51-toss-widget.png" loading="lazy" data-cap="51-toss-widget.png" /><div class="name">51-toss-widget.png</div></div>
+<div class="item"><img src="screenshots/05-payment-order/52-error.png" alt="52-error.png" loading="lazy" data-cap="52-error.png" /><div class="name">52-error.png</div></div>
+<div class="item"><img src="screenshots/05-payment-order/53-success.png" alt="53-success.png" loading="lazy" data-cap="53-success.png" /><div class="name">53-success.png</div></div>
+<div class="item"><img src="screenshots/05-payment-order/54-fail.png" alt="54-fail.png" loading="lazy" data-cap="54-fail.png" /><div class="name">54-fail.png</div></div>
+<div class="item"><img src="screenshots/05-payment-order/55-payment-success-new.png" alt="55-payment-success-new.png" loading="lazy" data-cap="55-payment-success-new.png" /><div class="name">55-payment-success-new.png</div></div>
+<div class="item"><img src="screenshots/05-payment-order/56-payment-fail-new.png" alt="56-payment-fail-new.png" loading="lazy" data-cap="56-payment-fail-new.png" /><div class="name">56-payment-fail-new.png</div></div>
+</div>
+</section>
+<section id="06-owner">
+<h2>6. 사장 화면<span class="count">0장</span></h2>
+<p class="desc">사장 홈, 매출 통계, 주문 관리, 메뉴 편집, 승인 대기</p>
+<div class="empty">⚠️ 캡처 누락 — 추후 보충</div>
+</section>
+<section id="07-pos">
+<h2>7. POS 단말 (LunchSync-LSPOS)<span class="count">11장</span></h2>
+<p class="desc">POS 로그인, 대시보드, 주방 모드, 메뉴, 좌석, 주문, 매출, 예약</p>
+<div class="grid">
+<div class="item"><img src="screenshots/07-pos/70-pos-initial.png" alt="70-pos-initial.png" loading="lazy" data-cap="70-pos-initial.png" /><div class="name">70-pos-initial.png</div></div>
+<div class="item"><img src="screenshots/07-pos/71-pos-real.png" alt="71-pos-real.png" loading="lazy" data-cap="71-pos-real.png" /><div class="name">71-pos-real.png</div></div>
+<div class="item"><img src="screenshots/07-pos/72-pos-login.png" alt="72-pos-login.png" loading="lazy" data-cap="72-pos-login.png" /><div class="name">72-pos-login.png</div></div>
+<div class="item"><img src="screenshots/07-pos/73-pos-dashboard.png" alt="73-pos-dashboard.png" loading="lazy" data-cap="73-pos-dashboard.png" /><div class="name">73-pos-dashboard.png</div></div>
+<div class="item"><img src="screenshots/07-pos/74-pos-dashboard-v2.png" alt="74-pos-dashboard-v2.png" loading="lazy" data-cap="74-pos-dashboard-v2.png" /><div class="name">74-pos-dashboard-v2.png</div></div>
+<div class="item"><img src="screenshots/07-pos/75-pos-kitchen.png" alt="75-pos-kitchen.png" loading="lazy" data-cap="75-pos-kitchen.png" /><div class="name">75-pos-kitchen.png</div></div>
+<div class="item"><img src="screenshots/07-pos/76-pos-menu.png" alt="76-pos-menu.png" loading="lazy" data-cap="76-pos-menu.png" /><div class="name">76-pos-menu.png</div></div>
+<div class="item"><img src="screenshots/07-pos/77-pos-seats.png" alt="77-pos-seats.png" loading="lazy" data-cap="77-pos-seats.png" /><div class="name">77-pos-seats.png</div></div>
+<div class="item"><img src="screenshots/07-pos/78-pos-orders.png" alt="78-pos-orders.png" loading="lazy" data-cap="78-pos-orders.png" /><div class="name">78-pos-orders.png</div></div>
+<div class="item"><img src="screenshots/07-pos/79-pos-stats.png" alt="79-pos-stats.png" loading="lazy" data-cap="79-pos-stats.png" /><div class="name">79-pos-stats.png</div></div>
+<div class="item"><img src="screenshots/07-pos/80-pos-reservations.png" alt="80-pos-reservations.png" loading="lazy" data-cap="80-pos-reservations.png" /><div class="name">80-pos-reservations.png</div></div>
+</div>
+</section>
+<section id="99-misc">
+<h2>9. 기타 (반응형 / 부팅 / 임시)<span class="count">20장</span></h2>
+<p class="desc">반응형(데스크톱/태블릿/모바일), 부팅 화면, 임시 캡처</p>
+<div class="grid">
+<div class="item"><img src="screenshots/99-misc/90-after-back.png" alt="90-after-back.png" loading="lazy" data-cap="90-after-back.png" /><div class="name">90-after-back.png</div></div>
+<div class="item"><img src="screenshots/99-misc/91-after-click-1.png" alt="91-after-click-1.png" loading="lazy" data-cap="91-after-click-1.png" /><div class="name">91-after-click-1.png</div></div>
+<div class="item"><img src="screenshots/99-misc/92-after-create-click.png" alt="92-after-create-click.png" loading="lazy" data-cap="92-after-create-click.png" /><div class="name">92-after-create-click.png</div></div>
+<div class="item"><img src="screenshots/99-misc/93-boot-screen.png" alt="93-boot-screen.png" loading="lazy" data-cap="93-boot-screen.png" /><div class="name">93-boot-screen.png</div></div>
+<div class="item"><img src="screenshots/99-misc/94-after-boot.png" alt="94-after-boot.png" loading="lazy" data-cap="94-after-boot.png" /><div class="name">94-after-boot.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/desktop.png" alt="responsive/desktop.png" loading="lazy" data-cap="responsive/desktop.png" /><div class="name">responsive/desktop.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/mobile-medium.png" alt="responsive/mobile-medium.png" loading="lazy" data-cap="responsive/mobile-medium.png" /><div class="name">responsive/mobile-medium.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/mobile-small.png" alt="responsive/mobile-small.png" loading="lazy" data-cap="responsive/mobile-small.png" /><div class="name">responsive/mobile-small.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/sim-desktop.png" alt="responsive/sim-desktop.png" loading="lazy" data-cap="responsive/sim-desktop.png" /><div class="name">responsive/sim-desktop.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/sim-mobile-s.png" alt="responsive/sim-mobile-s.png" loading="lazy" data-cap="responsive/sim-mobile-s.png" /><div class="name">responsive/sim-mobile-s.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/sim-tablet.png" alt="responsive/sim-tablet.png" loading="lazy" data-cap="responsive/sim-tablet.png" /><div class="name">responsive/sim-tablet.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/tablet.png" alt="responsive/tablet.png" loading="lazy" data-cap="responsive/tablet.png" /><div class="name">responsive/tablet.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/vis-desktop.png" alt="responsive/vis-desktop.png" loading="lazy" data-cap="responsive/vis-desktop.png" /><div class="name">responsive/vis-desktop.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/vis-mobile-m.png" alt="responsive/vis-mobile-m.png" loading="lazy" data-cap="responsive/vis-mobile-m.png" /><div class="name">responsive/vis-mobile-m.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/vis-mobile-s.png" alt="responsive/vis-mobile-s.png" loading="lazy" data-cap="responsive/vis-mobile-s.png" /><div class="name">responsive/vis-mobile-s.png</div></div>
+<div class="item"><img src="screenshots/99-misc/responsive/vis-tablet.png" alt="responsive/vis-tablet.png" loading="lazy" data-cap="responsive/vis-tablet.png" /><div class="name">responsive/vis-tablet.png</div></div>
+<div class="item"><img src="screenshots/99-misc/toss-docs/01-reference.png" alt="toss-docs/01-reference.png" loading="lazy" data-cap="toss-docs/01-reference.png" /><div class="name">toss-docs/01-reference.png</div></div>
+<div class="item"><img src="screenshots/99-misc/toss-docs/02-widget-admin.png" alt="toss-docs/02-widget-admin.png" loading="lazy" data-cap="toss-docs/02-widget-admin.png" /><div class="name">toss-docs/02-widget-admin.png</div></div>
+<div class="item"><img src="screenshots/99-misc/toss-docs/03-sdk-v2-js.png" alt="toss-docs/03-sdk-v2-js.png" loading="lazy" data-cap="toss-docs/03-sdk-v2-js.png" /><div class="name">toss-docs/03-sdk-v2-js.png</div></div>
+<div class="item"><img src="screenshots/99-misc/toss-docs/04-widget-integration.png" alt="toss-docs/04-widget-integration.png" loading="lazy" data-cap="toss-docs/04-widget-integration.png" /><div class="name">toss-docs/04-widget-integration.png</div></div>
+</div>
+</section>
+<div id="lb"><img src="" /><div class="cap"></div></div>
+
+<script>
+  const lb = document.getElementById('lb');
+  const lbImg = lb.querySelector('img');
+  const lbCap = lb.querySelector('.cap');
+  document.querySelectorAll('.item img').forEach(img => {
+    img.addEventListener('click', e => {
+      e.stopPropagation();
+      lbImg.src = img.src;
+      lbCap.textContent = img.dataset.cap;
+      lb.classList.add('on');
+    });
+  });
+  lb.addEventListener('click', () => lb.classList.remove('on'));
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') lb.classList.remove('on');
+  });
+</script>
+</body>
+</html>

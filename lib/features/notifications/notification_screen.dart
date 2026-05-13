@@ -313,10 +313,11 @@ class _NotificationScreenState extends ConsumerState<NotificationScreen> {
 
   // ── 빈 상태 위젯 — AppEmptyState 컴포넌트로 일관화 ────
   Widget _buildEmptyState() {
+    // 빈 상태 — 알림이 언제 쌓일지 사용자가 미리 알 수 있도록 안내 (다음 액션 기대치 형성)
     return const AppEmptyState(
       icon: Icons.notifications_none_rounded,
-      title: '새 알림이 없어요',
-      description: '점심 세션 진행 중 알림이 여기에 표시돼요',
+      title: '아직 도착한 알림이 없어요',
+      description: '점심 세션이 시작되면 여기로 소식이 모여요',
     );
   }
 }

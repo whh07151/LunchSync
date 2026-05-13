@@ -1,5 +1,8 @@
 import { Body, Controller, Delete, Get, Param, Patch, Post, Req, UseGuards } from '@nestjs/common';
 import { IsIn, IsNumber, IsOptional, IsString, IsNotEmpty } from 'class-validator';
+// 2026-05-13 SkipThrottle: LSPOS 예약/웨이팅 화면이 목록을 주기 폴링 →
+//   429 방지를 위해 GET 만 제외. 등록/상태변경/삭제는 throttle 유지.
+import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { assertPosAccessTo } from '../auth/pos-ownership.util';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
@@ -47,6 +50,8 @@ class UpdateStatusBody {
 export class PosReservationsController {
   constructor(private readonly service: PosReservationsService) {}
 
+  // 예약/웨이팅 목록 폴링 → throttler 제외 (2026-05-13)
+  @SkipThrottle()
   @Get(':restaurantId')
   async list(
     @Req() req: AuthedRequest,

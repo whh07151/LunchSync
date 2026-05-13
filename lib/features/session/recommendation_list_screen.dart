@@ -2,8 +2,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../../core/utils/normalizer.dart';
+import '../../core/utils/distance_calculator.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
+import '../../services/geolocation_service.dart';
 import '../../services/recommendations_api_service.dart';
 import '../../services/sessions_api_service.dart';
 import '../restaurant/restaurant_detail_screen.dart';
@@ -53,12 +56,31 @@ class _RecommendationListScreenState
   bool _isCompareMode = false;
   final Set<String> _selectedForCompare = <String>{};
 
+  // ── 사용자 현재 위치(거리 표시용) ──────────────────────
+  // 추천 카드 각각에 "거리 320m" 한 줄을 띄우기 위해 화면 진입 시 1회 조회.
+  // 권한 거부/위치 서비스 꺼짐이면 영구히 null → 카드의 거리 라인은 자동 숨김.
+  double? _userLat;
+  double? _userLng;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
       DebugToast.show(context, 'CU-11');
       _loadRecommendations();
+      _loadUserLocation();
+    });
+  }
+
+  // ── 사용자 위치 1회 조회 ──────────────────────────────
+  // 화면 진입 시 GPS 1 스냅샷만 얻어 거리 표기에 사용.
+  // 권한 거부/타임아웃 시 null 그대로 두어 거리 라인은 숨김.
+  Future<void> _loadUserLocation() async {
+    final pos = await const GeolocationService().getCurrentPosition();
+    if (!mounted || pos == null) return;
+    setState(() {
+      _userLat = pos.latitude;
+      _userLng = pos.longitude;
     });
   }
 
@@ -105,8 +127,9 @@ class _RecommendationListScreenState
         } else {
           // 3개까지만 선택 허용
           if (_selectedForCompare.length >= 3) {
+            // 상한 안내 — 행동 가이드(선택 해제) 자연 유도
             ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('최대 3개까지 비교할 수 있어요.')),
+              const SnackBar(content: Text('비교는 최대 3개까지! 하나를 빼고 다시 골라봐요')),
             );
             return;
           }
@@ -133,8 +156,9 @@ class _RecommendationListScreenState
         .toList();
 
     if (selected.length < 2) {
+      // 친근한 안내 — 부족한 개수 명확히
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('비교하려면 2개 이상 선택해야 해요.')),
+        const SnackBar(content: Text('비교는 2개 이상부터 가능해요. 하나만 더 골라봐요')),
       );
       return;
     }
@@ -187,18 +211,25 @@ class _RecommendationListScreenState
   // ── 투표 시작 — PATCH /sessions/:id/status { status: 'VOTING' } ──
   // 백엔드가 호스트 권한을 검증. 호스트가 아니면 403/400 응답이 오므로 UI 에서
   // 별도 권한 가드는 두지 않음 (호스트 정보를 캐시하지 않는 정책).
+  //
+  // 2026-05-13 진단성 개선:
+  //   기존엔 실패 시 무조건 "호스트만 시작할 수 있어요" 토스트를 띄워
+  //   실제로 본인이 호스트인데도 다른 원인(JWT 만료/세션 상태 오류 등)으로
+  //   실패한 경우 사용자가 잘못된 원인을 보고했음. 백엔드 401/403/404/400 을
+  //   상세 응답으로 받아 케이스별 메시지를 표시.
   Future<void> _startVoting() async {
     final token = ref.read(userProvider).accessToken;
     if (token == null) {
+      // 로그인 만료 — 다음 액션(재로그인) 안내
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('로그인 정보가 없습니다.')),
+        const SnackBar(content: Text('로그인이 풀렸어요. 다시 로그인해봐요')),
       );
       return;
     }
 
     setState(() => _isStartingVote = true);
 
-    final ok = await const SessionsApiService().updateSessionStatus(
+    final result = await const SessionsApiService().updateSessionStatusDetailed(
       accessToken: token,
       sessionId: widget.sessionId,
       status: 'VOTING',
@@ -207,7 +238,7 @@ class _RecommendationListScreenState
     if (!mounted) return;
     setState(() => _isStartingVote = false);
 
-    if (ok) {
+    if (result.isSuccess) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: const Text('투표가 시작됐어요! 멤버 모두에게 알림이 갈 거예요.'),
@@ -218,9 +249,12 @@ class _RecommendationListScreenState
       // 시연 흐름: 로비로 복귀 후 상태 갱신
       Navigator.of(context).pop();
     } else {
+      // 백엔드가 내려준 사유를 그대로 노출. 케이스별 메시지는 서비스 레이어에서 매핑.
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('투표 시작에 실패했어요. 호스트만 시작할 수 있어요.'),
+        SnackBar(
+          // 백엔드가 내려준 사유 우선 사용, 없을 때 기본 친근 메시지
+          content: Text(result.message ?? '투표 시작이 안 됐어요. 다시 시도해봐요'),
+          duration: const Duration(seconds: 3),
         ),
       );
     }
@@ -254,14 +288,15 @@ class _RecommendationListScreenState
             ),
             const SizedBox(height: AppSpacing.sm),
             Text(
-              '추천할 식당이 없어요',
+              // 빈 상태 — 검색 조건/위치 영향이 있다는 힌트로 다음 액션(재시도) 유도
+              '조건에 맞는 식당을 찾지 못했어요',
               style: AppTextStyles.bodyMedium.copyWith(
                 color: AppColors.textSecondary,
               ),
             ),
             const SizedBox(height: 4),
             Text(
-              '식당 데이터가 등록되면 다시 시도해 주세요',
+              '잠시 후 다시 시도하거나 위치를 확인해보세요',
               style: AppTextStyles.bodySmall.copyWith(
                 color: AppColors.textHint,
               ),
@@ -319,7 +354,8 @@ class _RecommendationListScreenState
                   final recs = _recommendations ?? const <RecommendationDto>[];
                   if (recs.isEmpty) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('추천 식당이 없어 지도로 볼 수 없어요.')),
+                      // 친근한 안내 + 재시도 유도
+                      const SnackBar(content: Text('아직 추천 식당이 없어요. 잠시 후 다시 시도해봐요')),
                     );
                     return;
                   }
@@ -383,10 +419,20 @@ class _RecommendationListScreenState
   Widget _buildRecommendationCard(RecommendationDto rec, int rank) {
     final primary = Theme.of(context).colorScheme.primary;
 
-    // 가격대 레이블
-    final priceLabel = rec.priceRange != null
-        ? '${_formatWithComma(rec.priceRange!)}원대'
-        : '가격 미정';
+    // 가격대 레이블은 공통 헬퍼로 통일.
+    // price_range 값이 시드(원)·크롤(1000원 단위)·Gemini(1~5 척도)로 혼재돼
+    // 단순 "${n}원대" 출력 시 "2원대"/"13원대" 같은 버그가 있었음.
+    // formatRestaurantPriceRange가 값의 크기로 의미를 추정해 변환.
+    final priceLabel = formatRestaurantPriceRange(rec.priceRange);
+
+    // 거리 라벨 — 사용자 위치/식당 좌표 둘 다 있을 때만 표기.
+    // null이면 거리 줄 자체를 그리지 않음(디자인 유지 원칙).
+    final distance = distanceLabel(
+      userLat: _userLat,
+      userLng: _userLng,
+      targetLat: rec.lat,
+      targetLng: rec.lng,
+    );
 
     // 비교 모드에서 선택된 카드는 테두리 강조
     final isSelected = _selectedForCompare.contains(rec.restaurantId);
@@ -500,6 +546,24 @@ class _RecommendationListScreenState
             ),
           ],
 
+          // ── 거리(distance) ───────────────────────────
+          // 위치 권한 + 식당 좌표가 모두 있을 때만 표기.
+          // 디자인 토큰 변경 없이 directions_walk 아이콘 + bodySmall.
+          if (distance != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(
+                  Icons.directions_walk_rounded,
+                  size: 14,
+                  color: AppColors.textSecondary,
+                ),
+                const SizedBox(width: 4),
+                Text(distance, style: AppTextStyles.bodySmall),
+              ],
+            ),
+          ],
+
           // ── 추천 근거 태그들 ──────────────────────────
           if (rec.reasons.isNotEmpty) ...[
             const SizedBox(height: AppSpacing.sm),
@@ -531,14 +595,6 @@ class _RecommendationListScreenState
     );
   }
 
-  // ── 정수 → "12,345" 형태 천단위 콤마 포맷 ────────────
-  String _formatWithComma(int value) {
-    final s = value.toString();
-    final buffer = StringBuffer();
-    for (int i = 0; i < s.length; i++) {
-      if (i > 0 && (s.length - i) % 3 == 0) buffer.write(',');
-      buffer.write(s[i]);
-    }
-    return buffer.toString();
-  }
+  // 가격대 표기는 normalizer.dart 의 formatRestaurantPriceRange 로 통일.
+  // 추천 카드에서 천단위 콤마 포맷은 더 이상 사용하지 않아 제거했음.
 }

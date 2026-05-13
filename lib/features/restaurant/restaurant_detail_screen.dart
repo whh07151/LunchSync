@@ -2,10 +2,13 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
+import '../../core/utils/normalizer.dart';
+import '../../core/utils/distance_calculator.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/restaurants_api_service.dart';
 import '../../services/external_map_launcher.dart';
+import '../../services/geolocation_service.dart';
 import '../menu/menu_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -52,6 +55,12 @@ class _RestaurantDetailScreenState
   bool _isRestaurantLoading = true;
   bool _isMenuLoading = true;
 
+  // ── 사용자 현재 위치(거리 표시용) ──────────────────────
+  // 헤더에 "거리 320m" 한 줄을 띄우기 위해 1회 조회.
+  // 권한 거부/타임아웃 시 null → 거리 라인 자동 숨김.
+  double? _userLat;
+  double? _userLng;
+
   @override
   void initState() {
     super.initState();
@@ -59,6 +68,19 @@ class _RestaurantDetailScreenState
       DebugToast.show(context, 'CU-13');
       _loadDetail();
       _loadMenus();
+      _loadUserLocation();
+    });
+  }
+
+  // ── 사용자 위치 1회 조회 ──────────────────────────────
+  // GPS 1 스냅샷만 얻어 거리 표기에 사용.
+  // 권한 거부/타임아웃 시 null 그대로 두어 거리 라인은 그리지 않음.
+  Future<void> _loadUserLocation() async {
+    final pos = await const GeolocationService().getCurrentPosition();
+    if (!mounted || pos == null) return;
+    setState(() {
+      _userLat = pos.latitude;
+      _userLng = pos.longitude;
     });
   }
 
@@ -164,11 +186,17 @@ class _RestaurantDetailScreenState
   }
 
   // ── 메뉴 전체 화면 진입 ────────────────────────────────
+  // ⚠️ 반드시 widget.restaurantId 를 함께 넘겨야 한다.
+  //   - 미전달 시 MenuScreen 이 어느 식당을 조회해야 할지 모르고
+  //     예전엔 시드 식당(11111111-...) 의 mock 메뉴만 보이는 버그가 있었음.
   void _goToFullMenu() {
     final name = _restaurant?.name ?? widget.initialName ?? '식당';
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => MenuScreen(restaurantName: name),
+        builder: (_) => MenuScreen(
+          restaurantId: widget.restaurantId,
+          restaurantName: name,
+        ),
       ),
     );
   }
@@ -259,8 +287,20 @@ class _RestaurantDetailScreenState
 
   Widget _buildHeader(RestaurantDto r) {
     final primary = Theme.of(context).colorScheme.primary;
-    final priceLabel =
-        r.priceRange != null ? '${_formatComma(r.priceRange!)}원대' : '가격 미정';
+    // 가격대 표시는 공통 헬퍼로 통일.
+    // 백엔드 price_range 값이 시드(원)·크롤(1000원 단위)·Gemini(1~5 척도)로
+    // 혼재되어 있어 단순 "${n}원대" 출력 시 "2원대" 같은 버그가 발생했음.
+    // formatRestaurantPriceRange가 값의 크기로 의미를 추정해 한국식 라벨로 변환.
+    final priceLabel = formatRestaurantPriceRange(r.priceRange);
+
+    // 거리 라벨 — 사용자 위치/식당 좌표 둘 다 있을 때만 표기.
+    // null이면 거리 줄을 그리지 않음(디자인 유지 원칙).
+    final distance = distanceLabel(
+      userLat: _userLat,
+      userLng: _userLng,
+      targetLat: r.lat,
+      targetLng: r.lng,
+    );
 
     return Container(
       width: double.infinity,
@@ -303,6 +343,21 @@ class _RestaurantDetailScreenState
               ],
             ),
           ],
+
+          // ── 거리(distance) ───────────────────────────
+          // 위치 권한 + 식당 좌표가 모두 있을 때만 표기.
+          // 디자인 토큰 변경 없이 directions_walk 아이콘 + bodySmall.
+          if (distance != null) ...[
+            const SizedBox(height: 4),
+            Row(
+              children: [
+                Icon(Icons.directions_walk_rounded,
+                    size: 14, color: AppColors.textSecondary),
+                const SizedBox(width: 4),
+                Text(distance, style: AppTextStyles.bodySmall),
+              ],
+            ),
+          ],
         ],
       ),
     );
@@ -318,13 +373,14 @@ class _RestaurantDetailScreenState
 
     final menus = _menuPreview ?? const <MenuItemDto>[];
     if (menus.isEmpty) {
+      // 빈 상태 — 메뉴는 사장님이 등록하는 영역이므로 "곧 올라올 예정"이라는 기대치 설정
       return Padding(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.screenHorizontal,
           vertical: AppSpacing.md,
         ),
         child: Text(
-          '등록된 메뉴가 없어요',
+          '메뉴는 사장님이 곧 올려주실 거예요',
           style: AppTextStyles.bodySmall.copyWith(color: AppColors.textHint),
         ),
       );

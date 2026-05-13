@@ -19,8 +19,20 @@ import {
   Max,
   MaxLength,
 } from 'class-validator';
+// 2026-05-13 SkipThrottle 도입:
+//   손님 앱이 멤버 목록을 3초 간격으로 폴링하고 홈 화면이 today 세션을
+//   주기적으로 가져오는 탓에 글로벌 throttler(분당 100) 한도를 빠르게 소모.
+//   읽기 전용 + 본인 데이터만 노출하는 폴링 엔드포인트는 SkipThrottle 적용해
+//   429 오류로 인한 정상 동작 차단을 방지한다.
+import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import { SessionsService } from './sessions.service';
+
+// 2026-05-13 타입 추출 (코드 리뷰 M2):
+//   pos.controller 패턴 따라 인라인 5회 반복 → 단일 AuthedRequest 로 통일.
+//   AuthedRequestUser 는 jwt.strategy 에서 정의(USER/POS 토큰 공용).
+type AuthedRequest = { user: AuthedRequestUser };
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 점심 세션 관련 HTTP 엔드포인트
@@ -105,7 +117,7 @@ export class SessionsController {
   // ── POST /api/sessions ────────────────────────────────
   @Post()
   async createSession(
-    @Req() req: { user: { userId: string } },
+    @Req() req: AuthedRequest,
     @Body() dto: CreateSessionDto,
   ) {
     const result = await this.sessionsService.createSession(
@@ -116,8 +128,10 @@ export class SessionsController {
   }
 
   // ── GET /api/sessions/today ───────────────────────────
+  // 홈 화면이 주기적으로 호출 → throttler 제외 (2026-05-13)
+  @SkipThrottle()
   @Get('today')
-  async getTodaySessions(@Req() req: { user: { userId: string } }) {
+  async getTodaySessions(@Req() req: AuthedRequest) {
     const result = await this.sessionsService.getTodaySessions(req.user.userId);
     return { success: true, data: result };
   }
@@ -133,7 +147,7 @@ export class SessionsController {
   // 보안 패치: 호스트 검증 + 상태 전이 매트릭스 검증
   @Patch(':id/status')
   async updateSessionStatus(
-    @Req() req: { user: { userId: string } },
+    @Req() req: AuthedRequest,
     @Param('id') id: string,
     @Body() dto: UpdateSessionStatusDto,
   ) {
@@ -146,6 +160,8 @@ export class SessionsController {
   }
 
   // ── GET /api/sessions/:id/members ─────────────────────
+  // 손님 앱이 3초 간격 폴링 → throttler 제외 (2026-05-13)
+  @SkipThrottle()
   @Get(':id/members')
   async getSessionMembers(@Param('id') id: string) {
     const result = await this.sessionsService.getSessionMembers(id);
@@ -156,7 +172,7 @@ export class SessionsController {
   // 보안 패치: 호스트만 가능
   @Post(':id/members')
   async addMember(
-    @Req() req: { user: { userId: string } },
+    @Req() req: AuthedRequest,
     @Param('id') id: string,
     @Body() dto: AddMemberDto,
   ) {
@@ -172,7 +188,7 @@ export class SessionsController {
   // 보안 패치: 본인이 자기 자신 제거는 허용, 타인 제거는 호스트만
   @Delete(':id/members/:userId')
   async removeMember(
-    @Req() req: { user: { userId: string } },
+    @Req() req: AuthedRequest,
     @Param('id') id: string,
     @Param('userId') userId: string,
   ) {
