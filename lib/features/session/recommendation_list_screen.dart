@@ -12,9 +12,9 @@ import '../../services/geolocation_service.dart';
 import '../../services/recommendations_api_service.dart';
 import '../../services/sessions_api_service.dart';
 import '../decide/decide_screen.dart';
+import '../map/recommendation_map_screen.dart';
 import '../restaurant/restaurant_detail_screen.dart';
 import '../restaurant/restaurant_comparison_screen.dart';
-import 'recommendation_map_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-11 AI 추천 리스트 화면 (= 투표 화면)
@@ -415,11 +415,40 @@ class _RecommendationListScreenState
                     );
                     return;
                   }
+                  // 2026-05-14 신규 지도 화면 연결 (lib/features/map/...) — 기존 화면
+                  // (session 폴더)은 orphan 이 되었지만 다른 진입점에서 쓰일 가능성이 있어
+                  // 파일은 그대로 두고 신규 화면만 진입에 사용한다.
+                  // RecommendationDto → RestaurantMapPoint 변환:
+                  //   - 좌표 없는 식당(크롤 실패 등)은 안전하게 필터링
+                  //   - 좌표 있는 식당만 핀 + 미니카드로 표시
+                  final points = recs
+                      .where((r) => r.lat != null && r.lng != null)
+                      .map(
+                        (r) => RestaurantMapPoint(
+                          restaurant: _recToRestaurant(r),
+                          lat: r.lat!,
+                          lng: r.lng!,
+                        ),
+                      )
+                      .toList(growable: false);
+
+                  if (points.isEmpty) {
+                    // 모든 추천 식당에 좌표가 없는 케이스 — 친근 안내
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(
+                        content: Text(
+                          '식당 위치 정보가 아직 없어요. 잠시 후 다시 시도해봐요',
+                        ),
+                      ),
+                    );
+                    return;
+                  }
+
                   Navigator.of(context).push(
                     MaterialPageRoute(
                       builder: (_) => RecommendationMapScreen(
-                        recommendations: recs,
-                        sessionName: widget.sessionName,
+                        points: points,
+                        sessionTitle: widget.sessionName,
                       ),
                     ),
                   );

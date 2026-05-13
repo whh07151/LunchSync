@@ -194,6 +194,21 @@ export class CrawlService {
   // ── 1단계: 카카오 로컬 API 호출 ──────────────────────────
   // 카테고리 FD6 = 음식점
   // 반경 내 최대 45개 (페이지당 15개 × 3페이지)
+  //
+  // 2026-05-14 사장님 버그 신고 대응 ('위치권한 켜놨는데 식당 안 찾아짐'):
+  //   기존엔 KAKAO_REST_API_KEY 미설정 시 throw → NestJS 글로벌 필터가 500 응답으로
+  //   변환 → 클라이언트의 fire-and-forget 호출은 어차피 무시하지만, 추후 동기 흐름
+  //   (예: 동일 흐름에서 추천이 카운트되는 경우)에 빈 결과가 아닌 예외 폭주.
+  //
+  //   변경:
+  //   - 키 누락 → throw 대신 빈 배열 반환 + warn 로그.
+  //     상위 crawlAndSeed() 가 카카오 0개를 감지하면 곧바로 Gemini 가상 식당
+  //     폴백 경로(`fallbackGenerateVirtualRestaurants`)로 들어가 빈 화면을 막는다.
+  //   - 카카오 4xx (할당량/인증/지역 차단) → 기존처럼 break + 빈 배열로 폴백.
+  //
+  //   즉, AWS EC2 에 KAKAO_REST_API_KEY 가 누락된 채 배포돼도 Gemini 가 가상
+  //   식당 5개를 생성해 좌표 주변에 박아준다 (Gemini 키만 있으면 동작).
+  //   Gemini 키마저 없으면 빈 결과 반환 → 클라이언트가 "주변 식당이 없어요" 안내.
   private async searchKakaoPlaces(
     lat: number,
     lng: number,
@@ -201,7 +216,12 @@ export class CrawlService {
   ): Promise<KakaoPlace[]> {
     const apiKey = this.config.get<string>('KAKAO_REST_API_KEY');
     if (!apiKey) {
-      throw new Error('KAKAO_REST_API_KEY가 .env에 설정되지 않았습니다.');
+      // 환경변수 누락은 운영 사고이므로 warn 으로 즉시 가시화.
+      // throw 대신 빈 배열을 돌려서 Gemini 폴백 트리거.
+      this.logger.warn(
+        'KAKAO_REST_API_KEY 미설정 — 카카오 검색 스킵, Gemini 가상 식당 폴백으로 위임',
+      );
+      return [];
     }
 
     const allPlaces: KakaoPlace[] = [];
@@ -219,12 +239,27 @@ export class CrawlService {
       url.searchParams.set('size', '15');
       url.searchParams.set('page', page.toString());
 
-      const res = await fetch(url.toString(), {
-        headers: { Authorization: `KakaoAK ${apiKey}` },
-      });
+      let res: Response;
+      try {
+        // 네트워크 단절/타임아웃 등 예외도 break + 빈 배열로 폴백.
+        // 한 페이지 실패가 전체 흐름을 중단시키면 안 됨.
+        res = await fetch(url.toString(), {
+          headers: { Authorization: `KakaoAK ${apiKey}` },
+        });
+      } catch (e) {
+        this.logger.error(
+          `카카오 API 네트워크 예외 (page=${page}): ${(e as Error).message}`,
+        );
+        break;
+      }
 
       if (!res.ok) {
-        this.logger.error(`카카오 API 에러: ${res.status} ${res.statusText}`);
+        // 401/403 인증 만료, 429 할당량 초과, 5xx 카카오 장애 모두 동일 처리.
+        // 응답 본문을 200자만 잘라 로그에 남겨 원인 추적 도움.
+        const body = await res.text().catch(() => '');
+        this.logger.error(
+          `카카오 API 에러: ${res.status} ${res.statusText} body=${body.slice(0, 200)}`,
+        );
         break;
       }
 

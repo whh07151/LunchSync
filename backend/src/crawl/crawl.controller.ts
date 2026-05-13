@@ -1,4 +1,4 @@
-import { Controller, Post, Body, UseGuards } from '@nestjs/common';
+import { Controller, Post, Body, UseGuards, Logger } from '@nestjs/common';
 import { IsLatitude, IsLongitude, IsNumber, IsOptional, Max, Min } from 'class-validator';
 import { CrawlService } from './crawl.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -36,20 +36,51 @@ class CrawlRequestDto {
 @Controller('crawl')
 @UseGuards(JwtAuthGuard)
 export class CrawlController {
+  // 2026-05-14 사장님 버그 신고 ('식당 안 찾아짐'/500 응답) 대응으로 도입.
+  // service 내부에서 잡지 못한 예외가 끝까지 올라와도 500 대신 200 + 빈 결과로
+  // 응답하기 위해 controller 에 외곽 안전망을 두고 그 안에서 로그를 남긴다.
+  private readonly logger = new Logger(CrawlController.name);
+
   constructor(private readonly crawlService: CrawlService) {}
 
+  // ── POST /api/crawl/restaurants ─────────────────────────
+  // 클라이언트(session_create_screen.dart)는 이 호출을 fire-and-forget 으로
+  // 사용하므로 500 응답이 사용자 화면을 직접 막진 않지만, 그래도 200 으로
+  // 통일해두면:
+  //   - 클라이언트 로그가 '응답 실패: 500' 으로 도배되지 않음 → 진단 용이
+  //   - 향후 추천 동기 흐름이 이 API 결과를 카운트해도 0으로 안전 폴백
   @Post('restaurants')
   async crawlRestaurants(@Body() dto: CrawlRequestDto) {
     const radius = dto.radius || 1000;
-    const result = await this.crawlService.crawlAndSeed(
-      dto.lat,
-      dto.lng,
-      radius,
-    );
+    try {
+      const result = await this.crawlService.crawlAndSeed(
+        dto.lat,
+        dto.lng,
+        radius,
+      );
 
-    return {
-      success: true,
-      data: result,
-    };
+      return {
+        success: true,
+        data: result,
+      };
+    } catch (e) {
+      // 예: Supabase 일시적 장애, 카카오/네이버/Gemini 호출 전부 실패 등.
+      // 사용자에겐 친근하게, 운영 로그엔 원인 추적 정보 남김.
+      this.logger.error(
+        `크롤링 실패 lat=${dto.lat} lng=${dto.lng} radius=${radius}: ` +
+          `${(e as Error).message}`,
+      );
+      return {
+        success: false,
+        message:
+          '주변 식당을 가져오지 못했어요. 잠시 후 다시 시도하거나 기존 추천을 확인해주세요.',
+        data: {
+          totalSearched: 0,
+          totalSaved: 0,
+          totalMenus: 0,
+          restaurants: [],
+        },
+      };
+    }
   }
 }
