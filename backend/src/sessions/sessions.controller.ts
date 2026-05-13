@@ -42,6 +42,7 @@ type AuthedRequest = { user: AuthedRequestUser };
 //   GET    /api/sessions/today        — 오늘 내 세션 목록
 //   GET    /api/sessions/:id          — 세션 상세
 //   PATCH  /api/sessions/:id/status   — 세션 상태 변경
+//   DELETE /api/sessions/:id          — 세션 삭제 (호스트, WAITING/DONE 만)
 //   GET    /api/sessions/:id/members  — 세션 멤버 목록
 //   POST   /api/sessions/:id/members  — 멤버 추가
 //   DELETE /api/sessions/:id/members/:userId — 멤버 제거
@@ -155,6 +156,22 @@ export class SessionsController {
       id,
       req.user.userId,
       dto,
+    );
+    return { success: true, data: result };
+  }
+
+  // ── DELETE /api/sessions/:id ──────────────────────────
+  // 사장님 시연 피드백(2026-05-13) 반영: 잘못 만든 세션 삭제 기능.
+  // 권한: 호스트만 (assertHost) / 상태: WAITING|DONE 만 허용.
+  // 트랜잭션: delete_session_cascade RPC 로 5개 테이블 일괄 정리.
+  @Delete(':id')
+  async deleteSession(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+  ) {
+    const result = await this.sessionsService.deleteSession(
+      id,
+      req.user.userId,
     );
     return { success: true, data: result };
   }

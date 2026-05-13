@@ -13,6 +13,7 @@ import '../models/session.dart';
 //   GET    /api/sessions/today        — 오늘 내 세션 목록
 //   GET    /api/sessions/:id          — 세션 상세
 //   PATCH  /api/sessions/:id/status   — 상태 변경
+//   DELETE /api/sessions/:id          — 세션 삭제 (호스트, WAITING/DONE 만)
 //   GET    /api/sessions/:id/members  — 멤버 목록
 //   POST   /api/sessions/:id/members  — 멤버 추가
 //   DELETE /api/sessions/:id/members/:userId — 멤버 제거
@@ -214,6 +215,78 @@ class SessionsApiService {
     }
   }
 
+  // ── DELETE /api/sessions/:id ──────────────────────────
+  // 사장님 시연 피드백(2026-05-13) 반영 — 잘못 만든 세션 삭제.
+  // 백엔드 권한 정책:
+  //   - 호스트만 가능 (403)
+  //   - WAITING / DONE 상태에서만 가능 (400)
+  //   - 인증 만료 (401), 세션 없음 (404)
+  //
+  // 반환 타입은 SessionDeleteResult — 단순 bool 대신 statusCode/message 를
+  // 함께 전달해 UI 가 정확한 안내(재로그인/상태 오류/방장만 가능 등)를 띄울 수 있게 함.
+  Future<SessionDeleteResult> deleteSession({
+    required String accessToken,
+    required String sessionId,
+  }) async {
+    try {
+      final response = await http
+          .delete(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
+            headers: _headers(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+
+      if (response.statusCode == 200 || response.statusCode == 204) {
+        return const SessionDeleteResult.success();
+      }
+
+      // HTTP 상태별 한국어 메시지 — 친근 톤 유지
+      String message;
+      switch (response.statusCode) {
+        case 401:
+          message = '로그인이 풀렸어요. 다시 로그인하고 시도해봐요';
+          break;
+        case 403:
+          message = '방장만 세션을 삭제할 수 있어요';
+          break;
+        case 400:
+          message = '투표/주문이 진행 중인 세션은 삭제할 수 없어요. 세션을 종료한 뒤 다시 시도해봐요';
+          break;
+        case 404:
+          message = '이미 삭제된 세션이에요. 화면을 새로고침해봐요';
+          break;
+        default:
+          message = '세션을 삭제하지 못했어요. 잠시 후 다시 시도해봐요';
+      }
+      // 백엔드 message 우선 사용
+      try {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final raw = json['message'];
+        if (raw is String && raw.isNotEmpty) {
+          message = raw;
+        } else if (raw is List && raw.isNotEmpty) {
+          message = raw.first.toString();
+        }
+      } catch (_) {}
+
+      debugPrint(
+        '[SessionsApiService] deleteSession 실패: '
+        '${response.statusCode} body=${response.body}',
+      );
+      return SessionDeleteResult.failure(
+        statusCode: response.statusCode,
+        message: message,
+      );
+    } catch (e) {
+      debugPrint('[SessionsApiService] deleteSession 예외: $e');
+      return const SessionDeleteResult.failure(
+        statusCode: 0,
+        message: '서버에 닿지 못했어요. 인터넷 연결을 확인해봐요',
+      );
+    }
+  }
+
   // ── GET /api/sessions/:id/members ─────────────────────
   // 백엔드 응답: { totalCount, joinedCount, members[] }
   // 배열 직접이 아닌 래퍼 객체로 반환됨 → SessionMembersResponse 사용
@@ -301,6 +374,29 @@ class SessionStatusUpdateResult {
         message = null;
 
   const SessionStatusUpdateResult.failure({
+    required this.statusCode,
+    required this.message,
+  }) : isSuccess = false;
+
+  final bool isSuccess;
+  final int statusCode; // 0 = 네트워크/예외, 그 외 = HTTP 상태코드
+  final String? message; // UI 토스트에 그대로 표시할 한국어 메시지
+}
+
+
+// ══════════════════════════════════════════════════════════
+// SessionDeleteResult — deleteSession() 응답 래퍼
+//
+// SessionStatusUpdateResult 와 동일 패턴. 호출부가 statusCode 로 분기해
+// 정확한 토스트(403 → 방장만, 400 → 진행 중 차단, 401 → 재로그인) 노출 가능.
+// ══════════════════════════════════════════════════════════
+class SessionDeleteResult {
+  const SessionDeleteResult.success()
+      : isSuccess = true,
+        statusCode = 200,
+        message = null;
+
+  const SessionDeleteResult.failure({
     required this.statusCode,
     required this.message,
   }) : isSuccess = false;

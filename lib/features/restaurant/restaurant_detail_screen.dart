@@ -347,6 +347,26 @@ class _RestaurantDetailScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── 식당 대표 이미지 (와이드 배너) ───────────────
+          // [사장님 피드백 대응 — 2026-05-13]
+          //   기존엔 식당 상세에 사진이 한 장도 없어서 사장/손님 모두 어느
+          //   식당인지 시각적으로 가늠하기 어려웠다. FoodImage 공용 위젯을
+          //   사용해 화면 폭 100% × 160 높이 배너로 표시한다.
+          //   imageUrl 이 없는 식당(대부분)은 카테고리 이모지 fallback 으로
+          //   디자인 일관성을 유지(색상 토큰 그대로).
+          FoodImage(
+            imageUrl: r.imageUrl,
+            categoryLabel: r.category,
+            // 화면 폭에 맞추기 위해 무한대를 전달 — 부모 Container 가 폭을
+            // 제한해 주므로 실제 렌더링 시엔 화면 폭(- 패딩) 으로 확장됨.
+            width: double.infinity,
+            height: 160,
+            emojiSize: 72,
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            semanticLabel: '${r.name} 식당 사진',
+          ),
+          const SizedBox(height: AppSpacing.md),
+
           Text(r.name, style: AppTextStyles.heading1),
           const SizedBox(height: 4),
           Row(
@@ -440,6 +460,19 @@ class _RestaurantDetailScreenState
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── 메뉴 썸네일 (사장님 피드백 — 2026-05-13) ─────
+          //   미리보기 5개 행 좌측에 56px 정사각형 썸네일을 추가.
+          //   imageUrl 없으면 카테고리 이모지 fallback (FoodImage 내장 처리).
+          //   목록형이라 메뉴 카드(88px) 보다는 살짝 작게.
+          FoodImage(
+            imageUrl: m.imageUrl,
+            categoryLabel: m.category,
+            width: 56,
+            height: 56,
+            emojiSize: 28,
+            semanticLabel: '${m.name} 사진',
+          ),
+          const SizedBox(width: AppSpacing.sm),
           Expanded(
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,

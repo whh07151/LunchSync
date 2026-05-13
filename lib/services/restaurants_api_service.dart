@@ -14,6 +14,14 @@ import '../core/api/api_auth_hooks.dart';
 // ══════════════════════════════════════════════════════════
 
 /// 식당 데이터 모델
+///
+/// [imageUrl 처리 — 2026-05-13 추가]
+///   사장님 피드백("사진이 잘 보였으면") 대응을 위해 클라이언트 측에서
+///   먼저 imageUrl 매핑을 받을 수 있도록 옵셔널 필드를 추가했다.
+///   현재 백엔드 restaurants 응답에는 image_url 컬럼이 select 에 포함되지
+///   않으므로 대부분 null 로 들어오지만, 추후 백엔드가 채워주기만 하면
+///   클라이언트는 자동으로 사진을 렌더링한다. null 일 때는 FoodImage
+///   위젯이 카테고리별 이모지 fallback 으로 graceful 하게 대체.
 class RestaurantDto {
   const RestaurantDto({
     required this.id,
@@ -23,6 +31,7 @@ class RestaurantDto {
     this.address,
     this.lat,
     this.lng,
+    this.imageUrl,
   });
 
   final String id;
@@ -32,6 +41,9 @@ class RestaurantDto {
   final String? address;
   final double? lat;
   final double? lng;
+  /// 식당 대표 이미지 URL. 백엔드가 내려주지 않으면 null.
+  /// FoodImage 위젯에서 null/빈 문자열을 안전 처리하므로 그대로 전달해도 됨.
+  final String? imageUrl;
 
   factory RestaurantDto.fromJson(Map<String, dynamic> json) {
     return RestaurantDto(
@@ -42,6 +54,8 @@ class RestaurantDto {
       address: json['address'] as String?,
       lat: (json['lat'] as num?)?.toDouble(),
       lng: (json['lng'] as num?)?.toDouble(),
+      // 백엔드가 응답에 imageUrl 키를 포함하지 않더라도 안전(null) 매핑.
+      imageUrl: json['imageUrl'] as String?,
     );
   }
 }

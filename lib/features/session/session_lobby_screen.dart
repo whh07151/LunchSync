@@ -23,8 +23,11 @@ import 'recommendation_list_screen.dart';
 //   - 세션 상태 표시
 //   - 세션 조건(예산/반경/복귀시간) 칩 표시
 //   - scheduledAt 기반 점심시간 카운트다운 (1초 갱신)
+//   - **자동 라우팅**: 폴링 도중 status 가 VOTING 으로 바뀌면
+//     멤버 화면도 즉시 RecommendationListScreen 으로 자동 이동.
+//     → 사장님 시연 피드백("투표 시작 이후 어디서 투표하는지 모름") 해결.
 //
-// 폴링: Timer.periodic 3초 간격 (멤버 목록)
+// 폴링: Timer.periodic 3초 간격 (멤버 목록 + 세션 상세)
 //   백그라운드 진입 시 취소, 복귀 시 재시작 (WidgetsBindingObserver)
 //
 // 카운트다운 타이머: Timer.periodic 1초 간격
@@ -61,6 +64,13 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
   // 카운트다운에 사용할 "현재 시각" — 1초마다 갱신해 UI rebuild 유도.
   DateTime _now = DateTime.now();
 
+  // ── 자동 라우팅 가드 ─────────────────────────────────────
+  // 폴링이 3초마다 돌며 status==VOTING 을 감지하면 RecommendationListScreen 으로
+  // 자동 이동시킨다. 이때 push 한 번 띄운 뒤에도 폴링이 계속 돌고 있으면
+  // 매 사이클마다 push 가 또 호출돼 화면이 여러 장 쌓이는 버그가 생긴다.
+  // _autoNavigatedToVoting=true 로 한 번만 이동하도록 잠근다.
+  bool _autoNavigatedToVoting = false;
+
   static const _sessionsApi = SessionsApiService();
 
   // ── 생명주기 ──────────────────────────────────────────
@@ -78,6 +88,9 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (widget.initialSession == null) _loadAll();
       _loadMembers(); // 멤버 목록은 항상 최초 1회 로드
+      // 진입 즉시 세션 상태도 1회 점검 — initialSession 으로 들어왔어도
+      // 그 사이 방장이 이미 투표를 시작했을 수 있음(딥링크/뒤로가기 경로).
+      _loadSessionStatus();
       _startPolling();
       _startCountdown();
     });
@@ -156,16 +169,62 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
     }
   }
 
+  // ── 세션 상세 갱신 (폴링용) ─────────────────────────────
+  // 멤버 목록과 별도로 status 변화를 감지하기 위해 1회 추가 호출한다.
+  // VOTING 으로 바뀌면 자동으로 추천 리스트 화면으로 멤버를 데려간다.
+  // (이전에는 폴링이 멤버만 갱신해서, 방장이 "투표 시작" 을 눌러도 멤버 화면이
+  //  로비에 그대로 머물러 "어디서 투표하지?" 라는 시연 피드백이 나왔음)
+  Future<void> _loadSessionStatus() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+
+    final session = await _sessionsApi.getSessionById(
+        accessToken: token, sessionId: widget.sessionId);
+    if (!mounted || session == null) return;
+
+    setState(() {
+      _session = session;
+    });
+
+    // status 가 VOTING 이고 아직 자동 이동을 안 했으면 즉시 추천 화면으로 push.
+    // 방장은 이미 _startVoting() 흐름에서 직접 push 하므로 _autoNavigatedToVoting
+    // 플래그가 켜져 있어 중복 이동되지 않는다.
+    if (session.status == 'VOTING' && !_autoNavigatedToVoting) {
+      _autoNavigatedToVoting = true;
+      // 폴링 콜백 안에서 직접 라우팅하면 setState 와 충돌하기 쉬워 다음 프레임에 예약.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _goToRecommendations(autoTransition: true);
+      });
+    }
+  }
+
   // ── 3초 폴링 시작 ──────────────────────────────────────
+  // 멤버 목록 + 세션 상세를 함께 갱신.
+  // 세션 상세 폴링은 status 변화 감지용이고, 변화가 감지되면
+  // _loadSessionStatus() 내부에서 자동 라우팅을 수행한다.
   void _startPolling() {
     _pollingTimer?.cancel();
     _pollingTimer = Timer.periodic(const Duration(seconds: 3), (_) {
       _loadMembers();
+      _loadSessionStatus();
     });
   }
 
   // ── AI 추천 리스트 화면으로 이동 ────────────────────────
-  void _goToRecommendations() {
+  // [autoTransition] true 면 status 폴링이 트리거한 자동 이동.
+  //   - 안내 스낵바를 1회 보여 사용자에게 "왜 화면이 바뀌었는지" 알려준다.
+  //   - 시연 피드백("어디서 투표하나요?") 의 핵심 해결 지점.
+  void _goToRecommendations({bool autoTransition = false}) {
+    if (autoTransition) {
+      // 친근 톤 + 다음 액션(고르기) 명시
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('투표가 시작됐어요! 마음에 드는 식당을 골라봐요'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => RecommendationListScreen(
@@ -173,7 +232,15 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
           sessionName: _session?.name ?? '점심 세션',
         ),
       ),
-    );
+    ).then((_) {
+      // 추천 화면에서 돌아왔을 때 다시 자동 이동이 발동하지 않도록
+      // 잠금을 유지한다. (status 가 여전히 VOTING 이면 push 또 시도될 수 있음)
+      // 단 status 가 WAITING 으로 되돌아간 경우엔 다시 감지하도록 해제.
+      if (!mounted) return;
+      if (_session?.status != 'VOTING') {
+        _autoNavigatedToVoting = false;
+      }
+    });
   }
 
   // ── 초대코드 클립보드 복사 ─────────────────────────────
@@ -437,17 +504,30 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
                   ),
           ),
 
-          // ── "AI 추천 보기" 버튼 (항상 노출) ────────────
-          // 멤버가 모집 중이라도 현재 조건으로 추천을 미리 확인할 수 있도록 허용.
-          // 실제 투표 시작은 팀원 담당 영역에서 처리.
+          // ── 메인 CTA 버튼 ───────────────────────────────
+          // 현재 세션 상태에 따라 라벨이 달라진다:
+          //   - WAITING: "AI 추천 보고 투표 시작하기" — 추천 화면으로 이동해
+          //     거기서 방장이 "투표 시작하기" 버튼을 누르는 흐름.
+          //   - VOTING:  "지금 투표하러 가기" — 이미 시작된 투표 화면으로 복귀.
+          //     멤버에겐 사실상 자동 이동되지만, 자동 이동이 실패했거나
+          //     사용자가 뒤로 돌아온 경우의 안전 진입 경로.
+          //
+          // 시연 피드백("투표가 어디서 진행되는지 모름") 해결 핵심:
+          //   - 동사를 분명히("투표하러 가기")
+          //   - VOTING 단계에서 강조색 + 깜빡임 같은 강조는 색상 변경 금지
+          //     원칙에 따라 적용하지 않음. 라벨 텍스트와 자동 이동만으로 명확화.
           Padding(
             padding: const EdgeInsets.only(
               top: AppSpacing.sm,
               bottom: AppSpacing.md,
             ),
             child: AppPrimaryButton(
-              label: 'AI 추천 보기',
-              onPressed: _goToRecommendations,
+              label: _session?.status == 'VOTING'
+                  ? '지금 투표하러 가기'
+                  : 'AI 추천 보고 투표 시작하기',
+              // tearoff 가 named optional 인자를 가져 VoidCallback 과 시그니처가
+              // 달라서 분석 경고가 날 수 있어 명시적 람다로 감싼다.
+              onPressed: () => _goToRecommendations(),
             ),
           ),
         ],

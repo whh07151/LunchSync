@@ -393,6 +393,85 @@ export class SessionsService {
     return { success: true };
   }
 
+  // ── DELETE /sessions/:id ──────────────────────────────
+  // 사장님 시연 피드백(2026-05-13) 반영:
+  //   "만든 세션 삭제도 가능하게 만들고싶고" — 잘못 만든 세션을 청소할 수 있게.
+  //
+  // 권한 정책:
+  //   - 호스트만 삭제 가능 (assertHost)
+  //   - WAITING / DONE 상태만 삭제 허용
+  //     (VOTING/ORDERED 는 다른 멤버에게 영향이 커 차단)
+  //
+  // 트랜잭션 안전성:
+  //   delete_session_cascade RPC 사용 — order_items / orders / votes /
+  //   session_members / sessions 다섯 테이블 DELETE 가 PostgreSQL 함수
+  //   단일 트랜잭션으로 묶임. 중간 실패 시 전체 롤백.
+  //
+  // RPC 내부에서도 status 를 재확인 — race condition 최후 방어선.
+  async deleteSession(
+    sessionId: string,
+    requesterId: string | undefined,
+  ): Promise<{ deletedSessionId: string; deletedAt: string }> {
+    // 1) 호스트 검증 (assertHost 내부에서 userId falsy → 401, 호스트 불일치 → 403)
+    await this.assertHost(sessionId, requesterId);
+
+    // 2) 현재 상태 조회 후 화이트리스트 검증 (사용자 친화 메시지를 미리 던지기 위해)
+    //    RPC 안에서도 동일하게 막지만, 여기서 먼저 잡으면 400 + 한국어 메시지 응답이 가능.
+    const { data: current, error: fetchError } = await this.supabase.client
+      .from('sessions')
+      .select('status')
+      .eq('id', sessionId)
+      .single();
+
+    if (fetchError || !current) {
+      throw new NotFoundException('세션을 찾을 수 없습니다.');
+    }
+
+    const deletableStatuses = ['WAITING', 'DONE'];
+    if (!deletableStatuses.includes(current.status)) {
+      // VOTING / ORDERED 중에는 멤버들이 이미 참여하고 있어 삭제 차단.
+      // 한국어 안내로 다음 액션(투표 종료 후 다시 시도) 유도.
+      throw new BadRequestException(
+        '투표/주문이 진행 중인 세션은 삭제할 수 없어요. 세션을 종료한 뒤 다시 시도해주세요.',
+      );
+    }
+
+    // 3) RPC 호출 — 다섯 테이블 cascade 삭제를 트랜잭션으로 묶음.
+    const { data, error } = await this.supabase.client.rpc(
+      'delete_session_cascade',
+      { p_session_id: sessionId },
+    );
+
+    if (error) {
+      // RPC 가 RAISE EXCEPTION 으로 던지는 SESSION_NOT_DELETABLE 은 race condition 보호용.
+      // 메시지 패턴 매칭으로 사용자 친화 응답으로 변환.
+      const message = error.message ?? '';
+      if (message.includes('SESSION_NOT_DELETABLE')) {
+        throw new BadRequestException(
+          '투표/주문이 진행 중인 세션은 삭제할 수 없어요. 세션을 종료한 뒤 다시 시도해주세요.',
+        );
+      }
+      this.logger.error(
+        `세션 삭제 RPC 오류 session=${sessionId} requester=${requesterId}: ${message}`,
+      );
+      throw new InternalServerErrorException(
+        '세션을 삭제하지 못했어요. 잠시 후 다시 시도해주세요.',
+      );
+    }
+
+    if (!data) {
+      // RPC 가 NULL 을 돌려준 경우 — 우리가 확인한 직후 다른 요청이 먼저 삭제한 상황.
+      throw new NotFoundException('세션이 이미 삭제되었거나 존재하지 않아요.');
+    }
+
+    this.logger.log(
+      `세션 삭제 완료 session=${sessionId} requester=${requesterId}`,
+    );
+
+    // RPC 는 { deletedSessionId, deletedAt } 형태로 응답 (camelCase).
+    return data as { deletedSessionId: string; deletedAt: string };
+  }
+
   // ── DELETE /sessions/:id/members/:userId ───────────────
   // 보안 패치:
   //   - 본인이 자기 자신을 제거 — 허용 (세션 나가기)

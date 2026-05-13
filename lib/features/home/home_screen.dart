@@ -670,6 +670,86 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  // ── 세션 삭제 가능 여부 판정 ────────────────────────────
+  // 사장님 시연 피드백(2026-05-13) 반영: 잘못 만든 세션 청소 기능.
+  // 백엔드 정책과 일치:
+  //   - 본인이 호스트 (createdBy.id == 내 userId)
+  //   - 상태가 WAITING 또는 DONE (VOTING/ORDERED 는 다른 멤버 영향)
+  //
+  // UI 단에서 메뉴 자체를 숨겨 "권한 없는 동작을 시도하다 403 받기" 흐름을 차단.
+  bool _canDeleteSession(Session session) {
+    final myUserId = ref.read(userProvider).userId;
+    if (myUserId == null) return false;
+    final hostId = session.createdBy?.id;
+    if (hostId == null || hostId != myUserId) return false;
+    return session.status == 'WAITING' || session.status == 'DONE';
+  }
+
+  // ── 세션 삭제 흐름 ──────────────────────────────────────
+  // 1) 확인 다이얼로그 (친근 톤) — 멤버 영향을 명시
+  // 2) 사용자가 "삭제하기" 선택 시 백엔드 호출
+  // 3) 성공: 목록 새로고침 + 스낵바 안내
+  //    실패: SessionDeleteResult.message 그대로 스낵바 노출 (재로그인/방장만/진행 중 등)
+  Future<void> _confirmAndDeleteSession(Session session) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('세션을 삭제할까요?', style: AppTextStyles.heading3),
+        content: Text(
+          // 본문 — 친근하지만 "되돌릴 수 없다" 명시
+          '"${session.name}"을(를) 삭제하면\n'
+          '멤버들이 더 이상 참여할 수 없어요.\n'
+          '이 작업은 되돌릴 수 없어요.',
+          style: AppTextStyles.bodyMedium,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            style: TextButton.styleFrom(foregroundColor: AppColors.error),
+            child: const Text('삭제하기'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('로그인이 풀렸어요. 다시 로그인해봐요')),
+        );
+      }
+      return;
+    }
+
+    final result = await const SessionsApiService().deleteSession(
+      accessToken: token,
+      sessionId: session.id,
+    );
+
+    if (!mounted) return;
+
+    if (result.isSuccess) {
+      // 성공 — 친근한 완료 안내 + 목록 새로고침
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('"${session.name}" 세션을 삭제했어요')),
+      );
+      // 화면 상의 세션 카드가 사라지도록 즉시 목록 재조회
+      await _loadTodaySessions();
+    } else {
+      // 실패 — 백엔드/네트워크에서 받은 한국어 메시지 그대로 노출
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.message ?? '세션을 삭제하지 못했어요')),
+      );
+    }
+  }
+
   // ── 오늘의 세션 카드 위젯 ──────────────────────────────────
   // 상태별 표시:
   //   ① 로딩 중        → 스피너 카드
@@ -744,7 +824,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
 
-          // ── 세션 상태 배지 + 세션 이름 ─────────────────
+          // ── 세션 상태 배지 + 세션 이름 + (호스트 한정) 삭제 메뉴 ──
           Row(
             children: [
               // 공통 AppBadge 컴포넌트 — 상태별 tone 자동 적용
@@ -766,6 +846,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                   overflow: TextOverflow.ellipsis,
                 ),
               ),
+
+              // 호스트 + WAITING/DONE 일 때만 우측 상단에 더보기 메뉴 노출.
+              // 사장님 피드백(2026-05-13) 반영: "만든 세션 삭제도 가능하게".
+              // 디자인 토큰 유지 — 새 카드/구조 변경 없이 점 세 개 아이콘만 추가.
+              if (_canDeleteSession(session))
+                _buildSessionMoreMenu(session),
             ],
           ),
 
@@ -828,6 +914,50 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       default:
         return AppBadgeTone.primary;
     }
+  }
+
+  // ── 세션 카드용 "더보기" 메뉴 위젯 ──────────────────────
+  // 점 세 개 아이콘을 눌렀을 때 "세션 삭제" 한 가지 액션을 노출.
+  // 호스트만 보이도록 호출부에서 _canDeleteSession 으로 게이팅.
+  // 향후 액션 추가(예: "복사하기", "공유") 시에도 이 위젯에 PopupMenuItem 만 늘리면 됨.
+  Widget _buildSessionMoreMenu(Session session) {
+    return PopupMenuButton<String>(
+      icon: Icon(
+        Icons.more_vert_rounded,
+        size: 20,
+        color: AppColors.iconInactive,
+      ),
+      // 메뉴 그림자/모서리 — 앱 카드 라운드 토큰과 통일
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(AppRadius.small),
+      ),
+      // 카드 자체 onTap(세션 입장) 과 충돌 방지 — 메뉴 활성화 시 카드 탭 발생 X.
+      // PopupMenuButton 은 자체 GestureDetector 가 부모 InkWell 까지 이벤트 전파 막아줌.
+      tooltip: '세션 메뉴',
+      onSelected: (value) async {
+        if (value == 'delete') {
+          await _confirmAndDeleteSession(session);
+        }
+      },
+      itemBuilder: (ctx) => [
+        PopupMenuItem<String>(
+          value: 'delete',
+          child: Row(
+            children: [
+              Icon(Icons.delete_outline_rounded,
+                  size: 18, color: AppColors.error),
+              const SizedBox(width: 8),
+              Text(
+                '세션 삭제',
+                style: AppTextStyles.bodyMedium.copyWith(
+                  color: AppColors.error,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
   }
 
   // 세션 정보 항목 하나 (아이콘 + 텍스트 조합)
@@ -1244,10 +1374,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             ],
                           ),
                         ),
-                        const Icon(
-                          Icons.chevron_right_rounded,
-                          color: AppColors.iconInactive,
-                        ),
+                        // 호스트 + 삭제 가능 상태이면 더보기 메뉴, 아니면 기존 chevron.
+                        // 구조/색상 변경 없이 우측 1개 위젯만 조건부 교체.
+                        if (_canDeleteSession(s))
+                          _buildSessionMoreMenu(s)
+                        else
+                          const Icon(
+                            Icons.chevron_right_rounded,
+                            color: AppColors.iconInactive,
+                          ),
                       ],
                     ),
                   ),

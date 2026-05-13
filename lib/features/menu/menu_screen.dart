@@ -480,19 +480,35 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
         children: [
 
           // ── 메뉴 이미지 영역 ─────────────────────────────
-          // item.imageUrl 이 있으면 Image.network, 없으면 음식 아이콘
-          Container(
-            width: 88,
-            height: 88,
-            decoration: BoxDecoration(
-              // 이미지 없을 때: 연한 주황 배경 + 음식 아이콘
-              color: item.isSoldOut
-                  ? AppColors.backgroundGrey     // 품절: 회색 배경
-                  : primary.withAlpha(15),        // 판매 중: 연한 주황 배경
-              borderRadius: BorderRadius.circular(AppRadius.card),
-            ),
-            child: item.isSoldOut
-                ? Center(
+          // [사장님 피드백 대응 — 2026-05-13]
+          //   기존: imageUrl 이 있어도 Image.network 자체를 호출하지 않고
+          //         항상 음식 아이콘만 그렸음 → 사진이 화면에 절대 노출되지 않음.
+          //   개선: FoodImage 공통 위젯으로 교체.
+          //         - imageUrl 이 있으면 실제 사진을 cover 로 표시
+          //         - 빈/잘못된 URL 또는 로드 실패 시 카테고리 이모지 fallback
+          //         - 품절 상태는 이미지 위에 반투명 오버레이로 표현
+          //
+          //   item.category.label = "밥류" / "면류" / "분식" / ... 등의 한글.
+          //   FoodImage 의 resolveFoodEmoji 가 이 라벨을 보고 알맞은 이모지를 고른다.
+          Stack(
+            children: [
+              // 사진(또는 카테고리 이모지) 본체
+              FoodImage(
+                imageUrl: item.imageUrl,
+                categoryLabel: item.category.label,
+                semanticLabel: '${item.name} 메뉴 사진',
+              ),
+              // ── 품절 오버레이 ───────────────────────────
+              // 품절일 때만 사진 위에 반투명 회색 + "품절" 텍스트.
+              // 색상 토큰은 backgroundGrey/textSecondary 그대로 사용.
+              if (item.isSoldOut)
+                Positioned.fill(
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: AppColors.backgroundGrey.withAlpha(210),
+                      borderRadius: BorderRadius.circular(AppRadius.card),
+                    ),
+                    alignment: Alignment.center,
                     child: Text(
                       '품절',
                       style: AppTextStyles.bodyMedium.copyWith(
@@ -500,14 +516,9 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                         fontWeight: FontWeight.w700,
                       ),
                     ),
-                  )
-                : Center(
-                    child: Icon(
-                      Icons.restaurant_rounded,
-                      color: primary.withAlpha(100),
-                      size: 36,
-                    ),
                   ),
+                ),
+            ],
           ),
 
           const SizedBox(width: AppSpacing.md),

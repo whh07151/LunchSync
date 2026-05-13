@@ -27,9 +27,12 @@ export class RestaurantsService {
   // ── GET /restaurants ──────────────────────────────────
   // 필터 조건으로 식당 목록 조회
   async getRestaurants(query: GetRestaurantsQuery) {
+    // 2026-05-13 image_url 컬럼 select 추가:
+    //   클라이언트 RestaurantDto.imageUrl 매핑용. 사장님 피드백 "사진 잘 보였으면"
+    //   대응. 카드/상세에서 사진 렌더링이 가능해짐 (없으면 FoodImage 폴백 동작).
     let qb = this.supabase.client
       .from('restaurants')
-      .select('id, name, category, price_range, address, lat, lng, created_at');
+      .select('id, name, category, price_range, address, lat, lng, image_url, created_at');
 
     if (query.category) {
       qb = qb.eq('category', query.category);
@@ -73,6 +76,7 @@ export class RestaurantsService {
       address: r.address,
       lat: r.lat,
       lng: r.lng,
+      imageUrl: r.image_url,
       createdAt: r.created_at,
     }));
   }
@@ -81,7 +85,7 @@ export class RestaurantsService {
   async getRestaurantById(id: string) {
     const { data, error } = await this.supabase.client
       .from('restaurants')
-      .select('id, name, category, price_range, address, lat, lng, created_at')
+      .select('id, name, category, price_range, address, lat, lng, image_url, created_at')
       .eq('id', id)
       .single();
 
@@ -97,6 +101,7 @@ export class RestaurantsService {
       address: data.address,
       lat: data.lat,
       lng: data.lng,
+      imageUrl: data.image_url,
       createdAt: data.created_at,
     };
   }
