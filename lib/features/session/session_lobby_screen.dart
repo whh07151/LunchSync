@@ -9,6 +9,7 @@ import '../../models/session.dart';
 import '../../providers/user_provider.dart';
 import '../../services/sessions_api_service.dart';
 import 'recommendation_list_screen.dart';
+import '../menu/menu_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 세션 로비 화면 (CU-10)
@@ -70,6 +71,13 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
   // 매 사이클마다 push 가 또 호출돼 화면이 여러 장 쌓이는 버그가 생긴다.
   // _autoNavigatedToVoting=true 로 한 번만 이동하도록 잠근다.
   bool _autoNavigatedToVoting = false;
+
+  // ── ORDERED 자동 라우팅 가드 (사장님 핵심 요구 #2) ───────────
+  // 호스트가 decide 를 누르거나 전원 투표로 결과가 확정되면 status 가
+  // ORDERED 로 바뀌고 winner_restaurant_id 가 채워진다. 이때 멤버 전원이
+  // 메뉴 선택 화면으로 자연스럽게 이동해야 "결정 → 주문" 흐름이 끊기지 않는다.
+  // _autoNavigatedToOrdered=true 로 1회만 실행 (중복 push 방지).
+  bool _autoNavigatedToOrdered = false;
 
   static const _sessionsApi = SessionsApiService();
 
@@ -197,6 +205,46 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
         _goToRecommendations(autoTransition: true);
       });
     }
+
+    // ── ORDERED 자동 라우팅 (사장님 핵심 요구 #2) ─────────
+    // 결과 확정 직후 모든 멤버가 메뉴 선택 화면으로 자동 진입.
+    //   - winner_restaurant_id 가 비어 있으면(에지 케이스) 라우팅 보류.
+    //   - 본 로비 화면을 그대로 두면 사용자가 뒤로가기 시 다시 돌아올 수 있어
+    //     pushReplacement 가 아닌 push 사용. ("결제 후 로비로 복귀" 동선 유지)
+    if (session.status == 'ORDERED' &&
+        !_autoNavigatedToOrdered &&
+        (session.winnerRestaurantId ?? '').isNotEmpty) {
+      _autoNavigatedToOrdered = true;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _goToMenuForWinner(session.winnerRestaurantId!);
+      });
+    }
+  }
+
+  // ── 우승 식당 메뉴 화면으로 이동 ─────────────────────────
+  // ORDERED 감지 시 호출. 친근 토스트 + MenuScreen push.
+  // 식당 이름은 우선 session 모델에 없어 fallback 으로 sessionName 또는
+  // "결정된 식당" 사용. (백엔드가 winnerRestaurantName 도 함께 내려주면 더 정확)
+  void _goToMenuForWinner(String winnerRestaurantId) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text('이 식당으로 결정됐어요! 메뉴 골라봐요'),
+        duration: Duration(seconds: 3),
+      ),
+    );
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => MenuScreen(
+          restaurantId: winnerRestaurantId,
+          restaurantName: '결정된 식당', // 백엔드 winner 이름 미지원 — fallback
+          sessionId: widget.sessionId,
+        ),
+      ),
+    ).then((_) {
+      // 메뉴 화면에서 돌아왔을 때 status 가 여전히 ORDERED 면 가드는 유지.
+      // DONE 으로 바뀌었다면 자동 라우팅이 다시 발동할 일이 없으므로 그대로 둠.
+    });
   }
 
   // ── 3초 폴링 시작 ──────────────────────────────────────

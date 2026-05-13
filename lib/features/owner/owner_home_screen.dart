@@ -44,7 +44,8 @@ class OwnerHomeScreen extends ConsumerStatefulWidget {
   ConsumerState<OwnerHomeScreen> createState() => _OwnerHomeScreenState();
 }
 
-class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
+class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
+    with WidgetsBindingObserver {
   int _currentTabIndex = 0;
 
   // 데이터 상태
@@ -62,17 +63,50 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
   @override
   void initState() {
     super.initState();
+    // 라이프사이클 옵저버 — 백그라운드 진입 시 폴링 일시 중단해 배터리/네트워크 절약.
+    WidgetsBinding.instance.addObserver(this);
     // 첫 진입 시 즉시 1회 조회 + 폴링 타이머 시작
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _fetchAll();
-      _pollTimer = Timer.periodic(_kOwnerPollInterval, (_) => _fetchAll());
+      _startPolling();
     });
   }
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _pollTimer?.cancel();
     super.dispose();
+  }
+
+  // ── 폴링 타이머 시작/중단 헬퍼 ─────────────────────────
+  // 라이프사이클에 따라 짧게 켜고 끄도록 분리. 중복 실행 가드 포함.
+  void _startPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = Timer.periodic(_kOwnerPollInterval, (_) => _fetchAll());
+  }
+
+  void _stopPolling() {
+    _pollTimer?.cancel();
+    _pollTimer = null;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    // 포그라운드 복귀: 즉시 1회 + 폴링 재개. 백그라운드/일시정지: 폴링 중단.
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _fetchAll();
+        _startPolling();
+        break;
+      case AppLifecycleState.paused:
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.detached:
+      case AppLifecycleState.hidden:
+        _stopPolling();
+        break;
+    }
   }
 
   // ── 데이터 조회 (stats + orders 병렬) ─────────────────
@@ -105,6 +139,9 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen> {
       });
     } catch (e) {
       if (!mounted) return;
+      // 실패 시 이전 데이터(_stats/_orders) 유지 — 폴링 1회 실패로 화면이
+      // 빈 상태로 돌아가 깜빡거리는 인상이 컸음(사장님 피드백 2026-05-14).
+      // 에러 배너만 노출하고 마지막 성공 데이터 그대로 보여준다.
       setState(() {
         _loadError = '데이터를 불러오지 못했어요';
         _isLoading = false;

@@ -106,6 +106,16 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
   // 같은 화면에서 토스트가 여러 번 떠 사용자를 괴롭히지 않도록 플래그.
   bool _permissionToastShown = false;
 
+  // ── 지도 SDK 폴백 플래그 ────────────────────────────────
+  // 사장님 피드백(2026-05-14) 반영: 카카오 JS SDK 로드 실패 시 회색 빈 화면이
+  // 떠 답답함이 컸음. 직접적인 onError 콜백이 KakaoMapWidget 에 없어,
+  //   ① 5초 타이머 만료까지 사용자가 보고 있는데 지도가 안 보이면 안내 오버레이
+  //   ② 사용자가 "리스트만 보기" 누르면 미니카드 전체화면으로 전환
+  // 두 가지 보수적 패턴으로 폴백을 제공한다.
+  Timer? _mapHintTimer;
+  bool _showMapHint = false;        // 5초 후 안내 오버레이 노출 플래그
+  bool _listOnlyMode = false;       // 사용자가 직접 리스트 전용 모드로 전환했는가
+
   @override
   void initState() {
     super.initState();
@@ -114,12 +124,22 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
       _loadInitialLocation();
       _subscribeLocationUpdates();
     });
+
+    // 5초 안에 사용자가 지도를 인식 못 했을 가능성을 가정하고 안내 오버레이.
+    // 실제 SDK 로드 실패를 직접 감지할 수 없어, 시간 기반 휴리스틱으로 폴백한다.
+    // 사용자가 이미 리스트 전용 모드로 전환했거나 화면이 사라진 경우 무시.
+    _mapHintTimer = Timer(const Duration(seconds: 5), () {
+      if (!mounted) return;
+      if (_listOnlyMode) return;
+      setState(() => _showMapHint = true);
+    });
   }
 
   @override
   void dispose() {
-    // 스트림 구독 정리 — 화면이 사라질 때 GPS 콜백이 계속 살아있으면 안 됨.
+    // 스트림/타이머 구독 정리 — 화면이 사라질 때 GPS 콜백이 계속 살아있으면 안 됨.
     _positionSub?.cancel();
+    _mapHintTimer?.cancel();
     super.dispose();
   }
 
@@ -273,8 +293,16 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
 
   // 지도 + 하단 미니 카드 본문.
   // 비율: 지도 70% / 미니 카드 30% — 작은 폰에서도 두 영역 모두 식별 가능하도록.
+  // 폴백 모드(_listOnlyMode=true) 에서는 지도 영역을 0으로 줄이고
+  // 미니 카드 리스트만 세로 형태로 전체화면 표시 → 사장님 피드백 반영.
   Widget _buildMapBody(
       List<KakaoMapPin> pins, List<RestaurantMapPoint> points) {
+    // 리스트 전용 모드 — 지도 SDK 로드 실패한 경우 사용자가 직접 전환.
+    // 가로 스크롤이 아닌 세로 스크롤로 전환해 전체 식당을 한 눈에 훑을 수 있도록.
+    if (_listOnlyMode) {
+      return _buildListOnlyBody(points);
+    }
+
     return LayoutBuilder(
       builder: (context, constraints) {
         // 화면 높이의 70%를 지도에 — 최소 240px 보장 (작은 폰 폴드 모드 대응).
@@ -282,16 +310,38 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
             (constraints.maxHeight * 0.7).clamp(240.0, constraints.maxHeight);
         return Column(
           children: [
-            // ── 상단 지도 영역 ───────────────────────────
+            // ── 상단 지도 영역 + 안내 오버레이 ───────────
+            // Stack 으로 지도 위에 안내 오버레이(폴백 유도)와 우상단 토글 버튼을 올림.
             SizedBox(
               height: mapHeight,
-              child: KakaoMapWidget(
-                pins: pins,
-                myLocation: _myLocationPin,
-                jsAppKey: AppConfig.kakaoJavaScriptAppKey,
-                height: mapHeight,
-                // 줌 레벨 4 — 식당이 1~2km 반경에 흩어진 케이스 평균에 적합.
-                zoomLevel: 4,
+              child: Stack(
+                children: [
+                  KakaoMapWidget(
+                    pins: pins,
+                    myLocation: _myLocationPin,
+                    jsAppKey: AppConfig.kakaoJavaScriptAppKey,
+                    height: mapHeight,
+                    // 줌 레벨 4 — 식당이 1~2km 반경에 흩어진 케이스 평균에 적합.
+                    zoomLevel: 4,
+                  ),
+                  // 우상단 "리스트만 보기" 토글 — 항상 노출.
+                  // 사장님 피드백("지도 안 보일 때 답답") 우선 해소 — 사용자가
+                  // 즉시 폴백할 수 있는 즉답형 버튼.
+                  Positioned(
+                    top: 12,
+                    right: 12,
+                    child: _buildListOnlyToggle(),
+                  ),
+                  // 5초 후에도 사용자가 안내가 필요하다면 살짝 떠오르는 힌트.
+                  // 실제 SDK 로드 실패를 알 수 없으므로 "안 보이면 눌러보세요" 톤.
+                  if (_showMapHint)
+                    Positioned(
+                      left: 12,
+                      right: 12,
+                      bottom: 12,
+                      child: _buildMapHintBanner(),
+                    ),
+                ],
               ),
             ),
 
@@ -315,6 +365,159 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
           ],
         );
       },
+    );
+  }
+
+  // 우상단 "리스트만 보기" 토글 버튼 — 지도 위 떠 있는 작은 칩.
+  // 폴백 시 즉시 누를 수 있어 사용자가 막힌 느낌을 받지 않도록 함.
+  Widget _buildListOnlyToggle() {
+    return Material(
+      color: Colors.white.withAlpha(230),
+      borderRadius: BorderRadius.circular(999),
+      elevation: 2,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(999),
+        onTap: () {
+          setState(() {
+            _listOnlyMode = true;
+            _showMapHint = false;
+          });
+        },
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.view_list_rounded,
+                size: 16,
+                color: AppColors.textPrimary,
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '리스트만 보기',
+                style: AppTextStyles.caption.copyWith(
+                  color: AppColors.textPrimary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // 5초 후 떠오르는 안내 배너 — 지도가 안 보일 때 다음 액션 안내.
+  // 카카오 SDK 로드 실패의 실제 신호는 못 받지만 "안 보이면 눌러요" 톤으로 우회.
+  Widget _buildMapHintBanner() {
+    return Material(
+      color: AppColors.surface,
+      elevation: 4,
+      borderRadius: BorderRadius.circular(AppRadius.card),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.md,
+          vertical: AppSpacing.sm,
+        ),
+        child: Row(
+          children: [
+            Icon(
+              Icons.info_outline_rounded,
+              size: 18,
+              color: Theme.of(context).colorScheme.primary,
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                '지도가 안 보이나요? 아래 식당 목록도 확인해봐요',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textPrimary,
+                ),
+              ),
+            ),
+            // 닫기 버튼 — 1회 본 사용자에게 다시 강요하지 않도록.
+            InkWell(
+              onTap: () => setState(() => _showMapHint = false),
+              borderRadius: BorderRadius.circular(999),
+              child: Padding(
+                padding: const EdgeInsets.all(2),
+                child: Icon(
+                  Icons.close_rounded,
+                  size: 16,
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // 리스트 전용 모드 본문 — 지도 영역 없이 미니 카드만 세로 스크롤.
+  // 상단에 다시 지도로 돌아갈 수 있는 작은 칩 노출.
+  Widget _buildListOnlyBody(List<RestaurantMapPoint> points) {
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(
+            AppSpacing.md,
+            AppSpacing.sm,
+            AppSpacing.md,
+            0,
+          ),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  '리스트 보기',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              // 다시 지도 보기 — 일시적 폴백이라는 신호를 주기 위한 단방향 복귀.
+              InkWell(
+                borderRadius: BorderRadius.circular(999),
+                onTap: () => setState(() => _listOnlyMode = false),
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 6,
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(
+                        Icons.map_outlined,
+                        size: 14,
+                        color: AppColors.textSecondary,
+                      ),
+                      const SizedBox(width: 4),
+                      Text(
+                        '지도 다시 보기',
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.textSecondary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Expanded(
+          child: ListView.separated(
+            padding: const EdgeInsets.all(AppSpacing.md),
+            itemCount: points.length,
+            separatorBuilder: (_, _) => const SizedBox(height: 10),
+            itemBuilder: (_, i) => _buildMiniCard(points[i], i + 1),
+          ),
+        ),
+      ],
     );
   }
 

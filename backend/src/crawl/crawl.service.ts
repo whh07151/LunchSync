@@ -127,7 +127,16 @@ export class CrawlService {
                 name: m.name,
                 price: m.price,
                 description: '', // Gemini 는 설명은 안 받음 (재료 위주)
-                imageUrl: null,
+                // ── 사장님 피드백 대응 (2026-05-14) ─────────────
+                //   "메뉴넣으면서 이미지도 넣어달라니까"
+                //   Gemini 폴백 메뉴는 자체 imageUrl 이 없으므로 Unsplash
+                //   Source API 로 메뉴명 키워드 기반 음식 사진을 자동 매핑.
+                //   - 한국 식당 위주이므로 "korean,food" 카테고리 강제
+                //   - 메뉴명을 추가 키워드로 넣어 비빔밥/김치찌개 등 매칭
+                //   - 404 시 Unsplash 가 기본 음식 사진으로 대체해 줌
+                //   카테고리 라이브러리 폴백(pickMenusForCategory)은 이미
+                //   Unsplash URL 내장이라 그대로 유지.
+                imageUrl: `https://source.unsplash.com/400x300/?korean,food,${encodeURIComponent(m.name)}`,
                 ingredients: m.ingredients,
                 allergens: m.allergens,
                 source: 'AI_GEMINI',
@@ -374,6 +383,16 @@ export class CrawlService {
     const priceRange = avgPrice > 0 ? Math.round(avgPrice / 1000) : 2;
 
     // restaurants 테이블에 upsert
+    //
+    // ── 평점(rating) 매핑 (2026-05-14 추가) ─────────────────
+    //   사장님 피드백 "네이버나 구글로 식당 평점 조사한 거 맞아?" 대응.
+    //   네이버 플레이스 reviewScore 를 fetchNaverPlaceDetail() 에서 이미
+    //   parseFloat 으로 수집 중이지만(L322 근처) DB rating 컬럼이 없어
+    //   버려지고 있었음. 마이그레이션 2026-05-14-add-rating-column.sql
+    //   로 NUMERIC(2,1) 컬럼이 생겼고, 여기서 실제로 값을 박는다.
+    //   - 네이버에서 못 가져온 경우(rating === 0 이거나 detail null) null 저장
+    //   - 0 점은 의미가 없으므로 null 로 정규화(추천 가중치 계산 시 영향 회피)
+    const ratingRaw = naverDetail?.rating ?? 0;
     const restaurantData = {
       name: kakaoPlace.place_name,
       category,
@@ -381,6 +400,7 @@ export class CrawlService {
       lat: parseFloat(kakaoPlace.y),
       lng: parseFloat(kakaoPlace.x),
       price_range: priceRange,
+      rating: ratingRaw > 0 ? ratingRaw : null,
     };
 
     // 이름+주소로 기존 데이터 확인
@@ -605,7 +625,11 @@ export class CrawlService {
           price: m.price,
           category: m.category,
           description: '', // Gemini 는 설명 미생성
-          image_url: null,
+          // ── 사장님 피드백 대응 (2026-05-14) ─────────────────
+          //   가상 식당 폴백 경로에서도 메뉴 이미지를 자동 매핑.
+          //   Unsplash Source API + 메뉴명 키워드로 음식 사진을 채워줘
+          //   "메뉴는 있는데 사진은 비어있다" 시연 임팩트 손실을 막는다.
+          image_url: `https://source.unsplash.com/400x300/?korean,food,${encodeURIComponent(m.name)}`,
           ingredients: m.ingredients,
           allergens: m.allergens,
           source: 'AI_GEMINI',

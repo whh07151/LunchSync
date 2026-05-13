@@ -55,7 +55,12 @@ class HomeScreen extends ConsumerStatefulWidget {
   ConsumerState<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends ConsumerState<HomeScreen> {
+// WidgetsBindingObserver: 앱 라이프사이클(포그라운드/백그라운드) 변화 수신.
+// 사장님 피드백(2026-05-13) 반영: 위치 권한을 시스템 설정에서 켜고 돌아왔을 때
+// 자동 재크롤로 빈 상태에서 빠져나오게 함. 권한 변경 자체는 OS 이벤트가 없어
+// "포그라운드 복귀 시점" 을 트리거로 사용한다.
+class _HomeScreenState extends ConsumerState<HomeScreen>
+    with WidgetsBindingObserver {
   // ── 하단 탭바 상태 ─────────────────────────────────────
   // 현재 선택된 탭의 인덱스 (0: 홈, 1: 점심세션, 2: 주문현황, 3: 내역, 4: 내정보)
   // 기본값: 0 (홈 탭)
@@ -96,11 +101,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   double? _userLat;
   double? _userLng;
 
+  // ── 위치 권한 상태 ────────────────────────────────────
+  // 빈 상태 카피를 세 갈래로 분기하기 위한 플래그.
+  //   true  : 권한 OK → "주변 식당 찾는 중..." + LoadingIndicator
+  //   false : 거부/제한 → "위치 권한을 켜주세요" + 설정 안내
+  //   null  : 아직 미확인(첫 진입 직후) → 단순 안내
+  // 자동 크롤 진입 시 1회 평가하고, 포그라운드 복귀 시 재평가.
+  bool? _hasLocationPermission;
+
   // ── 생명주기: 화면이 처음 만들어질 때 ──────────────────
   @override
   void initState() {
     super.initState();
     DebugToast.show(context, 'CU-06');
+
+    // 앱 라이프사이클 옵저버 등록 — 포그라운드 복귀 감지용.
+    // dispose 에서 짝맞춰 removeObserver 호출 필수.
+    WidgetsBinding.instance.addObserver(this);
 
     // 화면 진입 시 DB에서 최신 프로필 조회 후 userProvider 갱신.
     // addPostFrameCallback: initState 안에서 ref.read가 안전하게 실행되도록
@@ -122,10 +139,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
   @override
   void dispose() {
-    // 홈 화면 이탈 시 스트림/타이머 해제 — 배터리/권한 UI 정리
+    // 홈 화면 이탈 시 스트림/타이머/옵저버 해제 — 배터리/권한 UI 정리
+    WidgetsBinding.instance.removeObserver(this);
     _positionSub?.cancel();
     _unreadPollingTimer?.cancel();
     super.dispose();
+  }
+
+  // ── 앱 라이프사이클 콜백 ──────────────────────────────
+  // 사용자가 시스템 설정에서 위치 권한을 켜고 앱으로 돌아오면
+  // 자동으로 한 번 더 크롤 시도. 빈 상태로 머무는 경험을 줄인다.
+  // resumed 외 상태(paused/inactive 등)는 모두 무시.
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state != AppLifecycleState.resumed) return;
+    // 식당 목록이 비어 있고 권한 거부 상태였을 때만 재시도 — 불필요한 호출 방지.
+    final isEmpty = (_recommendedRestaurants ?? const []).isEmpty;
+    if (!isEmpty) return;
+    // 쿨다운 무시하고 한 번 즉시 시도 — 사용자가 직접 행동(설정 변경)을 한 직후라서
+    // 사용자 입장에서 "다녀왔는데도 안 채워지면" 실망감이 큼.
+    _lastCrawlAt = null;
+    _startAutoCrawl();
   }
 
   // ── 멤버 선택 화면(CU-08)으로 이동 ──────────────────────
@@ -200,6 +235,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     // 1) 진입 시 1회 스냅샷 기반 크롤링
     () async {
       final pos = await const GeolocationService().getCurrentPosition();
+      if (!mounted) return;
+      // 권한 상태 플래그 갱신 — 빈 상태 카피 분기에 사용.
+      setState(() => _hasLocationPermission = pos != null);
       if (pos != null) {
         _updateUserCoord(pos);            // 거리 표기용 좌표 갱신
         await _triggerCrawlIfCooled(pos);
@@ -485,7 +523,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           const SizedBox(height: AppSpacing.lg),
 
           // ── AI 추천 식당 섹션 ────────────────────────────
-          _buildSectionTitle('AI 추천 식당'),
+          // 타이틀 옆에 "기준" 칩을 함께 노출 → 사장님 피드백
+          // ("AI 추천 기준이 불명") 반영. 별도 정보 다이얼로그 없이
+          // 한 줄로 "왜 이 식당이 보이는가" 를 즉시 이해할 수 있게 함.
+          _buildRecommendationSectionHeader(),
           const SizedBox(height: AppSpacing.sm),
 
           // 가로 스크롤 식당 카드 목록
@@ -670,19 +711,109 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
     );
   }
 
+  // ── "AI 추천 식당" 섹션 전용 헤더 ────────────────────────
+  // 타이틀(heading3) + 그 아래 작은 기준 안내 칩.
+  // 사장님 피드백(2026-05-13) 반영: "AI 추천 기준이 뭔지 모르겠다" 해소.
+  // 칩은 backgroundGrey + 작은 caption 으로, 디자인 토큰 추가 없음.
+  Widget _buildRecommendationSectionHeader() {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.screenHorizontal,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              Text('AI 추천 식당', style: AppTextStyles.heading3),
+              const SizedBox(width: AppSpacing.sm),
+              // 기준 안내 칩 — 작고 부드러운 회색 톤.
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.backgroundGrey,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Icon(
+                      Icons.auto_awesome_rounded,
+                      size: 11,
+                      color: AppColors.textSecondary,
+                    ),
+                    const SizedBox(width: 3),
+                    Text(
+                      '위치·가격·평점 기반',
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.textSecondary,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ── 내가 이 세션의 호스트인지 판정 ───────────────────────
+  // 호스트면 더보기 메뉴를 노출(삭제 불가 상태여도 안내용으로 표시).
+  // 사장님 피드백(2026-05-14) 반영: 메뉴 자체가 안 보여 "왜 어떤 건 삭제 가능
+  // 어떤 건 안 되나" 혼란이 컸음. 메뉴는 항상 보이고, 비활성/안내로 분기.
+  bool _isSessionHost(Session session) {
+    final myUserId = ref.read(userProvider).userId;
+    if (myUserId == null) return false;
+    final hostId = session.createdBy?.id;
+    return hostId != null && hostId == myUserId;
+  }
+
   // ── 세션 삭제 가능 여부 판정 ────────────────────────────
-  // 사장님 시연 피드백(2026-05-13) 반영: 잘못 만든 세션 청소 기능.
   // 백엔드 정책과 일치:
   //   - 본인이 호스트 (createdBy.id == 내 userId)
   //   - 상태가 WAITING 또는 DONE (VOTING/ORDERED 는 다른 멤버 영향)
   //
-  // UI 단에서 메뉴 자체를 숨겨 "권한 없는 동작을 시도하다 403 받기" 흐름을 차단.
+  // UI 단에서는 메뉴를 숨기지 않고, 비활성 + 안내 다이얼로그로 노출.
   bool _canDeleteSession(Session session) {
-    final myUserId = ref.read(userProvider).userId;
-    if (myUserId == null) return false;
-    final hostId = session.createdBy?.id;
-    if (hostId == null || hostId != myUserId) return false;
+    if (!_isSessionHost(session)) return false;
     return session.status == 'WAITING' || session.status == 'DONE';
+  }
+
+  // ── 삭제 불가 안내 다이얼로그 ───────────────────────────
+  // VOTING/ORDERED 처럼 진행 중인 세션을 호스트가 삭제 시도할 때 노출.
+  // 사장님 피드백: "왜 어떤 건 안 되는지" 가 핵심. 사유와 다음 액션을 함께 안내.
+  Future<void> _showDeleteBlockedDialog(Session session) async {
+    // 한국어 상태 라벨 — 사용자에게 더 친근.
+    final statusKor = switch (session.status) {
+      'VOTING' => '투표 중',
+      'ORDERED' => '주문이 진행 중',
+      _ => '진행 중',
+    };
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('지금은 삭제할 수 없어요', style: AppTextStyles.heading3),
+        content: Text(
+          '"${session.name}"은(는) $statusKor 인 세션이라\n'
+          '안전을 위해 삭제가 막혀 있어요.\n\n'
+          '세션 종료 후 다시 시도해봐요.',
+          style: AppTextStyles.bodyMedium,
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(),
+            child: const Text('알겠어요'),
+          ),
+        ],
+      ),
+    );
   }
 
   // ── 세션 삭제 흐름 ──────────────────────────────────────
@@ -850,10 +981,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                 ),
               ),
 
-              // 호스트 + WAITING/DONE 일 때만 우측 상단에 더보기 메뉴 노출.
-              // 사장님 피드백(2026-05-13) 반영: "만든 세션 삭제도 가능하게".
-              // 디자인 토큰 유지 — 새 카드/구조 변경 없이 점 세 개 아이콘만 추가.
-              if (_canDeleteSession(session))
+              // 호스트면 항상 더보기 메뉴 노출 — 진행 중이면 비활성+안내로 표시.
+              // 사장님 피드백(2026-05-14): "어떤 건 메뉴가 보이고 어떤 건
+              // 안 보여 헷갈렸다" 해소. 메뉴 자체는 일관적으로 노출.
+              if (_isSessionHost(session))
                 _buildSessionMoreMenu(session),
             ],
           ),
@@ -923,10 +1054,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
   }
 
   // ── 세션 카드용 "더보기" 메뉴 위젯 ──────────────────────
-  // 점 세 개 아이콘을 눌렀을 때 "세션 삭제" 한 가지 액션을 노출.
-  // 호스트만 보이도록 호출부에서 _canDeleteSession 으로 게이팅.
+  // 호스트면 항상 노출. 삭제 가능 여부는 PopupMenuItem 단에서 enabled 분기로
+  // 시각적으로 비활성(회색) 처리 + 탭 시 사유 안내 다이얼로그.
   // 향후 액션 추가(예: "복사하기", "공유") 시에도 이 위젯에 PopupMenuItem 만 늘리면 됨.
   Widget _buildSessionMoreMenu(Session session) {
+    final canDelete = _canDeleteSession(session);
+    // 비활성 시 글자색 — 카드 톤과 통일된 회색.
+    final itemColor = canDelete ? AppColors.error : AppColors.iconInactive;
     return PopupMenuButton<String>(
       icon: Icon(
         Icons.more_vert_rounded,
@@ -942,21 +1076,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       tooltip: '세션 메뉴',
       onSelected: (value) async {
         if (value == 'delete') {
-          await _confirmAndDeleteSession(session);
+          if (canDelete) {
+            await _confirmAndDeleteSession(session);
+          } else {
+            // 삭제 불가 상태에서 탭한 경우 — 사유 안내 다이얼로그.
+            await _showDeleteBlockedDialog(session);
+          }
         }
       },
       itemBuilder: (ctx) => [
         PopupMenuItem<String>(
           value: 'delete',
+          // enabled 를 false 로 두면 onSelected 가 호출되지 않아 안내 다이얼로그를
+          // 띄울 수 없음 → 의도적으로 true 유지하고 색상만 비활성처럼 표현.
           child: Row(
             children: [
-              Icon(Icons.delete_outline_rounded,
-                  size: 18, color: AppColors.error),
+              Icon(Icons.delete_outline_rounded, size: 18, color: itemColor),
               const SizedBox(width: 8),
+              // 삭제 가능 여부와 무관하게 동일 카피 — 단, 비활성 색상으로 구분.
+              // 탭 시점에 onSelected 에서 사유 안내 다이얼로그가 뜨므로,
+              // "왜 안 되는지" 가 한 번의 액션으로 즉시 노출됨.
               Text(
                 '세션 삭제',
                 style: AppTextStyles.bodyMedium.copyWith(
-                  color: AppColors.error,
+                  color: itemColor,
                 ),
               ),
             ],
@@ -1012,8 +1155,38 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
 
     final restaurants = _recommendedRestaurants ?? const <RestaurantDto>[];
 
-    // 추천 결과 없음 — 단순 텍스트 대신 안내 일러스트 + 새로고침 CTA
+    // 추천 결과 없음 — 권한 상태에 따라 세 갈래로 안내 분기.
+    //   (a) 권한 OK    : "주변 식당 찾는 중" + 작은 스피너 → 자동 크롤 끝나길 기다리는 인상
+    //   (b) 권한 거부 : "위치 권한을 켜주세요" + 설정/재시도 버튼
+    //   (c) 미확인    : 권한 평가 전 → "잠시만요" 정도의 중립 카피
+    // 카드 구조/색상 토큰은 동일. 카피와 보조 위젯(스피너/설정버튼)만 분기.
     if (restaurants.isEmpty) {
+      final hasPerm = _hasLocationPermission;
+      // 분기별 화면 데이터 — 한 카드 안에서 자연스럽게 바뀜.
+      final IconData icon;
+      final String title;
+      final String subtitle;
+      final bool showSpinner;       // 권한 OK 일 때만 스피너 노출
+      final bool showRetry;         // 권한 거부 시 강조 버튼 1개로 단순화
+      if (hasPerm == true) {
+        icon = Icons.location_searching_rounded;
+        title = '주변 식당을 찾고 있어요';
+        subtitle = '위치 기반으로 식당을 모으는 중이에요. 잠시만요!';
+        showSpinner = true;
+        showRetry = true;
+      } else if (hasPerm == false) {
+        icon = Icons.location_off_rounded;
+        title = '위치 권한이 필요해요';
+        subtitle = '주변 식당을 추천하려면 위치 권한을 켜주세요.\n설정에서 켠 뒤 다시 시도해봐요';
+        showSpinner = false;
+        showRetry = true;
+      } else {
+        icon = Icons.location_searching_rounded;
+        title = '잠시만요, 준비 중이에요';
+        subtitle = '위치 정보를 확인하고 있어요';
+        showSpinner = true;
+        showRetry = true;
+      }
       return Padding(
         padding: const EdgeInsets.symmetric(
           horizontal: AppSpacing.screenHorizontal,
@@ -1032,13 +1205,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
           child: Column(
             children: [
               Icon(
-                Icons.location_searching_rounded,
+                icon,
                 size: 40,
                 color: AppColors.iconInactive,
               ),
               const SizedBox(height: AppSpacing.sm),
               Text(
-                '주변 식당을 찾고 있어요',
+                title,
                 style: AppTextStyles.bodyMedium.copyWith(
                   color: AppColors.textPrimary,
                   fontWeight: FontWeight.w600,
@@ -1046,25 +1219,41 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
               ),
               const SizedBox(height: 4),
               Text(
-                '위치 권한을 켜두면 자동으로 식당이 채워집니다',
+                subtitle,
                 style: AppTextStyles.bodySmall.copyWith(
                   color: AppColors.textSecondary,
                 ),
                 textAlign: TextAlign.center,
               ),
-              const SizedBox(height: AppSpacing.sm + 4),
-              OutlinedButton.icon(
-                onPressed: () {
-                  setState(() => _isRestaurantsLoading = true);
-                  _loadRecommendedRestaurants();
-                },
-                icon: const Icon(Icons.refresh_rounded, size: 16),
-                label: const Text('다시 시도'),
-                style: OutlinedButton.styleFrom(
-                  side: BorderSide(color: AppColors.border),
-                  foregroundColor: AppColors.textPrimary,
+              // 권한 OK 일 때만 진행 중 스피너 표시 — 시각적으로 "지금 일하는 중" 신호.
+              if (showSpinner) ...[
+                const SizedBox(height: AppSpacing.sm + 4),
+                const SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(strokeWidth: 2),
                 ),
-              ),
+              ],
+              if (showRetry) ...[
+                const SizedBox(height: AppSpacing.sm + 4),
+                OutlinedButton.icon(
+                  onPressed: () {
+                    setState(() => _isRestaurantsLoading = true);
+                    // 권한 거부였다면 다시 평가 + 재크롤 시도까지.
+                    // 사용자가 시스템 설정에서 권한을 켰을 수도 있어서
+                    // 단순 목록 재조회보다 _startAutoCrawl 이 더 정확함.
+                    _lastCrawlAt = null;
+                    _startAutoCrawl();
+                    _loadRecommendedRestaurants();
+                  },
+                  icon: const Icon(Icons.refresh_rounded, size: 16),
+                  label: const Text('다시 시도'),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: AppColors.border),
+                    foregroundColor: AppColors.textPrimary,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
@@ -1382,9 +1571,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                             ],
                           ),
                         ),
-                        // 호스트 + 삭제 가능 상태이면 더보기 메뉴, 아니면 기존 chevron.
-                        // 구조/색상 변경 없이 우측 1개 위젯만 조건부 교체.
-                        if (_canDeleteSession(s))
+                        // 호스트면 항상 더보기 메뉴(삭제 불가 상태는 비활성+안내),
+                        // 호스트가 아니면 기존 chevron 표시. 색상 토큰 동일.
+                        if (_isSessionHost(s))
                           _buildSessionMoreMenu(s)
                         else
                           const Icon(

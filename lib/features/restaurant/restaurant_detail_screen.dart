@@ -382,6 +382,22 @@ class _RestaurantDetailScreenState
                   size: 14, color: AppColors.textSecondary),
               const SizedBox(width: 4),
               Text(priceLabel, style: AppTextStyles.bodySmall),
+              // ── 평점 칩 (사장님 피드백 — 2026-05-14) ─────────
+              //   "네이버나 구글로 식당 평점 조사한 거 맞아?" 대응.
+              //   네이버 plac reviewScore 수집값을 ⭐ 4.2 형식으로 표시.
+              //   - rating == null 이면(평점 미수집 식당) 칩 자체를 생략.
+              //   - 색상 토큰 변경 없음: amber 600 은 표준 별점 색이라 안전.
+              //   - toStringAsFixed(1) 로 항상 소수점 1자리 통일.
+              if (r.rating != null) ...[
+                const SizedBox(width: AppSpacing.sm),
+                Icon(Icons.star_rounded,
+                    size: 14, color: Colors.amber.shade600),
+                const SizedBox(width: 2),
+                Text(
+                  r.rating!.toStringAsFixed(1),
+                  style: AppTextStyles.bodySmall,
+                ),
+              ],
             ],
           ),
           if (r.address != null) ...[

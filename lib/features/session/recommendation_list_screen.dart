@@ -15,6 +15,7 @@ import '../decide/decide_screen.dart';
 import '../map/recommendation_map_screen.dart';
 import '../restaurant/restaurant_detail_screen.dart';
 import '../restaurant/restaurant_comparison_screen.dart';
+import 'vote_progress_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-11 AI 추천 리스트 화면 (= 투표 화면)
@@ -221,7 +222,14 @@ class _RecommendationListScreenState
       body: SafeArea(
         child: _buildBody(),
       ),
-      // 비교 모드면 비교 CTA, 아니면 "투표 시작" CTA 노출 (호스트만 의미 있음)
+      // 비교 모드면 비교 CTA, 아니면 status 별 분기:
+      //   WAITING / null → "투표 시작하기" (호스트만 의미 있음 — 백엔드가 권한 검증)
+      //   VOTING         → "투표 현황 보기" (전원 → VoteProgressScreen 진입)
+      //   ORDERED / DONE → "투표 결과 보기" (이미 결정 — 상태만 확인)
+      //
+      // 사장님 시연 피드백("투표가 어디서 진행되는지 모름") 의 마지막 진입점.
+      // 자동 라우팅(로비 폴링 + decide 시점) 외에 사용자가 직접 들어올 수 있는
+      // 명시적 통로를 본 화면 하단에 항상 유지한다.
       bottomNavigationBar: _isCompareMode
           ? SafeArea(
               child: Padding(
@@ -236,12 +244,48 @@ class _RecommendationListScreenState
           : SafeArea(
               child: Padding(
                 padding: const EdgeInsets.all(AppSpacing.md),
-                child: AppPrimaryButton(
-                  label: _isStartingVote ? '투표 시작 중...' : '투표 시작하기',
-                  onPressed: _isStartingVote ? null : _startVoting,
-                ),
+                child: _buildPrimaryCta(),
               ),
             ),
+    );
+  }
+
+  // ── 하단 메인 CTA — status 별 분기 ────────────────────
+  // _sessionStatus 캐시(_loadSessionStatus 가 진입 시 1회 + _startVoting 성공 시
+  // 갱신) 를 기준으로 라벨/동작을 바꿔준다. VOTING/ORDERED 진입 시
+  // VoteProgressScreen 으로 push — 결과 화면이 별도로 분리되어
+  // "투표 어디서 봄?" 의문이 한 번에 해소된다.
+  Widget _buildPrimaryCta() {
+    if (_sessionStatus == 'VOTING') {
+      return AppPrimaryButton(
+        label: '투표 현황 보기',
+        onPressed: _openVoteProgress,
+      );
+    }
+    if (_sessionStatus == 'ORDERED' || _sessionStatus == 'DONE') {
+      return AppPrimaryButton(
+        label: '투표 결과 보기',
+        onPressed: _openVoteProgress,
+      );
+    }
+    // 기본: WAITING / null — 호스트가 시작하는 흐름
+    return AppPrimaryButton(
+      label: _isStartingVote ? '투표 시작 중...' : '투표 시작하기',
+      onPressed: _isStartingVote ? null : _startVoting,
+    );
+  }
+
+  // ── VoteProgressScreen 으로 push ─────────────────────
+  // recommendation_list_screen 에서 명시적으로 진입하는 보조 경로.
+  // (자동 라우팅은 session_lobby_screen 폴링이 담당)
+  void _openVoteProgress() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => VoteProgressScreen(
+          sessionId: widget.sessionId,
+          sessionName: widget.sessionName,
+        ),
+      ),
     );
   }
 
@@ -396,6 +440,16 @@ class _RecommendationListScreenState
                   ],
                 ),
               ),
+              // 📊 투표 현황 보기 — VOTING/ORDERED 단계에서만 노출.
+              // 사장님 시연 피드백("투표 어떻게 진행되는지 모름") 해결 핵심 진입점.
+              // 카드 탭 → 식당 상세 라는 기존 동작과 분리해 액션을 명시적으로 제공.
+              if (_sessionStatus == 'VOTING' || _sessionStatus == 'ORDERED')
+                IconButton(
+                  icon: const Icon(Icons.how_to_vote_rounded),
+                  tooltip: '투표 현황 보기',
+                  color: Theme.of(context).colorScheme.primary,
+                  onPressed: _openVoteProgress,
+                ),
               // 🎯 미니게임 버튼 — 후보 식당으로 룰렛/사다리 결정 (시연 임팩트 + 동률 보조)
               IconButton(
                 icon: const Icon(Icons.casino_rounded),

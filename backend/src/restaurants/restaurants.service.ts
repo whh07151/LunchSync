@@ -30,9 +30,14 @@ export class RestaurantsService {
     // 2026-05-13 image_url 컬럼 select 추가:
     //   클라이언트 RestaurantDto.imageUrl 매핑용. 사장님 피드백 "사진 잘 보였으면"
     //   대응. 카드/상세에서 사진 렌더링이 가능해짐 (없으면 FoodImage 폴백 동작).
+    //
+    // 2026-05-14 rating 컬럼 select 추가:
+    //   사장님 피드백 "네이버나 구글로 식당 평점 조사한 거 맞아?" 대응.
+    //   CrawlService 가 네이버 reviewScore 를 수집해 restaurants.rating 에 저장
+    //   하게 됐으므로 클라이언트로도 함께 내려준다. UI 에서 "⭐ 4.2" 표기.
     let qb = this.supabase.client
       .from('restaurants')
-      .select('id, name, category, price_range, address, lat, lng, image_url, created_at');
+      .select('id, name, category, price_range, address, lat, lng, image_url, rating, created_at');
 
     if (query.category) {
       qb = qb.eq('category', query.category);
@@ -77,15 +82,19 @@ export class RestaurantsService {
       lat: r.lat,
       lng: r.lng,
       imageUrl: r.image_url,
+      // 네이버 플레이스 평점 (0.0~5.0). 미수집 식당은 null.
+      // 클라이언트 RestaurantDto.rating 에 매핑되어 ⭐ 칩으로 표시됨.
+      rating: r.rating != null ? Number(r.rating) : null,
       createdAt: r.created_at,
     }));
   }
 
   // ── GET /restaurants/:id ──────────────────────────────
   async getRestaurantById(id: string) {
+    // 2026-05-14 rating 컬럼 select 추가 — 상세 화면에서도 평점 표시.
     const { data, error } = await this.supabase.client
       .from('restaurants')
-      .select('id, name, category, price_range, address, lat, lng, image_url, created_at')
+      .select('id, name, category, price_range, address, lat, lng, image_url, rating, created_at')
       .eq('id', id)
       .single();
 
@@ -102,6 +111,8 @@ export class RestaurantsService {
       lat: data.lat,
       lng: data.lng,
       imageUrl: data.image_url,
+      // NUMERIC 은 Supabase JS 에서 string 으로 들어오는 경우가 있어 명시적 변환.
+      rating: data.rating != null ? Number(data.rating) : null,
       createdAt: data.created_at,
     };
   }

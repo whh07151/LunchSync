@@ -32,6 +32,7 @@ class RestaurantDto {
     this.lat,
     this.lng,
     this.imageUrl,
+    this.rating,
   });
 
   final String id;
@@ -45,6 +46,18 @@ class RestaurantDto {
   /// FoodImage 위젯에서 null/빈 문자열을 안전 처리하므로 그대로 전달해도 됨.
   final String? imageUrl;
 
+  /// 식당 평점 (0.0 ~ 5.0)
+  ///
+  /// [출처 및 흐름 — 2026-05-14 추가]
+  ///   네이버 플레이스 reviewScore → CrawlService.fetchNaverPlaceDetail() →
+  ///   restaurants.rating(NUMERIC(2,1)) → RestaurantsService.getRestaurants()/
+  ///   getRestaurantById() → 본 DTO.
+  ///
+  ///   사장님 피드백 "네이버나 구글로 식당 평점 조사한 거 맞아?" 에 대한
+  ///   응답으로, 그동안 수집되고도 버려졌던 네이버 평점 값을 UI 까지 흘려보낸다.
+  ///   평점 미수집 식당은 null 이므로 위젯에서 안전 분기 처리(없으면 칩 미표시).
+  final double? rating;
+
   factory RestaurantDto.fromJson(Map<String, dynamic> json) {
     return RestaurantDto(
       id: json['id'] as String,
@@ -56,6 +69,10 @@ class RestaurantDto {
       lng: (json['lng'] as num?)?.toDouble(),
       // 백엔드가 응답에 imageUrl 키를 포함하지 않더라도 안전(null) 매핑.
       imageUrl: json['imageUrl'] as String?,
+      // NUMERIC 컬럼은 JSON 으로 number 또는 string 형태가 둘 다 가능하므로
+      // num 으로 받아 toDouble 변환. 백엔드가 명시적으로 Number() 변환 후 보내지만
+      // 클라이언트도 방어적 매핑 유지(추후 컬럼 타입 변경에 대비).
+      rating: (json['rating'] as num?)?.toDouble(),
     );
   }
 }
