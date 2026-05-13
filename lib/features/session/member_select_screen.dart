@@ -76,19 +76,13 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = ''; // 현재 입력된 검색어
 
-  // ── Mock 친구 목록 ──────────────────────────────────────
-  // TODO: API 연동 시 (안태환 씨) — GET /friends 또는 GET /users/friends 응답으로 교체
-  // TODO: 카카오 친구 API 연동 시 (우현호 씨) — 카카오 응답을 Member 모델로 변환 후 교체
-  static const List<Member> _mockFriends = [
-    Member(id: 'u1', name: '안태환', organization: '개발팀'),
-    Member(id: 'u2', name: '장다현', organization: '디자인팀'),
-    Member(id: 'u3', name: '우현호', organization: '기획팀'),
-    Member(id: 'u4', name: '최예은', organization: '개발팀'),
-    Member(id: 'u5', name: '정우진', organization: '마케팅팀'),
-    Member(id: 'u6', name: '한지수', organization: '개발팀'),
-    Member(id: 'u7', name: '오태양', organization: '기획팀'),
-    Member(id: 'u8', name: '신예린', organization: '디자인팀'),
-  ];
+  // ── 친구 목록 ──────────────────────────────────────────
+  // 2026-05-14: 가짜 목업 제거 (안태환/장다현/우현호 등 8명).
+  //   - 백엔드에 친구 API 없음 → 빈 리스트 + 빈 상태 안내로 변경.
+  //   - 멤버 모집은 "초대 코드 복사하기" 흐름으로 일원화.
+  //   - 호스트 혼자도 세션 만들 수 있음 (백엔드는 호스트만 INSERT).
+  // TODO: 카카오 친구 API 연동 시 실제 데이터로 교체.
+  static const List<Member> _mockFriends = <Member>[];
 
   // ── 검색어 필터가 적용된 친구 목록 ────────────────────────
   // getter: 매번 계산이 필요한 값을 변수처럼 쓸 수 있게 해줌
@@ -102,8 +96,9 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
   }
 
   // ── 다음 버튼 활성 여부 ────────────────────────────────
-  // 1명 이상 선택했을 때만 "조건 설정하기" 버튼 활성화
-  bool get _canProceed => _selectedIds.isNotEmpty;
+  // 2026-05-14: 친구 목록 없어도 호스트 혼자 세션 가능 → 항상 true.
+  // 친구가 있어도 선택 안 해도 OK (초대 코드 흐름으로 모집).
+  bool get _canProceed => true;
 
   // ── 생명주기: 화면이 처음 만들어질 때 ──────────────────
   @override

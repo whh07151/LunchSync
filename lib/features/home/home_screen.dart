@@ -816,7 +816,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
       onTap: () {
         Navigator.of(context).push(
           MaterialPageRoute(
-            builder: (_) => SessionLobbyScreen(sessionId: session.id),
+            builder: (_) => SessionLobbyScreen(
+              sessionId: session.id,
+              initialSession: session, // 재조회 실패 회피 — sessions/today 응답 그대로 사용
+            ),
           ),
         );
       },
@@ -875,7 +878,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
             onPressed: () {
               Navigator.of(context).push(
                 MaterialPageRoute(
-                  builder: (_) => SessionLobbyScreen(sessionId: session.id),
+                  builder: (_) => SessionLobbyScreen(
+              sessionId: session.id,
+              initialSession: session, // 재조회 실패 회피 — sessions/today 응답 그대로 사용
+            ),
                 ),
               );
             },
@@ -1339,8 +1345,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen> {
                     onTap: () {
                       Navigator.of(context).push(
                         MaterialPageRoute(
-                          builder: (_) =>
-                              SessionLobbyScreen(sessionId: s.id),
+                          builder: (_) => SessionLobbyScreen(
+                            sessionId: s.id,
+                            initialSession: s, // 재조회 실패 회피
+                          ),
                         ),
                       );
                     },

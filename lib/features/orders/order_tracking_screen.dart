@@ -40,7 +40,9 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
   static const _pollInterval = Duration(seconds: 3);
 
   // 주문 상태 단계 순서 (진행 스텝 바의 인덱스로 사용)
-  static const _steps = <String>['PENDING', 'PAID', 'PREPARING', 'READY', 'COMPLETED'];
+  // 백엔드 ENUM order_status: PENDING / ACCEPTED / PREPARING / DONE / CANCELLED
+  // CLAUDE.md 명시. PAID/READY/COMPLETED는 잘못된 alias라 2026-05-14 제거.
+  static const _steps = <String>['PENDING', 'ACCEPTED', 'PREPARING', 'DONE'];
 
   OrderDetailDto? _order;
   bool _isLoading = true;
@@ -102,8 +104,9 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
     });
 
     // 주문이 최종 상태에 도달하면 폴링 중단 (불필요한 API 호출 회피)
+    // 백엔드 ENUM 기준: DONE 또는 CANCELLED
     if (detail != null &&
-        (detail.status == 'COMPLETED' || detail.status == 'CANCELLED')) {
+        (detail.status == 'DONE' || detail.status == 'CANCELLED')) {
       _poller?.cancel();
     }
 
@@ -354,17 +357,16 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
 
   // ── 상태 → 한글 레이블 + 색 ──────────────────────────
   (String, Color) _statusLabel(String status) {
+    // 백엔드 ENUM order_status 기준 (PENDING/ACCEPTED/PREPARING/DONE/CANCELLED)
     switch (status) {
       case 'PENDING':
         return ('결제 대기', Colors.grey);
-      case 'PAID':
-        return ('결제 완료', Colors.blue);
+      case 'ACCEPTED':
+        return ('주문 접수됨', Colors.blue);
       case 'PREPARING':
         return ('준비 중', Colors.orange);
-      case 'READY':
-        return ('픽업 가능', Colors.green);
-      case 'COMPLETED':
-        return ('주문 완료', Colors.teal);
+      case 'DONE':
+        return ('픽업 가능', Colors.teal);
       case 'CANCELLED':
         return ('취소됨', Colors.red);
       default:
@@ -373,18 +375,17 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
   }
 
   // ── 상태 → 안내 메시지 ───────────────────────────────
+  // 백엔드 ENUM order_status 기준
   String _statusMessage(String status) {
     switch (status) {
       case 'PENDING':
         return '결제가 진행 중이에요.';
-      case 'PAID':
-        return '결제가 완료됐어요. 식당이 준비를 시작할 거예요.';
+      case 'ACCEPTED':
+        return '결제가 완료됐어요. 식당이 곧 준비를 시작할 거예요.';
       case 'PREPARING':
         return '식당에서 조리 중이에요.';
-      case 'READY':
+      case 'DONE':
         return '픽업 준비가 끝났어요. 매장에서 받아 가세요!';
-      case 'COMPLETED':
-        return '주문이 완료됐어요. 맛있게 드셨길 바랄게요!';
       case 'CANCELLED':
         return '주문이 취소됐어요.';
       default:
@@ -397,14 +398,12 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
     switch (s) {
       case 'PENDING':
         return '결제';
-      case 'PAID':
-        return '결제완료';
+      case 'ACCEPTED':
+        return '접수';
       case 'PREPARING':
         return '준비중';
-      case 'READY':
+      case 'DONE':
         return '픽업';
-      case 'COMPLETED':
-        return '완료';
       default:
         return s;
     }
