@@ -150,4 +150,81 @@ export class PaymentsService {
       totalAmount: tossResponse?.totalAmount,
     };
   }
+
+  // ── 결제 취소 / 환불 ──────────────────────────────────
+  // 2026-05-15 사장님 발전 결정 (plan): 사장 거절 시 자동 환불.
+  // 토스 v1/payments/{paymentKey}/cancel API 호출.
+  //
+  // 원자성 정책:
+  //   - 환불 API 가 성공해야만 호출부(pos.cancelOrder)가 status 를 CANCELLED 로 변경
+  //   - 본 메서드는 실패 시 예외 throw — 호출부에서 캐치해 status 미변경 처리
+  //
+  // 토스 cancel API 응답:
+  //   200: { paymentKey, orderId, status:'CANCELED', cancels:[{ cancelAmount, ... }] }
+  //   400/404: { code, message } — message 를 그대로 BadRequest 로 올림
+  async cancelPayment(
+    paymentKey: string,
+    cancelReason: string = '점주 취소',
+  ): Promise<{
+    paymentKey: string;
+    status: string;
+    canceledAt?: string;
+    cancelAmount?: number;
+  }> {
+    if (!paymentKey || paymentKey.trim().length === 0) {
+      throw new BadRequestException('환불할 결제 키가 없어요.');
+    }
+
+    const secretKey = this.configService.getOrThrow<string>('TOSS_SECRET_KEY');
+    const apiBase =
+      this.configService.get<string>('TOSS_API_BASE_URL') ??
+      'https://api.tosspayments.com';
+
+    // 기존 confirmPayment 와 동일한 Basic Auth 패턴 (line 94~95)
+    const authHeader =
+      'Basic ' + Buffer.from(secretKey + ':').toString('base64');
+
+    let tossResponse: any;
+    try {
+      const res = await fetch(`${apiBase}/v1/payments/${paymentKey}/cancel`, {
+        method: 'POST',
+        headers: {
+          Authorization: authHeader,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          cancelReason,
+        }),
+      });
+
+      tossResponse = await res.json();
+
+      if (!res.ok) {
+        this.logger.error(
+          `토스 환불 실패: ${JSON.stringify(tossResponse)}`,
+        );
+        throw new BadRequestException(
+          tossResponse?.message ?? '환불에 실패했습니다.',
+        );
+      }
+    } catch (err: any) {
+      if (err instanceof BadRequestException) throw err;
+      this.logger.error(`토스 환불 API 호출 오류: ${err?.message}`);
+      throw new BadRequestException(
+        '토스 결제 서버와 통신에 실패했습니다.',
+      );
+    }
+
+    // 최신 cancel 정보 추출 — cancels 배열의 마지막 항목이 가장 최근 취소
+    const lastCancel = Array.isArray(tossResponse?.cancels)
+      ? tossResponse.cancels[tossResponse.cancels.length - 1]
+      : null;
+
+    return {
+      paymentKey,
+      status: tossResponse?.status ?? 'CANCELED',
+      canceledAt: lastCancel?.canceledAt ?? tossResponse?.canceledAt,
+      cancelAmount: lastCancel?.cancelAmount ?? tossResponse?.totalAmount,
+    };
+  }
 }

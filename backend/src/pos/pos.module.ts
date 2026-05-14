@@ -1,5 +1,6 @@
 import { Module } from '@nestjs/common';
 import { AuthModule } from '../auth/auth.module';
+import { PaymentsModule } from '../payments/payments.module';
 import { PosController } from './pos.controller';
 import { PosService } from './pos.service';
 import { PosAuthController } from './pos-auth.controller';
@@ -34,7 +35,10 @@ import { PosReservationsService } from './pos-reservations.service';
 // ══════════════════════════════════════════════════════════
 
 @Module({
-  imports: [AuthModule],
+  // 2026-05-15 단계 2 — PaymentsModule import 추가:
+  //   pos.cancelOrder 가 PaymentsService.cancelPayment 호출 (자동 환불).
+  //   사장 거절 시 토스 환불 API 호출 후 status CANCELLED 반영 (원자성).
+  imports: [AuthModule, PaymentsModule],
   controllers: [
     PosController,
     PosAuthController,

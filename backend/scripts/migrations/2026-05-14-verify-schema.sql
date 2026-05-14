@@ -56,6 +56,14 @@ WHERE routine_schema = 'public'
   )
 ORDER BY routine_name;
 
+-- ── 4) order_status ENUM 값 확인 (2026-05-15 단계 2) ──────
+-- 확장 후 8개 값 모두 존재해야 함.
+-- 누락된 값 있으면 2026-05-15-add-order-status-enum.sql 실행 필요.
+SELECT enumlabel AS enum_value
+FROM pg_enum
+WHERE enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')
+ORDER BY enumsortorder;
+
 -- ── 4) 기대값 ────────────────────────────────────────────
 -- 1) 컬럼 7개: restaurants.image_url / restaurants.rating /
 --             users.fcm_token / sessions.radius / sessions.budget /

@@ -1,5 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { PaymentsService } from '../payments/payments.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 점주앱/POS 비즈니스 로직
@@ -45,7 +51,13 @@ export interface PosOrderResponse {
 
 @Injectable()
 export class PosService {
-  constructor(private readonly supabase: SupabaseService) {}
+  private readonly logger = new Logger(PosService.name);
+
+  constructor(
+    private readonly supabase: SupabaseService,
+    // 2026-05-15 단계 2: 사장 거절 시 자동 환불 (토스 cancel API) 호출용.
+    private readonly paymentsService: PaymentsService,
+  ) {}
 
   // ── OW-10 + POS-08: 점주용 주문 목록 조회 ────────────
   // restaurantId 기준으로 해당 식당에 들어온 주문 전체 조회.
@@ -211,9 +223,20 @@ export class PosService {
     return { id: data.id, status: data.status, updatedAt: data.updated_at };
   }
 
-  // ── POS-09: 취소/환불 시뮬레이션 ─────────────────────
+  // ── POS-09: 사장 거절 + 자동 환불 (원자성 보장) ─────────
+  // 2026-05-15 단계 2 발전 (plan): TODO 제거 + 실제 환불 활성화.
+  //
+  // 원자성 정책 ([[feedback-root-cause-analysis]] 4단계 분석):
+  //   - 환불 API 우선 호출 → 성공 시에만 status CANCELLED 적용
+  //   - 환불 실패 시 status 미변경 + 예외 throw → 호출부가 손님에게 명확한 에러 응답
+  //   - 사장님 결정 (Q3): 원자성 — cancel 실패 시 CANCELLED 도 미적용
+  //
+  // 거절 가능 구간 (Q2 결정):
+  //   - PAID / ACCEPTED 두 상태에서 거절 가능
+  //   - PREPARING 진입 후엔 차단 (이미 조리 시작했으면 환불 불가 정책)
+  //   - 기존 CANCELLED / COMPLETED 차단 유지
   async cancelOrder(orderId: string, reason?: string) {
-    // 주문 조회
+    // 1) 주문 조회
     const { data: order, error } = await this.supabase.client
       .from('orders')
       .select('id, status, total_price, payment_key')
@@ -224,27 +247,56 @@ export class PosService {
       throw new NotFoundException('주문을 찾을 수 없습니다.');
     }
 
-    // 이미 취소/완료된 주문은 취소 불가
-    if (order.status === 'CANCELLED' || order.status === 'COMPLETED') {
-      throw new Error(`이미 ${order.status} 상태인 주문은 취소할 수 없습니다.`);
+    // 2) 거절 가능 상태 검증
+    //   - CANCELLED / COMPLETED / DONE / PREPARING / READY 모두 거절 불가
+    //   - PAID / ACCEPTED / PENDING 만 거절 가능 (조리 시작 전)
+    const cancelableStatuses = new Set(['PAID', 'ACCEPTED', 'PENDING']);
+    if (!cancelableStatuses.has(order.status)) {
+      throw new InternalServerErrorException(
+        `이미 ${order.status} 상태인 주문은 취소할 수 없습니다. ` +
+          '조리 시작 후엔 거절 불가입니다.',
+      );
     }
 
-    // 상태를 CANCELLED로 변경
+    // 3) 환불 우선 호출 (payment_key 있으면)
+    //   - 환불 성공 시에만 다음 단계(status update) 진행
+    //   - 실패 시 throw → status 미변경, 호출부가 사용자에게 친근 에러 표시
+    let refundResult: {
+      paymentKey: string;
+      status: string;
+      cancelAmount?: number;
+      canceledAt?: string;
+    } | null = null;
+
+    if (order.payment_key && order.payment_key.trim().length > 0) {
+      try {
+        refundResult = await this.paymentsService.cancelPayment(
+          order.payment_key,
+          reason ?? '점주 취소',
+        );
+      } catch (refundError: any) {
+        this.logger.error(
+          `환불 실패 — status 미변경 유지: order=${orderId} ` +
+            `payment_key=${order.payment_key} error=${refundError?.message}`,
+        );
+        // 원자성 — 환불 실패 시 status 도 변경하지 않고 예외 그대로 전파.
+        // 호출부(컨트롤러)가 사용자에게 친근 에러 메시지 표시.
+        throw refundError;
+      }
+    }
+
+    // 4) 환불 성공(또는 payment_key 없음) → 상태 CANCELLED 로 변경
     await this.supabase.client
       .from('orders')
       .update({ status: 'CANCELLED' })
       .eq('id', orderId);
 
-    // TODO POS-13: Toss Payments 실제 환불 API 호출
-    // if (order.payment_key) {
-    //   await this.refundViaToss(order.payment_key, order.total_price, reason);
-    // }
-
     return {
       id: orderId,
       status: 'CANCELLED',
-      refundAmount: order.total_price,
-      refundMethod: 'SIMULATE', // 가상 환불
+      refundAmount: refundResult?.cancelAmount ?? order.total_price,
+      refundMethod: refundResult ? 'TOSS_CANCEL' : 'NO_PAYMENT_KEY',
+      canceledAt: refundResult?.canceledAt,
       reason: reason ?? '점주 취소',
     };
   }
