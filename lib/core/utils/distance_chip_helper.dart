@@ -8,6 +8,16 @@
 //   - 백엔드 reasons 배열은 비율(반경 대비) 기반이라 실거리와 어긋날 수 있어
 //     프론트에서 실거리로 다시 라벨링하는 단일 진실 소스 함수가 필요했음.
 //
+// 🆕 2026-05-14 변경 안내 (백엔드 정합화 후)
+//   `backend/src/recommendations/recommendations.service.ts`에 동일한 분기 표를
+//   가진 `distanceLabelFor(meters)`가 이식되어, 추천 API의 reasons 배열에 이미
+//   실거리 기반 라벨이 박힌 상태로 내려옴.
+//   → 이 파일의 walkChipFor / reconcileDistanceReasons 는 "안전망"으로 유지.
+//   → 좌표 누락·구버전 백엔드 응답 등 예외 상황에서만 의미가 있고,
+//      정상 흐름에서는 reconcileDistanceReasons 가 동일 칩을 제거 후 재삽입하는
+//      no-op에 가까운 동작을 한다.
+//   ⚠️ 백엔드 분기 표를 수정할 때는 이 파일의 walkChipFor 분기도 1:1로 맞춰야 함.
+//
 // 사용 가이드:
 //   1) 식당 좌표 + 내 좌표로 distanceLabel(...) 결과 또는 raw meters를 받음
 //   2) walkChipFor(meters) 호출 → "가까운 거리" / "도보 5분" / "차 10분" 등 반환

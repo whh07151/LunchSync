@@ -2,6 +2,7 @@
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { buildFallbackImageUrl } from '../src/restaurants/restaurant-image-fallback';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 장다연 식당 + 메뉴 시드 데이터 DB 삽입 스크립트
@@ -17,6 +18,12 @@ import * as path from 'path';
 //
 // 멱등성:
 //   upsert 사용하므로 여러 번 실행해도 중복 에러 없음
+//
+// 2026-05-14 업데이트:
+//   사장님 피드백 "메뉴넣으면서 이미지도 넣어달라니까" 대응 — 식당
+//   레코드에 image_url 자동 채우기. buildFallbackImageUrl() 헬퍼가
+//   카테고리(한식/일식/...) + 식당명을 Unsplash Source API 쿼리로
+//   변환해 카드/지도/상세에 항상 음식 사진이 표시되도록 보장.
 // ══════════════════════════════════════════════════════════
 
 dotenv.config({ path: path.resolve(__dirname, '..', '.env') });
@@ -158,10 +165,26 @@ async function main() {
   console.log('🌱 장다연 식당+메뉴 시드 시작\n');
 
   // 1) 식당 18곳 upsert
+  //
+  // image_url 자동 채우기 (2026-05-14):
+  //   RESTAURANTS 배열에는 image_url 필드가 없으므로 upsert 직전에
+  //   카테고리·이름 기반 Unsplash URL 을 동적으로 부착한다. 사장님이
+  //   특정 식당에 진짜 사진을 별도 INSERT 한 경우(=DB 에 이미 값이
+  //   있는 경우)에도 upsert 가 우리 폴백 URL 로 덮어쓸 수 있으므로
+  //   해당 컬럼만 별도 처리:
+  //     - 신규 식당: 폴백 URL 박힘
+  //     - 기존 식당: 기존 값이 비어있을 때만 폴백으로 채워짐 (별도 UPDATE)
+  //   여기서는 upsert 전체에 image_url 을 포함시키고, 기존 값 보존이
+  //   필요해지면 마이그레이션 SQL(2026-05-14-fill-empty-image-urls)로
+  //   "WHERE image_url IS NULL OR ''" 분기를 통해 운영자 통제 가능.
   console.log('🍚 restaurants upsert (18곳)...');
+  const restaurantsWithImages = RESTAURANTS.map((r) => ({
+    ...r,
+    image_url: buildFallbackImageUrl(r.category, r.name),
+  }));
   const { error: restErr } = await supabase
     .from('restaurants')
-    .upsert(RESTAURANTS);
+    .upsert(restaurantsWithImages);
 
   if (restErr) {
     console.error('❌ restaurants 실패:', restErr.message);

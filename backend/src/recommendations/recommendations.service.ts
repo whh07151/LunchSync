@@ -15,7 +15,7 @@ import { SupabaseService } from '../supabase/supabase.service';
 //
 // ⚠️ 점수 계산 가중치 (v2 차등 점수 도입, 동점 문제 해소)
 //   기본 점수    : 80점
-//   거리 점수    : 0 ~ +25점 (가까울수록 가산, 선형 보간)
+//   거리 점수    : 0 ~ +25점 (가까울수록 가산, 선형 보간 — 비율 기반)
 //   가격 적합도  : -30 ~ +15점 (예산 대비 비율 기반 차등)
 //   카테고리 다양성: 0 ~ +10점 (멤버 비선호 카테고리와 거리 멀수록 가산)
 //   평점/방문이력: ± 5~10점 (해시 기반 미세 차등 + 중복 회피)
@@ -25,6 +25,14 @@ import { SupabaseService } from '../supabase/supabase.service';
 //
 //   → 이론 최대 ~120점, 이론 최소 ~0점.
 //   → 동일 카테고리 식당이라도 거리·가격대 차이로 최소 5점 이상 분산.
+//
+// 🆕 2026-05-14 reason 라벨링 정합화
+//   거리 점수 자체(distanceBonus)는 그대로 유지(반경 비율 기반 — 점수 정확도).
+//   대신 reasons에 박히는 "거리 칩"은 distanceLabelFor(meters) 헬퍼로
+//   실거리 분기 라벨("바로 앞" / "가까운 거리" / "도보 5~10분" / "도보 15분" /
+//   "차로 N분" / "거리 N.N km")만 사용. 반경 50km에서 5km 식당에 "도보 1~2분"이
+//   박히던 모순이 백엔드 차원에서 사라진다. 프론트 reconcileDistanceReasons
+//   호출은 안전망으로 유지하되 보통 경우 no-op이 된다.
 // ══════════════════════════════════════════════════════════
 
 interface MemberProfile {
@@ -106,15 +114,25 @@ export class RecommendationsService {
     // 4. 전체 식당 목록 조회 후 반경 내로 1차 필터링
     //    PostGIS 없이 서비스 레이어에서 Haversine으로 거리 계산.
     //    식당 수가 많아질 경우 DB에 bounding box 쿼리를 넣는 최적화 여지 있음.
+    //
+    //    ⚠️ 2026-05-14 변경 (m6 사후 정리):
+    //      기존: select 결과를 `any[]` 그대로 받고 filter 콜백 안에서
+    //            `(r: Restaurant)` 인라인 캐스팅으로만 타입을 맞췄음.
+    //            price_range/lat/lng 같은 옵셔널 필드를 잘못 다뤄도
+    //            컴파일러가 잡지 못하는 위험.
+    //      변경: Supabase 의 `.returns<Restaurant[]>()` 패턴으로 select
+    //            결과 타입을 명시. 이후 filter/map 콜백에서 별도 캐스팅
+    //            없이 Restaurant 타입을 그대로 사용.
     const { data: allRestaurants } = await this.supabase.client
       .from('restaurants')
-      .select('id, name, category, price_range, address, lat, lng');
+      .select('id, name, category, price_range, address, lat, lng')
+      .returns<Restaurant[]>();
 
     if (!allRestaurants || allRestaurants.length === 0) return [];
 
     const restaurants: Restaurant[] =
       centerLat != null && centerLng != null
-        ? allRestaurants.filter((r: Restaurant) => {
+        ? allRestaurants.filter((r) => {
             // 좌표 없는 식당은 거리 판정이 불가능 → 후보에서 제외
             if (r.lat == null || r.lng == null) return false;
             return (
@@ -175,6 +193,13 @@ export class RecommendationsService {
       //   세션 좌표가 있고 식당 좌표도 있는 경우에만 산정.
       //   distance/radius 비율을 0~1로 보고 (1 - ratio) * 25.
       //   같은 카테고리 식당이라도 거리에 따라 점수가 갈리도록 하는 핵심 가중치.
+      //
+      //   ⚠️ 2026-05-14 변경: 거리 reason 라벨을 "비율 기반"에서 "실거리 기반"으로 교체.
+      //     기존: distanceBonus(반경 대비 비율)가 ≥20이면 "도보 1~2분 거리".
+      //           반경이 13km/50km처럼 클 때 5km 식당도 비율은 작아 "도보 1~2분"이
+      //           박히는 모순(사장님 피드백)이 보고됨.
+      //     변경: distanceLabelFor(meters) 헬퍼로 실제 미터값에 맞는 라벨 생성.
+      //           점수 계산식(distanceBonus)은 그대로 유지 — AI 점수 v2 공식 보존.
       let distanceMeters: number | null = null;
       if (
         centerLat != null &&
@@ -186,11 +211,8 @@ export class RecommendationsService {
         const ratio = Math.min(distanceMeters / radiusMeters, 1);
         const distanceBonus = Math.round((1 - ratio) * 25);
         score += distanceBonus;
-        if (distanceBonus >= 20) {
-          reasons.push('도보 1~2분 거리');
-        } else if (distanceBonus >= 10) {
-          reasons.push('가까운 거리');
-        }
+        // 실거리 기반 라벨 (도보/차로/km 분기) — frontend distance_chip_helper.dart 동기화
+        reasons.push(distanceLabelFor(distanceMeters));
       }
 
       // ── (B) 가격 적합도: 예산 대비 비율로 선형 차등 ──
@@ -456,4 +478,60 @@ function matchesToken(tokens: string[], keyword: string): boolean {
   const normalized = keyword.trim().toLowerCase();
   if (normalized.length === 0) return false;
   return tokens.includes(normalized);
+}
+
+// ══════════════════════════════════════════════════════════
+// 실거리(미터) → "거리 칩" 라벨 단일 진실 함수
+//
+// 원본: lib/core/utils/distance_chip_helper.dart `walkChipFor`
+//
+// 분기 표 (사장님 피드백 기반, frontend와 1:1 동기):
+//   ─────────────────────────────────────────────────────────
+//   미터 범위         | 라벨           | 비고
+//   ─────────────────────────────────────────────────────────
+//   ≤    200m         | "바로 앞"      | 눈에 보이는 거리
+//   ≤    500m         | "가까운 거리"   | 한 골목 안
+//   ≤  1,000m         | "도보 5~10분"  | 도보 표준 범위 (4 km/h)
+//   ≤  1,500m         | "도보 15분"    | 도보 한계
+//   ≤  5,000m         | "차로 N분"     | 30 km/h = 500 m/min
+//   >  5,000m         | "거리 N.N km" | 모순 라벨 방지용 km 표기
+//   ─────────────────────────────────────────────────────────
+//
+// 도보 속도 가정: 4 km/h ≒ 67 m/min
+// 차량 속도 가정: 30 km/h (시내 평균)
+//
+// ⚠️ 이 함수와 distance_chip_helper.dart의 walkChipFor는 분기 표가 동일해야 함.
+//     프론트 헬퍼는 안전망(좌표/응답 누락 시)으로 남기지만, 백엔드가 reason에
+//     실거리 라벨을 박으므로 보통은 그대로 사용해도 모순이 없다.
+// ══════════════════════════════════════════════════════════
+function distanceLabelFor(meters: number): string {
+  // 음수 방어 — 부호 무시 (이론상 발생 안 함)
+  const m = Math.abs(meters);
+
+  // ① 200m 이하: 눈에 보이는 거리 — 시간 표기 불필요
+  if (m <= 200) return '바로 앞';
+
+  // ② 500m 이하: 한 골목 — 도보 시간 명시할 필요 없음
+  if (m <= 500) return '가까운 거리';
+
+  // ③ 1km 이하: 도보 표준 범위 (4 km/h 기준 500m≈7.5분, 1km≈15분)
+  if (m <= 1000) return '도보 5~10분';
+
+  // ④ 1.5km 이하: 시간 여유 있을 때만 걷는 한계
+  if (m <= 1500) return '도보 15분';
+
+  // ⑤ 5km 이하: 차량 권장 (30 km/h = 500 m/min)
+  //    예: 3000m → 6분, 5000m → 10분.
+  //    0분이 되지 않도록 최소 1분 보장.
+  if (m <= 5000) {
+    const carMinutes = Math.round(m / 500);
+    const safeMinutes = carMinutes < 1 ? 1 : carMinutes;
+    return `차로 ${safeMinutes}분`;
+  }
+
+  // ⑥ 5km 초과: "도보"/"차로 N분" 어느 쪽도 부정확 → km 표기
+  //    "13km + 도보 1~2분" 같은 모순 라벨을 원천 차단.
+  //    toFixed(1) 로 소수 1자리 km (예: 5500m → "5.5 km", 13000m → "13.0 km").
+  const km = (m / 1000).toFixed(1);
+  return `거리 ${km} km`;
 }

@@ -2,6 +2,7 @@
 import { createClient } from '@supabase/supabase-js';
 import * as dotenv from 'dotenv';
 import * as path from 'path';
+import { buildFallbackImageUrl } from '../src/restaurants/restaurant-image-fallback';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: LunchSync 테스트 데이터 시드 스크립트
@@ -95,6 +96,9 @@ async function main() {
       lat: 37.5665,
       lng: 126.9780,
       address: '서울특별시 중구 세종대로 110 (테스트용)',
+      // 2026-05-14: 시드 식당에도 카테고리 기반 Unsplash 폴백 URL 박기.
+      // 빈 회색 박스 → 카테고리에 맞는 음식 사진으로 시연 임팩트 확보.
+      image_url: buildFallbackImageUrl('한식', '테스트 한식집'),
     });
   if (restaurantErr) {
     console.error('❌ restaurants 실패:', restaurantErr.message);

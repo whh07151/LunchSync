@@ -179,20 +179,30 @@ class _NotificationScreenState extends ConsumerState<NotificationScreen> {
   }
 
   // ── 알림 카드 위젯 ────────────────────────────────────
+  //
+  // ⚠️ 2026-05-14 변경 (m2 사후 정리):
+  //   기존: InkWell 의 자식이 색을 가진 Container 라 ripple 이 자식의 배경에
+  //         가려져 사용자가 탭해도 시각 피드백이 거의 보이지 않는 문제.
+  //   변경: Material 위젯으로 한 번 감싸고 색상은 Material 의 color 속성으로
+  //         이전. Material 이 ink 표면 역할을 하므로 InkWell ripple 이
+  //         배경색 위에 정상 표시되고, ListView 내 다른 카드와도 분리됨.
+  //         색상 토큰은 그대로 유지(미읽음 = primary.withAlpha(12)).
   Widget _buildNotificationCard(NotificationDto item) {
     final isUnread = !item.isRead;
 
-    return InkWell(
-      onTap: () => _markAsRead(item),
-      child: Container(
-        color: isUnread
-            ? Theme.of(context).colorScheme.primary.withAlpha(12)
-            : AppColors.background,
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.screenHorizontal,
-          vertical: AppSpacing.md,
-        ),
-        child: Row(
+    return Material(
+      // Material 이 ink(잉크) 표면 역할 → InkWell ripple 이 이 표면 위에 그려짐.
+      color: isUnread
+          ? Theme.of(context).colorScheme.primary.withAlpha(12)
+          : AppColors.background,
+      child: InkWell(
+        onTap: () => _markAsRead(item),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.screenHorizontal,
+            vertical: AppSpacing.md,
+          ),
+          child: Row(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // 타입 아이콘
@@ -253,9 +263,10 @@ class _NotificationScreenState extends ConsumerState<NotificationScreen> {
               ),
             ],
           ],
-        ),
-      ),
-    );
+        ),  // Row
+        ),  // Padding
+      ),    // InkWell
+    );      // Material
   }
 
   // ── 타입별 아이콘 + 색 배지 ──────────────────────────

@@ -2,40 +2,55 @@
 // 파일 역할: "미니게임으로 점심 결정하기" 화면 (DecideScreen)
 //
 // 진입 방법(부모가 호출):
-//   final winner = await Navigator.of(context).push<Restaurant?>(
+//   await Navigator.of(context).push(
 //     MaterialPageRoute(
-//       builder: (_) => DecideScreen(candidates: pickedRestaurants),
+//       builder: (_) => DecideScreen(
+//         candidates: pickedRestaurants,
+//         sessionId: sessionId,   // votes API 자동 호출용 — 필수
+//         isHost: isHost,         // true 면 decide() 호출, false 면 castVote()
+//       ),
 //     ),
 //   );
-//   if (winner != null) { /* votes API 호출 또는 세션 결정 처리 */ }
 //
-// 반환값:
-//   - Restaurant 1개 (사용자가 "이 식당으로 결정" 버튼을 눌렀을 때)
-//   - null (그냥 뒤로 갔을 때)
+// 동작 흐름 (2026-05-14 votes API 통합 강화):
+//   1) 룰렛/사다리로 winner 결정
+//   2) "이 식당으로 결정" 누르면 자동으로 votes API 호출
+//       - 호스트: POST /sessions/:id/decide → 세션 ORDERED 전이 → MenuScreen push
+//       - 비호스트: POST /sessions/:id/votes (한 표만 등록)
+//                  → 호스트가 종료할 때까지 본 화면에 머무름(혹은 pop 으로 복귀)
+//   3) winner 카드에 FoodImage + 카테고리 + 가격대 + 평점 미리보기 강화
 //
 // 게임 종류:
 //   1) 룰렛(스피너 휠) — 기본 선택, 시연 임팩트 1순위
 //   2) 사다리 — 4~6명 케이스에 최적화
-//
-// 사장님 피드백: "후보들 중에서 미니게임(사다리/뽑기/룰렛 등)으로
-//               결정할 수 있게 하고 싶다" → 캡스톤 시연 임팩트 포인트
 //
 // 색상 정책: CustomerColors / AppColors 디자인 토큰만 사용 (변경 금지).
 // asset 추가 없음 — 이모지 + CustomPainter 로 모든 그래픽 구현.
 // ══════════════════════════════════════════════════════════
 
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/theme/theme.dart';
+import '../../core/widgets/food_image.dart';
 import '../../models/restaurant.dart';
+import '../../providers/user_provider.dart';
+import '../../services/votes_api_service.dart';
+import '../menu/menu_screen.dart';
 import 'widgets/ladder_game.dart';
 import 'widgets/spinner_wheel.dart';
 
 /// 미니게임으로 후보 식당 중 하나를 결정하는 화면
-class DecideScreen extends StatefulWidget {
+///
+/// votes API 자동 호출을 위해 sessionId 와 isHost 를 함께 받는다.
+/// 두 값이 모두 누락된 레거시 호출부(테스트/프리뷰)는 게임만 동작하고
+/// 결과 확정 시 단순 pop 으로 결과 식당을 반환하는 fallback 으로 폴백된다.
+class DecideScreen extends ConsumerStatefulWidget {
   const DecideScreen({
     super.key,
     required this.candidates,
+    this.sessionId,
+    this.isHost = false,
   });
 
   /// 결정 대상 후보 식당 목록
@@ -44,8 +59,23 @@ class DecideScreen extends StatefulWidget {
   /// - 너무 많으면 룰렛 글자가 겹치므로 상위 6개까지만 표시
   final List<Restaurant> candidates;
 
+  /// votes API 호출 대상 세션 UUID.
+  ///
+  /// null 이면 API 호출 없이 단순 pop 으로 결과만 반환하는 레거시 모드로 동작.
+  /// 정상 흐름(추천 리스트/비교 화면)에서는 항상 값이 전달되어야 한다.
+  final String? sessionId;
+
+  /// 현재 사용자가 세션 호스트인지.
+  ///
+  /// - true:  "이 식당으로 결정" → POST /decide → MenuScreen 으로 자동 push
+  /// - false: "이 식당으로 결정" → POST /votes → 본인 한 표 등록 후 pop
+  ///
+  /// 백엔드가 권한 검증을 수행하므로 잘못 넣어도 안전하지만,
+  /// UI 표기(버튼 카피)를 위해 정확하게 받아야 한다.
+  final bool isHost;
+
   @override
-  State<DecideScreen> createState() => _DecideScreenState();
+  ConsumerState<DecideScreen> createState() => _DecideScreenState();
 }
 
 /// 어떤 게임을 선택했는지 구분하는 enum
@@ -59,7 +89,7 @@ enum _GameKind {
   final String emoji;
 }
 
-class _DecideScreenState extends State<DecideScreen> {
+class _DecideScreenState extends ConsumerState<DecideScreen> {
   // 현재 선택된 게임 (탭 전환용)
   _GameKind _selected = _GameKind.spinner;
 
@@ -67,10 +97,16 @@ class _DecideScreenState extends State<DecideScreen> {
   // - null: 아직 결정 안 됨 (게임 실행 전 또는 회전 중)
   int? _winnerIndex;
 
+  // votes API 호출 중 — 중복 클릭/이중 push 방지용 가드
+  bool _isSubmitting = false;
+
   // 룰렛/사다리 위젯을 외부에서 제어하기 위한 컨트롤러
   // ("다시 돌리기" 버튼 → 컨트롤러.spin() 호출 방식)
   final SpinnerWheelController _spinnerCtrl = SpinnerWheelController();
   final LadderGameController _ladderCtrl = LadderGameController();
+
+  // votes API 클라이언트 — 호스트/비호스트 분기에 사용
+  static const _votesApi = VotesApiService();
 
   // 룰렛에 한 번에 표시할 최대 후보 수 (글자 겹침 방지)
   static const int _maxWheelCandidates = 6;
@@ -104,11 +140,119 @@ class _DecideScreenState extends State<DecideScreen> {
     }
   }
 
-  // "이 식당으로 결정" — Navigator.pop 으로 부모에게 결과 반환
-  void _confirm() {
-    if (_winnerIndex == null) return;
+  // "이 식당으로 결정" — votes API 호출 + 후속 라우팅
+  //
+  // 분기:
+  //   - sessionId 없음(레거시): 단순 pop 으로 winner 반환
+  //   - 호스트: decide() → 성공 시 MenuScreen pushReplacement
+  //   - 비호스트: castVote() → 성공/중복(409) 둘 다 친근 안내 후 pop
+  Future<void> _confirm() async {
+    if (_winnerIndex == null || _isSubmitting) return;
     final winner = _candidates[_winnerIndex!];
-    Navigator.of(context).pop<Restaurant>(winner);
+
+    // ── 1) 레거시 호출부(sessionId 미지정) ────────────────
+    // votes API 를 모르는 호출부를 위한 안전한 fallback. 게임 결과만 반환.
+    if (widget.sessionId == null || widget.sessionId!.isEmpty) {
+      Navigator.of(context).pop<Restaurant>(winner);
+      return;
+    }
+
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('로그인이 풀렸어요. 다시 로그인해봐요')),
+      );
+      return;
+    }
+
+    setState(() => _isSubmitting = true);
+
+    if (widget.isHost) {
+      // ── 2) 호스트 — decide() → ORDERED 전이 → MenuScreen ─
+      // 호스트가 한 명도 투표 안 한 상태에서 decide 를 호출해도 백엔드가
+      // 최소 1표 조건을 검증하므로 여기선 그대로 호출만 시도.
+      // 사장님 시연 시나리오: 호스트가 룰렛 돌려서 바로 결정하는 케이스.
+      // 우선 본인 한 표를 등록한 뒤 decide 를 호출해 전체 흐름의 정합성을 맞춘다.
+      // (이미 투표한 식당이 있으면 409 — 무시하고 decide 진행)
+      await _votesApi.castVote(
+        accessToken: token,
+        sessionId: widget.sessionId!,
+        restaurantId: winner.id,
+      );
+
+      final result = await _votesApi.decide(
+        accessToken: token,
+        sessionId: widget.sessionId!,
+      );
+
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+
+      if (result == null || result.winnerRestaurantId.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('결정을 마치지 못했어요. 잠시 후 다시 시도해봐요')),
+        );
+        return;
+      }
+
+      // 결과 안내 토스트 — 친근 톤 + 다음 액션 명시
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('"${result.winnerName}" 으로 결정됐어요! 메뉴 골라봐요'),
+          duration: const Duration(seconds: 3),
+          backgroundColor: Theme.of(context).colorScheme.primary,
+        ),
+      );
+
+      // MenuScreen 으로 pushReplacement — 뒤로 가기로 다시 게임화면 안 돌아오게
+      // (vote_progress_screen 의 _navigateToMenu 와 동일한 흐름)
+      Navigator.of(context).pushReplacement(
+        MaterialPageRoute(
+          builder: (_) => MenuScreen(
+            restaurantId: result.winnerRestaurantId,
+            restaurantName: result.winnerName.isNotEmpty
+                ? result.winnerName
+                : winner.name,
+            sessionId: widget.sessionId,
+          ),
+        ),
+      );
+    } else {
+      // ── 3) 비호스트 — castVote() 만 호출 ──────────────────
+      // 결과는 호스트가 종료할 때까지 vote_progress_screen 폴링에서 확인.
+      // 본 화면은 단순 pop 으로 빠져나가 부모(추천 리스트/비교)에 winner 를 반환.
+      final result = await _votesApi.castVote(
+        accessToken: token,
+        sessionId: widget.sessionId!,
+        restaurantId: winner.id,
+      );
+
+      if (!mounted) return;
+      setState(() => _isSubmitting = false);
+
+      String message;
+      if (result.isSuccess) {
+        message = '"${winner.name}" 에 한 표! 호스트가 종료하면 메뉴 화면으로 이동해요';
+      } else if (result.alreadyVoted) {
+        // 백엔드 409 — 이미 다른 식당에 한 표 던진 상태. 친근 안내.
+        message = result.message ?? '이미 투표했어요';
+      } else {
+        message = result.message ?? '투표가 안 됐어요. 다시 시도해봐요';
+      }
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 3),
+          backgroundColor: result.isSuccess
+              ? Theme.of(context).colorScheme.primary
+              : null,
+        ),
+      );
+
+      // 부모로 winner 반환 — 호출부가 후속 액션(예: 비교 화면 pop) 처리 가능
+      Navigator.of(context).pop<Restaurant>(winner);
+    }
   }
 
   // 탭 전환 시 결과 초기화
@@ -214,6 +358,8 @@ class _DecideScreenState extends State<DecideScreen> {
               if (_winnerIndex != null)
                 _WinnerCard(
                   restaurant: _candidates[_winnerIndex!],
+                  isHost: widget.isHost,
+                  isSubmitting: _isSubmitting,
                   onRetry: _retry,
                   onConfirm: _confirm,
                 ),
@@ -343,23 +489,35 @@ class _CandidateChips extends StatelessWidget {
 }
 
 // ─────────────────────────────────────────────────────────
-// 결과 카드
+// 결과 카드 — 우승 식당 풍부한 미리보기 (2026-05-14 강화)
 //
-// "이 식당으로 정해졌어요!" + 식당 이름 + "다시 돌리기" / "이 식당으로 결정"
+// 기존: 텍스트만(식당 이름 + 가격대)
+// 강화: FoodImage(70x70) + 카테고리 + 가격대 + ⭐ 평점 + 카피 + 액션 버튼
+//
+// 버튼 카피는 호스트 여부에 따라 분기:
+//   - 호스트: "이 식당으로 결정" (decide → MenuScreen)
+//   - 비호스트: "이 식당에 투표" (castVote → pop)
 // ─────────────────────────────────────────────────────────
 class _WinnerCard extends StatelessWidget {
   const _WinnerCard({
     required this.restaurant,
+    required this.isHost,
+    required this.isSubmitting,
     required this.onRetry,
     required this.onConfirm,
   });
 
   final Restaurant restaurant;
+  final bool isHost;
+  final bool isSubmitting;
   final VoidCallback onRetry;
   final VoidCallback onConfirm;
 
   @override
   Widget build(BuildContext context) {
+    // 호스트는 결정, 비호스트는 투표 한 표만 등록 → 카피 다르게.
+    final confirmLabel = isHost ? '이 식당으로 결정' : '이 식당에 투표';
+
     return Container(
       padding: const EdgeInsets.all(AppSpacing.cardPadding),
       decoration: BoxDecoration(
@@ -373,36 +531,100 @@ class _WinnerCard extends StatelessWidget {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          // ── 헤더: 🎉 + 카피 ────────────────────────────
           Row(
             children: [
               const Text('🎉', style: TextStyle(fontSize: 28)),
               const SizedBox(width: AppSpacing.sm),
-              Text(
-                '이 식당으로 정해졌어요!',
-                style: AppTextStyles.heading3,
+              Expanded(
+                child: Text(
+                  '이 식당으로 정해졌어요!',
+                  style: AppTextStyles.heading3,
+                ),
               ),
             ],
           ),
           const SizedBox(height: AppSpacing.sm),
-          Text(
-            restaurant.name,
-            style: AppTextStyles.heading2.copyWith(
-              color: CustomerColors.primaryDark,
-            ),
+
+          // ── 식당 미리보기 (사진 + 메타 정보) ────────────
+          // FoodImage 가 imageUrl 결측/실패를 카테고리 이모지 fallback 으로
+          // 자동 처리해주므로 호출부는 그대로 모델 필드를 전달만 하면 된다.
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              FoodImage(
+                imageUrl: restaurant.imageUrl,
+                categoryLabel: restaurant.category.label,
+                width: 70,
+                height: 70,
+                emojiSize: 32,
+                semanticLabel: '${restaurant.name} 이미지',
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    // 식당 이름 — 강조 톤
+                    Text(
+                      restaurant.name,
+                      style: AppTextStyles.heading3.copyWith(
+                        color: CustomerColors.primaryDark,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    const SizedBox(height: 4),
+                    // 카테고리 라벨 (RestaurantCategory.label 사용 — 한글)
+                    Text(
+                      restaurant.category.label,
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                    // 가격대 — priceRange 가 있을 때만 표시
+                    if (restaurant.priceRange != null &&
+                        restaurant.priceRange!.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        restaurant.priceDisplay,
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ],
+                    // ⭐ 평점 — null 이 아니면 1자리 소수로 표시
+                    if (restaurant.rating != null) ...[
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          const Text('⭐', style: TextStyle(fontSize: 12)),
+                          const SizedBox(width: 2),
+                          Text(
+                            restaurant.rating!.toStringAsFixed(1),
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ],
+                ),
+              ),
+            ],
           ),
-          if (restaurant.priceRange != null) ...[
-            const SizedBox(height: AppSpacing.xs),
-            Text(
-              restaurant.priceDisplay,
-              style: AppTextStyles.bodySmall,
-            ),
-          ],
           const SizedBox(height: AppSpacing.md),
+
+          // ── 액션 버튼 ────────────────────────────────
           Row(
             children: [
               Expanded(
                 child: OutlinedButton(
-                  onPressed: onRetry,
+                  onPressed: isSubmitting ? null : onRetry,
                   style: OutlinedButton.styleFrom(
                     foregroundColor: CustomerColors.primary,
                     side: const BorderSide(
@@ -428,7 +650,7 @@ class _WinnerCard extends StatelessWidget {
               const SizedBox(width: AppSpacing.sm),
               Expanded(
                 child: ElevatedButton(
-                  onPressed: onConfirm,
+                  onPressed: isSubmitting ? null : onConfirm,
                   style: ElevatedButton.styleFrom(
                     backgroundColor: CustomerColors.primary,
                     foregroundColor: AppColors.background,
@@ -440,12 +662,22 @@ class _WinnerCard extends StatelessWidget {
                           BorderRadius.circular(AppRadius.button),
                     ),
                   ),
-                  child: Text(
-                    '이 식당으로 결정',
-                    style: AppTextStyles.buttonMedium.copyWith(
-                      color: AppColors.background,
-                    ),
-                  ),
+                  // 제출 중이면 스피너로 잠금 표시 — 더블 탭/이중 push 방지.
+                  child: isSubmitting
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: AppColors.background,
+                          ),
+                        )
+                      : Text(
+                          confirmLabel,
+                          style: AppTextStyles.buttonMedium.copyWith(
+                            color: AppColors.background,
+                          ),
+                        ),
                 ),
               ),
             ],

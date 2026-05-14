@@ -260,40 +260,106 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
   // ── 백엔드 카테고리 문자열 → MenuCategory enum 매핑 ─────
   // 백엔드에서 어떤 키워드로 카테고리를 내려주는지에 따라
-  // 적절한 enum 으로 변환. 매칭 안 되면 "전체" 로 표시되지 않게
-  // recommended(추천) 로 떨어뜨려 사용자에게는 보이도록 한다.
+  // 적절한 enum 으로 변환.
   //
-  // 매핑 규칙(우리 시드/팀 네이밍 컨벤션 기준):
-  //   "추천" / "recommended"  → MenuCategory.recommended
-  //   "밥" 또는 "정식" 포함     → MenuCategory.rice
-  //   "면" 또는 "국수" 포함     → MenuCategory.noodle
-  //   "분식"                    → MenuCategory.snack
-  //   "음료" / "디저트"         → MenuCategory.drink
-  //   그 외 / null              → MenuCategory.recommended (보이게)
+  // ⚠️ 2026-05-14 변경 (m1 사후 정리):
+  //   기존: 매칭 실패 시 MenuCategory.recommended (추천) 로 떨어뜨려
+  //         "추천" 탭에 미매칭 메뉴가 우르르 쏟아져 본래 추천 메뉴와 섞이는
+  //         문제 발생. 예) "양식"/"치킨"/"피자"/"카페"/"디저트" 모두 추천 탭으로.
+  //   변경: ① 흔히 들어오는 키워드(면류 - 라멘/우동/파스타, 분식 - 떡볶이/김밥/
+  //         라면, 음료 - 카페/디저트/베이커리)를 더 풍부하게 인식.
+  //         ② 그래도 매칭 안 되면 MenuCategory.other("기타") 로 분리.
+  //         이로써 "추천" 탭은 실제 추천 메뉴만 깔끔하게 유지됨.
+  //
+  // 매핑 규칙(우리 시드/팀 네이밍 컨벤션 + 흔한 외부 카테고리 키워드):
+  //   "추천" / "recommended" / "베스트" / "인기"  → MenuCategory.recommended
+  //   "밥" / "정식" / "덮밥" / "비빔밥" / "rice"  → MenuCategory.rice
+  //   "면" / "국수" / "파스타" / "라멘" / "우동" / "noodle" → MenuCategory.noodle
+  //   "분식" / "떡볶이" / "김밥" / "라면" / "튀김" / "snack" → MenuCategory.snack
+  //   "음료" / "디저트" / "카페" / "커피" / "베이커리" / "케이크"
+  //     / "drink" / "beverage" / "dessert" / "cafe"  → MenuCategory.drink
+  //   그 외 / null  → MenuCategory.other ("기타" 탭)
   MenuCategory _mapCategory(String? raw) {
-    if (raw == null || raw.isEmpty) return MenuCategory.recommended;
+    if (raw == null || raw.isEmpty) return MenuCategory.other;
     final lower = raw.toLowerCase();
 
-    if (raw.contains('추천') || lower.contains('recommend')) {
+    // ── 1) 추천: 명시적 "추천/베스트/인기" 키워드만 인정 ──
+    // 그 외 카테고리가 fall-through 로 떨어지지 않도록 가장 먼저 분기.
+    if (raw.contains('추천') ||
+        raw.contains('베스트') ||
+        raw.contains('인기') ||
+        lower.contains('recommend') ||
+        lower.contains('best') ||
+        lower.contains('popular')) {
       return MenuCategory.recommended;
     }
-    if (raw.contains('밥') || raw.contains('정식') || lower.contains('rice')) {
+
+    // ── 2) 밥류: 한식 베이스의 밥·정식·덮밥·비빔밥 ──
+    if (raw.contains('밥') ||
+        raw.contains('정식') ||
+        raw.contains('덮밥') ||
+        raw.contains('비빔') ||
+        lower.contains('rice')) {
       return MenuCategory.rice;
     }
-    if (raw.contains('면') || raw.contains('국수') || lower.contains('noodle')) {
+
+    // ── 3) 면류: 국수·면·파스타·라멘·우동까지 확장 ──
+    // 단 "라면"은 분식으로 분류해야 하므로 아래 분식 분기에서 먼저 잡힘.
+    // (이 분기는 "라멘"/"우동"/"파스타" 같은 면류 위주 메뉴를 잡음)
+    if (raw.contains('국수') ||
+        raw.contains('파스타') ||
+        raw.contains('라멘') ||
+        raw.contains('우동') ||
+        raw.contains('쌀국수') ||
+        lower.contains('noodle') ||
+        lower.contains('pasta') ||
+        lower.contains('ramen') ||
+        lower.contains('udon')) {
       return MenuCategory.noodle;
     }
-    if (raw.contains('분식') || lower.contains('snack')) {
+
+    // ── 4) 분식: 떡볶이·김밥·라면·튀김 등 한국식 분식 ──
+    // "라면"은 분식 카테고리가 더 자연스러워 여기서 먼저 매칭.
+    if (raw.contains('분식') ||
+        raw.contains('떡볶이') ||
+        raw.contains('김밥') ||
+        raw.contains('라면') ||
+        raw.contains('튀김') ||
+        raw.contains('순대') ||
+        lower.contains('snack')) {
       return MenuCategory.snack;
     }
+
+    // ── 5) 음료/디저트/카페 묶음 ──
+    // 음료 단독 탭이지만 후식 성격(디저트/베이커리/카페)도 함께 묶어
+    // 사용자가 "식후 한 잔" 흐름으로 자연스럽게 탐색하게 한다.
     if (raw.contains('음료') ||
         raw.contains('디저트') ||
+        raw.contains('카페') ||
+        raw.contains('커피') ||
+        raw.contains('베이커리') ||
+        raw.contains('빵') ||
+        raw.contains('케이크') ||
         lower.contains('drink') ||
-        lower.contains('beverage')) {
+        lower.contains('beverage') ||
+        lower.contains('dessert') ||
+        lower.contains('cafe') ||
+        lower.contains('coffee') ||
+        lower.contains('bakery')) {
       return MenuCategory.drink;
     }
-    // 알 수 없는 카테고리는 일단 "추천" 탭에 묶어 노출 (전체 탭에서도 보임)
-    return MenuCategory.recommended;
+
+    // ── 6) 일반 면 키워드는 별도 분기로 마지막에 처리 ──
+    // "면"이라는 글자 자체는 다른 카테고리(예: "면역", "면류") 오탐 가능성이
+    // 낮지만, 위 키워드가 모두 빠진 뒤 마지막에 확인해 우선순위를 명확히 함.
+    if (raw.contains('면')) {
+      return MenuCategory.noodle;
+    }
+
+    // ── 7) 분류되지 않은 카테고리는 "기타" 탭으로 분리 ──
+    //   예: "양식"/"중식"/"일식"/"치킨"/"피자"/"고기"/"샐러드" 등.
+    //   추천 탭과 섞이지 않게 별도 탭에 모음. 사용자는 전체 탭에서도 볼 수 있음.
+    return MenuCategory.other;
   }
 
   // ── 생명주기: TabController 메모리 해제 ─────────────────

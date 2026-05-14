@@ -72,6 +72,11 @@ class _RecommendationListScreenState
   // 진입 시 1회 조회 + 방장의 "투표 시작" 성공 시점에 갱신.
   String? _sessionStatus;
 
+  // 호스트 여부 — 미니게임(DecideScreen)·비교 화면에 isHost 인자로 전달.
+  // session.createdBy.id 와 userProvider.userId 비교로 판단(소문자/공백 정규화).
+  // 미로딩 상태(초기) 에는 false 로 가정해 비호스트(castVote) 동작으로 안전 폴백.
+  bool _isHost = false;
+
   // 비교 모드 상태: true면 카드가 체크박스로 바뀌고 선택된 항목을 모음.
   // 선택 개수 2~3개일 때만 "비교하기" 버튼이 활성화됨.
   bool _isCompareMode = false;
@@ -108,8 +113,15 @@ class _RecommendationListScreenState
       sessionId: widget.sessionId,
     );
     if (!mounted || session == null) return;
+    // 호스트 판별 — 본 화면이 진입하는 미니게임/비교 화면에 isHost 인자를 넘기기 위해
+    // session.createdBy.id 와 userProvider.userId 를 정규화해서 비교.
+    final me = ref.read(userProvider).userId;
+    final hostId = session.createdBy?.id;
+    final isHost = (me != null && hostId != null) &&
+        me.trim().toLowerCase() == hostId.trim().toLowerCase();
     setState(() {
       _sessionStatus = session.status;
+      _isHost = isHost;
     });
   }
 
@@ -206,7 +218,11 @@ class _RecommendationListScreenState
 
     Navigator.of(context).push(
       MaterialPageRoute(
-        builder: (_) => RestaurantComparisonScreen(recommendations: selected),
+        builder: (_) => RestaurantComparisonScreen(
+          recommendations: selected,
+          sessionId: widget.sessionId,
+          isHost: _isHost,
+        ),
       ),
     );
   }
@@ -650,10 +666,12 @@ class _RecommendationListScreenState
       targetLng: rec.lng,
     );
 
-    // ── 거리 칩 정합화 (2026-05-13 사장님 피드백) ──────────
-    // 백엔드 reasons 에는 "도보 1~2분 거리" 같은 비율 기반 칩이 박혀 있어
-    // 실거리(예: 13km) 와 모순되는 경우가 있음. walkChip 으로 실거리 라벨을
-    // 만들어 reasons 의 거리 관련 항목을 갈아치워 모순을 제거.
+    // ── 거리 칩 정합화 (2026-05-13 사장님 피드백 → 2026-05-14 백엔드 정합) ──
+    // [최초 도입] 백엔드 reasons 에는 "도보 1~2분 거리" 같은 비율 기반 칩이
+    //   박혀 있어 실거리(예: 13km) 와 모순. walkChip 으로 실거리 라벨로 교체.
+    // [2026-05-14] 백엔드도 distanceLabelFor(meters) 헬퍼로 실거리 라벨을 박도록
+    //   정합화됨. 이 호출은 좌표 누락·구버전 응답 등 예외 상황의 "안전망"으로
+    //   유지하며, 정상 흐름에서는 동일 칩 제거 후 재삽입(no-op)에 해당.
     final walkChip = walkChipForCoords(
       userLat: _userLat,
       userLng: _userLng,
@@ -838,9 +856,9 @@ class _RecommendationListScreenState
   //
   // 흐름:
   //   1) 현재 추천 리스트(상위 6개) 를 Restaurant 모델로 변환
-  //   2) DecideScreen 으로 push → 사용자가 룰렛 또는 사다리 선택
-  //   3) 결과 식당 반환되면 토스트 안내
-  //      (votes API 통합은 다음 사이클 — 일단 시연용 결과 표시까지)
+  //   2) DecideScreen 으로 push (sessionId + isHost 함께 전달)
+  //   3) DecideScreen 내부에서 votes API(castVote/decide) 호출 + MenuScreen push
+  //   4) 비호스트 케이스에는 winner 가 pop 으로 돌아옴 → 안내 토스트만
   // ══════════════════════════════════════════════════════════
   Future<void> _openDecideGame() async {
     final recs = _recommendations ?? const <RecommendationDto>[];
@@ -859,21 +877,31 @@ class _RecommendationListScreenState
         .map(_recToRestaurant)
         .toList(growable: false);
 
+    // 호스트는 DecideScreen 내부에서 decide() 호출 후 MenuScreen 으로
+    // pushReplacement 되므로 여기서는 winner 반환 처리에만 의존하면 된다.
+    // (호스트는 pop 으로 돌아오지 않음 → winner 가 null 인 경우가 정상)
     final winner = await Navigator.of(context).push<Restaurant>(
       MaterialPageRoute(
-        builder: (_) => DecideScreen(candidates: candidates),
+        builder: (_) => DecideScreen(
+          candidates: candidates,
+          sessionId: widget.sessionId,
+          isHost: _isHost,
+        ),
       ),
     );
 
     if (!mounted || winner == null) return;
-    // 결과 안내 — 친근 톤 + 다음 액션(상세 보기) 유도
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('"${winner.name}" 으로 결정됐어요! 카드에서 상세를 살펴봐요'),
-        duration: const Duration(seconds: 4),
-        backgroundColor: Theme.of(context).colorScheme.primary,
-      ),
-    );
+    // 비호스트 케이스 — castVote 만 등록한 상태로 돌아옴.
+    // 안내 카피는 DecideScreen 내부 토스트가 이미 띄웠지만 추가 액션 유도용.
+    if (!_isHost) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('"${winner.name}" 에 한 표! 호스트 종료를 기다려봐요'),
+          duration: const Duration(seconds: 3),
+          backgroundColor: Theme.of(context).colorScheme.primary,
+        ),
+      );
+    }
   }
 
   // ── RecommendationDto → Restaurant 변환 ────────────────

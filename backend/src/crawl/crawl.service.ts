@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
 import { GeminiService } from '../gemini/gemini.service';
 import { pickMenusForCategory } from './menu-library';
+import { ensureRestaurantImageUrl } from '../restaurants/restaurant-image-fallback';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당 크롤링 서비스
@@ -393,6 +394,18 @@ export class CrawlService {
     //   - 네이버에서 못 가져온 경우(rating === 0 이거나 detail null) null 저장
     //   - 0 점은 의미가 없으므로 null 로 정규화(추천 가중치 계산 시 영향 회피)
     const ratingRaw = naverDetail?.rating ?? 0;
+
+    // ── 식당 이미지 폴백 (2026-05-14 추가) ───────────────────
+    //   사장님 피드백 "메뉴넣으면서 이미지도 넣어달라니까" 후속 조치.
+    //   네이버 thumUrl 이 있으면 그대로 쓰고, 없으면 카테고리·식당명 기반
+    //   Unsplash Source API URL 로 자동 매핑. 빈 회색 박스 → 음식 사진.
+    //   ensureRestaurantImageUrl 헬퍼는 시드/응답 매핑과 100% 동일한 규칙.
+    const restaurantImageUrl = ensureRestaurantImageUrl(
+      naverDetail?.imageUrl,
+      category,
+      kakaoPlace.place_name,
+    );
+
     const restaurantData = {
       name: kakaoPlace.place_name,
       category,
@@ -401,6 +414,7 @@ export class CrawlService {
       lng: parseFloat(kakaoPlace.x),
       price_range: priceRange,
       rating: ratingRaw > 0 ? ratingRaw : null,
+      image_url: restaurantImageUrl,
     };
 
     // 이름+주소로 기존 데이터 확인
@@ -574,6 +588,8 @@ export class CrawlService {
         const jitterLat = lat + (Math.random() - 0.5) * 0.006;
         const jitterLng = lng + (Math.random() - 0.5) * 0.006;
 
+        // Gemini 가상 식당도 image_url 폴백 동일 적용 (2026-05-14).
+        // 가상 식당은 자체 사진이 없으므로 무조건 카테고리·이름 매핑 URL.
         const restaurantData = {
           name: r.name,
           category: r.category,
@@ -581,6 +597,7 @@ export class CrawlService {
           lat: jitterLat,
           lng: jitterLng,
           price_range: r.priceRange,
+          image_url: ensureRestaurantImageUrl(null, r.category, r.name),
         };
 
         // 중복 체크 (이름 + 주소)

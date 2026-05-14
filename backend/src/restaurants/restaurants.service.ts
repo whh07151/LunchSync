@@ -1,5 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { ensureRestaurantImageUrl } from './restaurant-image-fallback';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당/메뉴 비즈니스 로직
@@ -81,7 +82,10 @@ export class RestaurantsService {
       address: r.address,
       lat: r.lat,
       lng: r.lng,
-      imageUrl: r.image_url,
+      // 2026-05-14: 응답 단 최후 방어층. 시드/크롤이 누락된 옛 레코드도
+      // 카테고리·이름 기반 Unsplash URL 로 자동 채워서 내려보낸다.
+      // (DB 마이그레이션이 적용되기 전 EC2 상태에서도 시연 안전.)
+      imageUrl: ensureRestaurantImageUrl(r.image_url, r.category, r.name),
       // 네이버 플레이스 평점 (0.0~5.0). 미수집 식당은 null.
       // 클라이언트 RestaurantDto.rating 에 매핑되어 ⭐ 칩으로 표시됨.
       rating: r.rating != null ? Number(r.rating) : null,
@@ -110,7 +114,8 @@ export class RestaurantsService {
       address: data.address,
       lat: data.lat,
       lng: data.lng,
-      imageUrl: data.image_url,
+      // 2026-05-14: 상세 화면도 동일 폴백 적용 — getRestaurants 와 일치.
+      imageUrl: ensureRestaurantImageUrl(data.image_url, data.category, data.name),
       // NUMERIC 은 Supabase JS 에서 string 으로 들어오는 경우가 있어 명시적 변환.
       rating: data.rating != null ? Number(data.rating) : null,
       createdAt: data.created_at,
