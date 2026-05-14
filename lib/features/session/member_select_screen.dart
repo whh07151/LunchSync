@@ -6,8 +6,10 @@ import '../../core/debug/debug_toast.dart';
 import '../../models/member.dart';
 import '../../providers/session_provider.dart';
 import '../../providers/user_provider.dart';
+import '../../services/friends_api_service.dart';
 import '../../services/invitations_api_service.dart';
 import '../../services/sessions_api_service.dart';
+import '../friends/friends_screen.dart';
 import 'session_lobby_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -27,11 +29,10 @@ import 'session_lobby_screen.dart';
 //         → sessionProvider에 선택 멤버 저장
 //         → CU-09 세션 생성 조건 설정 화면 (우현호 담당)
 //
-// Mock 데이터 사용 이유:
-//   친구 목록은 카카오 친구 API(우현호 담당) 또는
-//   자체 백엔드 API(안태환 담당)에서 받아와야 합니다.
-//   연동 전까지 화면에 직접 적힌 가짜 데이터(Mock)를 사용합니다.
-//   → API 연동 시: _mockFriends 리스트를 API 응답으로 교체
+// 친구 데이터 출처:
+//   2026-05-14 백엔드 friends API 연동 완료.
+//   GET  /api/friends 로 목록 조회 → FriendDto 리스트 사용.
+//   친구 추가/삭제는 별도 화면(FriendsScreen) 에서 수행.
 //
 // Riverpod 연동:
 //   "조건 설정하기" 버튼 탭 시 선택된 멤버 목록을 sessionProvider에 저장합니다.
@@ -76,23 +77,30 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = ''; // 현재 입력된 검색어
 
-  // ── 친구 목록 ──────────────────────────────────────────
-  // 2026-05-14: 가짜 목업 제거 (안태환/장다현/우현호 등 8명).
-  //   - 백엔드에 친구 API 없음 → 빈 리스트 + 빈 상태 안내로 변경.
-  //   - 멤버 모집은 "초대 코드 복사하기" 흐름으로 일원화.
-  //   - 호스트 혼자도 세션 만들 수 있음 (백엔드는 호스트만 INSERT).
-  // TODO: 카카오 친구 API 연동 시 실제 데이터로 교체.
-  static const List<Member> _mockFriends = <Member>[];
+  // ── 친구 목록 (서버에서 받아온 실제 친구) ───────────────────
+  // 2026-05-14 (백엔드 friends API 연동):
+  //   - 기존 _mockFriends = <Member>[] 자리 → 서버 응답 캐시로 교체
+  //   - initState 에서 GET /api/friends 로 채움
+  //   - FriendsScreen 다녀온 후에도 다시 fetch 해서 최신 동기화
+  // 백엔드 FriendDto: { id, name, email, profileImage, since }
+  List<FriendDto> _friends = const [];
+
+  // 친구 목록 로딩 중인지 (true: 로딩 스피너 표시)
+  bool _isLoadingFriends = true;
+
+  // 친구 API 서비스 (const 인스턴스라 매번 새로 만들 필요 없음)
+  static const _friendsApi = FriendsApiService();
 
   // ── 검색어 필터가 적용된 친구 목록 ────────────────────────
   // getter: 매번 계산이 필요한 값을 변수처럼 쓸 수 있게 해줌
-  // 검색어가 없으면 전체 목록, 있으면 이름/소속에 검색어가 포함된 것만 반환
-  List<Member> get _filteredFriends {
-    if (_searchQuery.isEmpty) return _mockFriends;
-    return _mockFriends.where((member) =>
-      member.name.contains(_searchQuery) ||
-      member.organization.contains(_searchQuery),
-    ).toList();
+  // 검색어가 없으면 전체 목록, 있으면 이름/이메일에 검색어가 포함된 것만 반환
+  List<FriendDto> get _filteredFriends {
+    if (_searchQuery.isEmpty) return _friends;
+    final q = _searchQuery.toLowerCase();
+    return _friends.where((friend) {
+      final email = (friend.email ?? '').toLowerCase();
+      return friend.name.toLowerCase().contains(q) || email.contains(q);
+    }).toList();
   }
 
   // ── 다음 버튼 활성 여부 ────────────────────────────────
@@ -105,6 +113,44 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
   void initState() {
     super.initState();
     DebugToast.show(context, 'CU-08');
+    // 서버에서 친구 목록 비동기로 가져오기 (build 와 분리)
+    Future.microtask(_loadFriends);
+  }
+
+  // ── 친구 목록 새로고침 ────────────────────────────────────
+  // 로그인 토큰이 없으면 빈 리스트로 빠르게 종료.
+  // mounted 체크: 비동기 응답 도착 전에 화면이 닫혔을 수 있음.
+  Future<void> _loadFriends() async {
+    final accessToken = ref.read(userProvider).accessToken;
+    if (accessToken == null) {
+      if (!mounted) return;
+      setState(() {
+        _friends = const [];
+        _isLoadingFriends = false;
+      });
+      return;
+    }
+
+    final list = await _friendsApi.listFriends(accessToken: accessToken);
+    if (!mounted) return;
+    setState(() {
+      _friends = list;
+      _isLoadingFriends = false;
+      // 서버에서 사라진 친구가 _selectedIds 에 남아있을 수 있어 정리
+      final validIds = _friends.map((f) => f.id).toSet();
+      _selectedIds.removeWhere((id) => !validIds.contains(id));
+    });
+  }
+
+  // ── "친구 추가" 화면 열기 ─────────────────────────────────
+  // FriendsScreen 에서 친구 추가/삭제 후 돌아오면 목록 자동 새로고침
+  Future<void> _openFriendsScreen() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const FriendsScreen()),
+    );
+    if (!mounted) return;
+    // 돌아오면 무조건 fetch — 추가/삭제 어떤 변화가 있었는지 확실하지 않음
+    await _loadFriends();
   }
 
   // ── 위젯이 화면에서 제거될 때 컨트롤러 메모리 해제 ───────
@@ -311,10 +357,46 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
 
         const SizedBox(height: 8),
 
-        // ── 화면 제목 ────────────────────────────────────
-        Text(
-          '함께 먹을 사람을\n선택해주세요',
-          style: AppTextStyles.heading1,
+        // ── 화면 제목 + "친구 추가" 작은 버튼 한 줄 ─────────
+        // 제목과 같은 줄에 우측 정렬로 friends_screen 진입점 노출
+        Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              child: Text(
+                '함께 먹을 사람을\n선택해주세요',
+                style: AppTextStyles.heading1,
+              ),
+            ),
+            // 친구 추가/관리 버튼 (FriendsScreen 으로 이동)
+            // OutlinedButton.icon — primary 톤만 사용, 새 색상 없음
+            OutlinedButton.icon(
+              onPressed: _openFriendsScreen,
+              icon: Icon(
+                Icons.person_add_alt_1_rounded,
+                size: 16,
+                color: primary,
+              ),
+              label: Text(
+                '친구 추가',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: primary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              style: OutlinedButton.styleFrom(
+                side: BorderSide(color: primary.withAlpha(80)),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 10,
+                  vertical: 6,
+                ),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppRadius.chip),
+                ),
+                visualDensity: VisualDensity.compact,
+              ),
+            ),
+          ],
         ),
 
         const SizedBox(height: 8),
@@ -335,7 +417,7 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
   Widget _buildSearchField() {
     return AppTextField(
       controller: _searchController,
-      hint: '이름 또는 소속으로 검색',
+      hint: '이름 또는 이메일로 검색',
       // prefixIcon은 Widget 타입이므로 Icon() 위젯으로 감싸서 전달
       prefixIcon: const Icon(Icons.search_rounded, size: 20),
       onChanged: (value) {
@@ -348,15 +430,34 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
   // ── 친구 목록 위젯 ──────────────────────────────────────────
   // 검색 결과가 없으면 안내 문구, 있으면 항목 목록 표시
   //
-  // 2026-05-14: 가짜 친구 8명 제거 후 빈 상태 안내 강화.
-  //   - 검색어 없을 때: "혼자 시작도 OK" 친근 안내 + 초대 코드 흐름 환기
-  //   - 검색어 있을 때: "검색 결과 없음" 유지
+  // 2026-05-14: 백엔드 friends API 연동.
+  //   - 로딩 중: 스피너
+  //   - 친구 0명: 빈 상태 안내 + "친구 추가" 환기 + 초대 코드 흐름 유지
+  //   - 검색어 있을 때: "검색 결과 없음"
   Widget _buildFriendList() {
+    final primary = Theme.of(context).colorScheme.primary;
+
+    // 로딩 중에는 스피너 표시 (서버 응답 도착 전 깜빡임 방지)
+    if (_isLoadingFriends) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: AppSpacing.xl),
+        child: Center(
+          child: SizedBox(
+            width: 28,
+            height: 28,
+            child: CircularProgressIndicator(
+              strokeWidth: 2.5,
+              color: primary,
+            ),
+          ),
+        ),
+      );
+    }
+
     final friends = _filteredFriends;
 
     // 비어있을 때 — 검색어 유무에 따라 안내 분기
     if (friends.isEmpty) {
-      final primary = Theme.of(context).colorScheme.primary;
       // 검색어 있을 때는 단순 안내
       if (_searchQuery.isNotEmpty) {
         return Padding(
@@ -401,8 +502,9 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
             ),
             const SizedBox(height: 8),
             Text(
-              '괜찮아요! "조건 설정하기"를 눌러 혼자 진행하거나,\n'
-              '아래 "초대 링크 복사하기"로 친구를 불러봐요.',
+              '오른쪽 위 "친구 추가"로 친구를 등록하거나,\n'
+              '"조건 설정하기"로 혼자 진행하거나,\n'
+              '아래 "초대 링크 복사하기"로 바로 불러봐요.',
               style: AppTextStyles.bodySmall.copyWith(
                 color: AppColors.textSecondary,
                 height: 1.5,
@@ -424,18 +526,26 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
 
   // ── 친구 항목 하나 위젯 ─────────────────────────────────────
   // 선택 여부에 따라 배경색, 테두리색, 체크박스, 글자 색이 애니메이션으로 변함
-  Widget _buildFriendItem(Member member) {
-    final isSelected = _selectedIds.contains(member.id);
+  //
+  // 2026-05-14: 파라미터를 Member → FriendDto 로 교체.
+  //   - id/name 는 동일하게 사용
+  //   - 기존 "organization" 자리는 친구의 email 로 대체 (서버가 주는 값)
+  //   - profileImage 가 있으면 CircleAvatar 에 NetworkImage 로 표시
+  Widget _buildFriendItem(FriendDto friend) {
+    final isSelected = _selectedIds.contains(friend.id);
     final primary = Theme.of(context).colorScheme.primary;
+    final hasImage = (friend.profileImage ?? '').isNotEmpty;
+    // 이메일이 비어있어도 빈 줄 안 나오게 분기 처리
+    final subtitle = (friend.email ?? '').isNotEmpty ? friend.email! : '친구';
 
     return GestureDetector(
       onTap: () {
         setState(() {
           // 이미 선택된 경우 → 선택 해제, 아닌 경우 → 선택 추가
           if (isSelected) {
-            _selectedIds.remove(member.id);
+            _selectedIds.remove(friend.id);
           } else {
-            _selectedIds.add(member.id);
+            _selectedIds.add(friend.id);
           }
         });
       },
@@ -462,31 +572,36 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
         child: Row(
           children: [
 
-            // ── 프로필 아바타 (이름 첫 글자) ──────────────
-            // TODO: API 연동 시 — 실제 프로필 이미지 URL이 있으면 CircleAvatar(backgroundImage)로 교체
+            // ── 프로필 아바타 ──────────────────────────────
+            // 카카오 프로필 이미지 URL 이 있으면 NetworkImage, 없으면 첫 글자
             CircleAvatar(
               radius: 22,
               backgroundColor: isSelected
                   ? primary.withAlpha(40)
                   : AppColors.backgroundGrey,
-              child: Text(
-                member.name[0], // 이름의 첫 글자만 표시 (예: "김민준" → "김")
-                style: AppTextStyles.bodyMedium.copyWith(
-                  fontWeight: FontWeight.w700,
-                  color: isSelected ? primary : AppColors.textSecondary,
-                ),
-              ),
+              backgroundImage:
+                  hasImage ? NetworkImage(friend.profileImage!) : null,
+              child: hasImage
+                  ? null
+                  : Text(
+                      // 이름이 비어있을 가능성을 방어 ('?' 표시)
+                      friend.name.isNotEmpty ? friend.name[0] : '?',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w700,
+                        color: isSelected ? primary : AppColors.textSecondary,
+                      ),
+                    ),
             ),
 
             const SizedBox(width: AppSpacing.md),
 
-            // ── 이름 + 소속 ────────────────────────────────
+            // ── 이름 + 이메일 ──────────────────────────────
             Expanded(
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Text(
-                    member.name,
+                    friend.name,
                     style: AppTextStyles.bodyMedium.copyWith(
                       fontWeight: FontWeight.w600,
                       // 선택됨: primary 색상으로 이름 강조
@@ -495,8 +610,10 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
                   ),
                   const SizedBox(height: 2),
                   Text(
-                    member.organization,
+                    subtitle,
                     style: AppTextStyles.bodySmall,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 ],
               ),
@@ -576,9 +693,16 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
             onPressed: _canProceed
                 ? () {
                     // ── 선택된 Member 객체 목록 구성 ──────────────
-                    // _selectedIds(ID 집합)에 해당하는 Member 객체만 필터링
-                    final selectedMembers = _mockFriends
-                        .where((m) => _selectedIds.contains(m.id))
+                    // _selectedIds(ID 집합)에 해당하는 친구를 골라
+                    // FriendDto → Member 로 변환(organization 자리에 email).
+                    // CU-09 는 Member 의 id/name 만 사용하므로 호환 OK.
+                    final selectedMembers = _friends
+                        .where((f) => _selectedIds.contains(f.id))
+                        .map((f) => Member(
+                              id: f.id,
+                              name: f.name,
+                              organization: f.email ?? '친구',
+                            ))
                         .toList();
 
                     // ── Riverpod: sessionProvider에 선택 멤버 저장 ─
