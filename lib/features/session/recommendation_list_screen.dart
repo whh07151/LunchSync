@@ -339,20 +339,25 @@ class _RecommendationListScreenState
     setState(() => _isStartingVote = false);
 
     if (result.isSuccess) {
-      // 시연 피드백 반영: pop 으로 로비 복귀 시 다음 액션(투표) 흐름이 끊김.
-      // → 본 화면에 그대로 머물러 바로 식당을 고르도록 유도한다.
-      //   상단 안내 배너도 _sessionStatus 갱신을 통해 "투표 진행 중" 톤으로 전환.
+      // 2026-05-15 사장님 시연 피드백:
+      //   "투표 시작하기 → 투표 현황 화면으로 자동 이동되어야 함"
+      // 이전엔 본 화면에 머물러 status 만 갱신했지만, 사용자가
+      // "어디서 투표하지?" 다시 헷갈리는 회귀가 있었음. 시작 성공 즉시
+      // VoteProgressScreen 으로 push 해 다음 액션(투표) 흐름을 명확히 연결.
       setState(() {
         _sessionStatus = 'VOTING';
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          // 다음 액션(고르기) 동사 명시
-          content: const Text('투표가 시작됐어요! 마음에 드는 식당을 골라봐요'),
-          duration: const Duration(seconds: 3),
+          content: const Text('투표가 시작됐어요! 곧 투표 화면으로 이동해요'),
+          duration: const Duration(seconds: 2),
           backgroundColor: Theme.of(context).colorScheme.primary,
         ),
       );
+      // 짧은 토스트 후 자동 push — 토스트가 안 보이게 너무 빠르지 않게 600ms 대기
+      Future.delayed(const Duration(milliseconds: 600), () {
+        if (mounted) _openVoteProgress();
+      });
     } else {
       // 백엔드가 내려준 사유를 그대로 노출. 케이스별 메시지는 서비스 레이어에서 매핑.
       ScaffoldMessenger.of(context).showSnackBar(
