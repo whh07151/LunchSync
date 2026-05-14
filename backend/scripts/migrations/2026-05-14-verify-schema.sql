@@ -51,7 +51,8 @@ WHERE routine_schema = 'public'
   AND routine_name IN (
     'delete_session_cascade',
     'create_order_with_items',
-    'create_session_with_host_member'
+    'create_session_with_host_member',
+    'check_schema_resources'
   )
 ORDER BY routine_name;
 
@@ -60,8 +61,8 @@ ORDER BY routine_name;
 --             users.fcm_token / sessions.radius / sessions.budget /
 --             sessions.return_minutes / sessions.memo
 -- 2) 테이블 2개: pos_reservations / pos_seats
--- 3) 함수 3개: create_order_with_items / create_session_with_host_member /
---             delete_session_cascade
+-- 3) 함수 4개: check_schema_resources / create_order_with_items /
+--             create_session_with_host_member / delete_session_cascade
 --
 -- 누락된 행이 있으면 해당 마이그레이션 SQL 을 Dashboard 에서 실행:
 --   - restaurants.rating → 2026-05-14-add-rating-column.sql
@@ -70,4 +71,5 @@ ORDER BY routine_name;
 --   - sessions.radius/budget/return_minutes/memo → ※ 마이그레이션 부재! 사장님 확인 필요
 --   - pos_seats → 2026-05-14-add-pos-tables.sql
 --   - pos_reservations → 2026-05-14-add-pos-reservations.sql (이번 복원)
---   - RPC 함수 3종 → 같은 이름의 SQL 파일
+--   - RPC 함수 4종 → 같은 이름의 SQL 파일
+--     (check_schema_resources → 2026-05-14-schema-introspection-rpc.sql)

@@ -7,6 +7,7 @@ import { join } from 'path';
 import { AppController } from './app.controller';
 import { AppService } from './app.service';
 import { SupabaseModule } from './supabase/supabase.module';
+import { SchemaHealthcheckService } from './supabase/schema-healthcheck.service';
 import { AuthModule } from './auth/auth.module';
 import { UsersModule } from './users/users.module';
 import { SessionsModule } from './sessions/sessions.module';
@@ -113,6 +114,10 @@ import { NotificationsModule } from './notifications/notifications.module';
       provide: APP_GUARD,
       useClass: ThrottlerGuard,
     },
+    // 부트 시 DB 스키마 무결성 헬스체크 (2026-05-14 image_url 사고 안전망)
+    //   - OnModuleInit 훅에서 information_schema 조회 RPC 1회 호출
+    //   - 누락 자원이 있으면 console.warn — 부트 자체는 막지 않음
+    SchemaHealthcheckService,
   ],
 })
 export class AppModule {}

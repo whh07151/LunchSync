@@ -1,0 +1,130 @@
+// ══════════════════════════════════════════════════════════
+// 파일 역할: 부트 시 DB 스키마 무결성 헬스체크
+//
+// 왜 만들었는가? (2026-05-14 image_url silent failure 사고)
+//   PostgREST 는 select 에 누락된 컬럼이 있어도 에러를 내지 않고
+//   조용히 무시 → 코드는 정상, DB 응답은 빈 칸. 빌드/analyze 만으로는
+//   누락된 마이그레이션을 절대 잡을 수 없음.
+//
+//   따라서 NestJS 부트 시 information_schema 를 조회해
+//   기대 자원이 모두 존재하는지 1회 검증하고, 누락된 자원은
+//   console.warn 으로 명시적으로 노출.
+//
+// 동작:
+//   1. onModuleInit 훅에서 RPC `check_schema_resources` 호출
+//      (해당 RPC 는 2026-05-14-schema-introspection-rpc.sql 에 정의)
+//   2. 응답 JSON 의 columns/tables/functions 배열을 순회
+//   3. present=false 인 자원이 있으면 누락 항목을 console.warn 로 출력
+//      + 적용해야 할 마이그레이션 파일명 안내
+//   4. 모두 정상이면 console.log 1줄로 종료 (시연 환경 noise 최소화)
+//   5. RPC 자체가 실패하면 (예: RPC 미배포 상황) console.warn 으로 안내
+//
+// 원칙:
+//   - 부트 자체는 절대 막지 않음 — warn 로그만
+//   - ERROR 가 아닌 WARN 으로 — silent failure 디버깅 시
+//     즉시 보이게 하기 위함이지 부팅 실패를 유발하기 위함이 아님
+//   - 시연 환경에서 정상이면 단 1줄 로그
+// ══════════════════════════════════════════════════════════
+
+import { Injectable, OnModuleInit } from '@nestjs/common';
+import { SupabaseService } from './supabase.service';
+
+// RPC `check_schema_resources` 응답 타입
+// (introspection RPC 가 반환하는 JSON 스키마와 1:1 매칭)
+interface SchemaCheckResult {
+  columns: Array<{ table: string; column: string; present: boolean }>;
+  tables: Array<{ table: string; present: boolean }>;
+  functions: Array<{ name: string; present: boolean }>;
+}
+
+// 누락된 자원과 해당 마이그레이션 파일을 매핑
+// → warn 로그에 "이 SQL 을 실행하세요" 안내를 같이 출력하기 위함
+const MIGRATION_HINTS: Record<string, string> = {
+  'restaurants.image_url': '2026-05-14-fill-empty-image-urls.sql',
+  'restaurants.rating': '2026-05-14-add-rating-column.sql',
+  'users.fcm_token': '2026-05-14-add-fcm-token.sql',
+  'sessions.radius': '2026-05-14-ensure-sessions-columns.sql',
+  'sessions.budget': '2026-05-14-ensure-sessions-columns.sql',
+  'sessions.return_minutes': '2026-05-14-ensure-sessions-columns.sql',
+  'sessions.memo': '2026-05-14-ensure-sessions-columns.sql',
+  'pos_seats': '2026-05-14-add-pos-tables.sql',
+  'pos_reservations': '2026-05-14-add-pos-reservations.sql',
+  'delete_session_cascade': '2026-05-13-delete-session-rpc.sql',
+  'create_order_with_items': '2026-05-14-create-order-rpc.sql',
+  'create_session_with_host_member': '2026-05-14-create-session-rpc.sql',
+};
+
+@Injectable()
+export class SchemaHealthcheckService implements OnModuleInit {
+  constructor(private readonly supabase: SupabaseService) {}
+
+  /**
+   * NestJS 부트 사이클: 모든 모듈 의존성 주입이 완료된 직후 1회 호출.
+   * 실패해도 부트는 계속 진행 (warn 로그만 남기고 return).
+   */
+  async onModuleInit(): Promise<void> {
+    try {
+      // service_role 키로 RPC 호출 → information_schema 접근 권한 보장
+      const { data, error } = await this.supabase.client.rpc('check_schema_resources');
+
+      if (error) {
+        // RPC 가 아예 배포되지 않은 환경(=초기 셋업) 도 여기에 해당.
+        // 부팅을 막지 않고 안내만 출력.
+        console.warn(
+          `[SchemaHealthcheck] introspection RPC 호출 실패: ${error.message} ` +
+            `→ 2026-05-14-schema-introspection-rpc.sql 을 Supabase Dashboard 에서 실행하세요.`,
+        );
+        return;
+      }
+
+      // RPC 가 정상 응답이지만 페이로드가 비어있는 비정상 케이스
+      if (!data) {
+        console.warn('[SchemaHealthcheck] introspection RPC 응답이 비어있습니다.');
+        return;
+      }
+
+      const result = data as SchemaCheckResult;
+
+      // 누락 자원을 한 곳으로 모음 — "테이블.컬럼" / "테이블" / "함수명" 키 형태
+      const missing: string[] = [];
+
+      for (const col of result.columns ?? []) {
+        if (!col.present) {
+          missing.push(`${col.table}.${col.column}`);
+        }
+      }
+      for (const tbl of result.tables ?? []) {
+        if (!tbl.present) {
+          missing.push(tbl.table);
+        }
+      }
+      for (const fn of result.functions ?? []) {
+        if (!fn.present) {
+          missing.push(fn.name);
+        }
+      }
+
+      if (missing.length === 0) {
+        // 시연 환경 noise 최소화 — 정상은 단 1줄
+        console.log('[SchemaHealthcheck] 스키마 무결성 확인 완료');
+        return;
+      }
+
+      // 누락된 자원 + 적용해야 할 마이그레이션 안내
+      // 각 항목을 보기 좋게 들여쓴 형태로 묶어서 출력
+      const lines = missing.map((key) => {
+        const hint = MIGRATION_HINTS[key] ?? '(마이그레이션 파일 미정 — 사장님 확인 필요)';
+        return `    - ${key}  →  ${hint}`;
+      });
+
+      console.warn(
+        `[SchemaHealthcheck] 누락된 자원 ${missing.length}건 — Supabase Dashboard 에서 아래 SQL 실행 필요:\n` +
+          lines.join('\n'),
+      );
+    } catch (e) {
+      // 네트워크 오류 등 예기치 못한 실패에도 부트는 계속.
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn(`[SchemaHealthcheck] 헬스체크 실행 중 예외 발생: ${msg}`);
+    }
+  }
+}

@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { ensureRestaurantImageUrl } from './restaurant-image-fallback';
+import { normalizePriceRangeToWon } from './price-range-normalizer';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당/메뉴 비즈니스 로직
@@ -79,6 +80,11 @@ export class RestaurantsService {
       name: r.name,
       category: r.category,
       priceRange: r.price_range,
+      // 2026-05-14: price_range 출처(시드/크롤/Gemini)가 섞여 있어
+      // 단위가 들쭉날쭉. 프론트가 매번 휴리스틱을 돌리지 않도록 백엔드가
+      // 추정 원(₩) 단위 평균가를 동봉. null 이면 "가격 정보 없음" 의미.
+      // 헬퍼: price-range-normalizer.ts (lib/core/utils/normalizer.dart 와 동기).
+      estimatedPriceWon: normalizePriceRangeToWon(r.price_range),
       address: r.address,
       lat: r.lat,
       lng: r.lng,
@@ -111,6 +117,9 @@ export class RestaurantsService {
       name: data.name,
       category: data.category,
       priceRange: data.price_range,
+      // 2026-05-14: 목록과 동일하게 환산된 원(₩) 단위 평균가 동봉.
+      // 상세 화면 가격 표기·정렬·필터 모두 이 값을 기준으로 동작 가능.
+      estimatedPriceWon: normalizePriceRangeToWon(data.price_range),
       address: data.address,
       lat: data.lat,
       lng: data.lng,

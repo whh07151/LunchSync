@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { normalizePriceRangeToWon } from '../restaurants/price-range-normalizer';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CORE-07 그룹 추천 점수화 엔진 + CORE-08 중복 회피
@@ -218,29 +219,37 @@ export class RecommendationsService {
       // ── (B) 가격 적합도: 예산 대비 비율로 선형 차등 ──
       //   price_range 값은 출처가 3가지(시드/크롤/Gemini)라 단순 곱셈으로
       //   환산하면 시드(예: 5500) × 10000 = 5천5백만원 같은 폭주가 발생.
-      //   estimatePriceFromRange() 휴리스틱으로 출처를 추정해 합리적인
+      //   normalizePriceRangeToWon() 휴리스틱으로 출처를 추정해 합리적인
       //   원 단위로 환산한 뒤 예산 비율을 계산한다.
-      //   minBudget 대비 50% 이하: +15 / 80% 이하: +10 / 100% 이하: +5
-      //   100% 초과: 초과 비율에 비례해 -30까지 감점.
+      //   - 반환값이 null(가격 정보 없음)이면 페널티·보너스 모두 skip
+      //     → AI 점수 분산을 유지하면서 데이터 결손 식당이 부당하게 깎이지 않게 함.
+      //   - minBudget 대비 50% 이하: +15 / 80% 이하: +10 / 100% 이하: +5
+      //   - 100% 초과: 초과 비율에 비례해 -30까지 감점.
+      //
+      // ⚠️ 헬퍼 모듈: backend/src/restaurants/price-range-normalizer.ts
+      //   휴리스틱 분기 표는 lib/core/utils/normalizer.dart 와 1:1 동기.
       if (minBudget != null && minBudget > 0) {
-        const estimatedPrice = estimatePriceFromRange(r.price_range);
-        const priceRatio = estimatedPrice / minBudget;
-        if (priceRatio <= 0.5) {
-          score += 15;
-          reasons.push('예산 대비 매우 저렴');
-        } else if (priceRatio <= 0.8) {
-          score += 10;
-          reasons.push('가성비 우수');
-        } else if (priceRatio <= 1.0) {
-          score += 5;
-          reasons.push('예산 적합');
-        } else {
-          // 초과분만큼 감점, 최대 -30
-          const over = Math.min(priceRatio - 1.0, 1.5);
-          const penalty = Math.round(over * 20);
-          score -= penalty;
-          reasons.push('예산 초과');
+        const estimatedPrice = normalizePriceRangeToWon(r.price_range);
+        if (estimatedPrice != null) {
+          const priceRatio = estimatedPrice / minBudget;
+          if (priceRatio <= 0.5) {
+            score += 15;
+            reasons.push('예산 대비 매우 저렴');
+          } else if (priceRatio <= 0.8) {
+            score += 10;
+            reasons.push('가성비 우수');
+          } else if (priceRatio <= 1.0) {
+            score += 5;
+            reasons.push('예산 적합');
+          } else {
+            // 초과분만큼 감점, 최대 -30
+            const over = Math.min(priceRatio - 1.0, 1.5);
+            const penalty = Math.round(over * 20);
+            score -= penalty;
+            reasons.push('예산 초과');
+          }
         }
+        // estimatedPrice == null: 가격 정보 부재 → 점수 변동 없음 (의도된 skip).
       }
 
       // ── (C) 카테고리 다양성: 그룹 평균 예산과 가까울수록 가산 ──
@@ -359,81 +368,6 @@ function hashStringToRange(input: string, maxExclusive: number): number {
   }
   // 음수 가능성 제거 후 모듈로
   return Math.abs(hash) % maxExclusive;
-}
-
-// ══════════════════════════════════════════════════════════
-// price_range 출처별 휴리스틱 환산 (TS 포트)
-//
-// 원본: lib/core/utils/normalizer.dart `formatRestaurantPriceRange`
-//
-// restaurants.price_range 컬럼은 데이터 출처에 따라 의미가 다름:
-//   ① 시드 데이터 (backend/scripts/seed-restaurants.ts)
-//      → 실제 평균 가격(원). 예: 5500, 8000, 15000
-//   ② 카카오 크롤 (backend/src/crawl/crawl.service.ts:339)
-//      → Math.round(avgPrice / 1000). 예: 평균 13000원 → 13
-//        또는 메뉴가 없으면 기본값 2
-//   ③ Gemini AI 가상 식당 (backend/src/gemini/gemini.service.ts)
-//      → 1~5 척도 (1: 저렴, 5: 고급, clamp 처리됨)
-//
-// 단순 `r.price_range * 10000` 곱셈은 시드 5500이 들어오면
-// 5천5백만원으로 환산되어 항상 예산 페널티 -30점이 부과되는 회귀 발생.
-//
-// 휴리스틱 분기 표(입력값 → 환산 원 단위):
-//   ─────────────────────────────────────────────────────────
-//   입력  | 추정 출처     | 환산 원       | 비고
-//   ─────────────────────────────────────────────────────────
-//      1  | Gemini 척도   |    5,000원   | 분식·도시락 수준
-//      2  | Gemini 척도   |   10,000원   | 한식·일식 일반
-//      3  | Gemini 척도   |   15,000원   | 일식·양식 일반
-//      4  | Gemini 척도   |   25,000원   | 양식·고급 한식
-//      5  | Gemini 척도   |   35,000원   | 고급
-//      7  | 카카오 크롤   |    7,000원   | 7 × 1000
-//     12  | 카카오 크롤   |   12,000원   | 12 × 1000
-//   5500  | 시드          |    5,500원   | 실제 원 단위
-//   8000  | 시드          |    8,000원   |
-//  15000  | 시드          |   15,000원   |
-//   null  | 알 수 없음    |   10,000원   | 평균 가격으로 폴백
-//   ─────────────────────────────────────────────────────────
-// ══════════════════════════════════════════════════════════
-
-// Gemini 1~5 척도 → 대표 원 단위 매핑
-const GEMINI_SCALE_TO_WON: Record<number, number> = {
-  1: 5000,
-  2: 10000,
-  3: 15000,
-  4: 25000,
-  5: 35000,
-};
-
-// 휴리스틱 임계값 (출처 추정 경계)
-const GEMINI_SCALE_MAX = 5; // 이하: Gemini 척도로 간주
-const CRAWL_UNIT_MAX = 999; // 미만: 카카오 크롤의 1000원 단위로 간주
-const PRICE_FALLBACK_WON = 10000; // null/0 일 때 평균치 폴백
-
-/**
- * price_range 값을 합리적인 원 단위로 환산.
- *
- * Flutter `formatRestaurantPriceRange`와 동일한 휴리스틱을 사용.
- * 추천 점수 계산 단계에서 "예산 적합도" 가중치 산정에 쓰인다.
- */
-function estimatePriceFromRange(priceRange: number | null): number {
-  // null 또는 0 이하 → 평균치로 폴백 (페널티 폭주 방지)
-  if (priceRange == null || priceRange <= 0) {
-    return PRICE_FALLBACK_WON;
-  }
-
-  // ① 1~5: Gemini 척도로 간주, 대표 원 단위로 환산
-  if (priceRange <= GEMINI_SCALE_MAX) {
-    return GEMINI_SCALE_TO_WON[priceRange] ?? PRICE_FALLBACK_WON;
-  }
-
-  // ② 6~999: 카카오 크롤의 1000원 단위 (예: 13 → 13,000원)
-  if (priceRange <= CRAWL_UNIT_MAX) {
-    return priceRange * 1000;
-  }
-
-  // ③ 1000 이상: 시드 데이터의 실제 원 단위 (예: 5500, 8000, 15000)
-  return priceRange;
 }
 
 // ══════════════════════════════════════════════════════════
