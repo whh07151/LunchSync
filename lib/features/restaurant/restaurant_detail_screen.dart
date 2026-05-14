@@ -73,6 +73,12 @@ class _RestaurantDetailScreenState
   // 사용자 체감 지연이 줄어든다.
   String? _activeSessionId;
 
+  // 2026-05-15 사장님 비즈니스 흐름 게이팅:
+  //   투표 완료(ORDERED) + 이 식당이 winner 일 때만 메뉴 주문 가능.
+  //   투표 전인데 메뉴를 담을 수 있는 회귀 발견 → status + winner 캐싱.
+  String? _activeSessionStatus;
+  String? _activeWinnerRestaurantId;
+
   @override
   void initState() {
     super.initState();
@@ -100,6 +106,8 @@ class _RestaurantDetailScreenState
     if (active.isEmpty) return;
     setState(() {
       _activeSessionId = active.first.id;
+      _activeSessionStatus = active.first.status;
+      _activeWinnerRestaurantId = active.first.winnerRestaurantId;
     });
   }
 
@@ -227,6 +235,40 @@ class _RestaurantDetailScreenState
   //   - 아직 조회가 끝나지 않았거나 활성 세션이 없으면 null 로 두고,
   //     MenuScreen 이 자체 가드로 처리(시드 UUID 사용 금지).
   void _goToFullMenu() {
+    // 2026-05-15 사장님 비즈니스 흐름 게이팅:
+    //   투표가 끝난 후(ORDERED) + 이 식당이 선택된 winner 일 때만 메뉴 주문 가능.
+    //   투표 전인데 메뉴 담을 수 있는 회귀 차단.
+    //
+    // 예외: 활성 세션이 없는 케이스(개별 식당 탐색)에는 게이팅 안 함 — 메뉴 미리보기는 자유.
+    if (_activeSessionId != null) {
+      // 활성 세션 있음 — 게이팅 적용
+      if (_activeSessionStatus != 'ORDERED') {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              '투표가 끝난 후에 메뉴를 주문할 수 있어요. 친구들과 함께 결정해봐요',
+            ),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+      if (_activeWinnerRestaurantId != null &&
+          _activeWinnerRestaurantId!.isNotEmpty &&
+          _activeWinnerRestaurantId != widget.restaurantId) {
+        // 다른 식당이 winner 로 결정됨 — 이 식당 주문 차단
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              '이번 점심 세션은 다른 식당이 선택됐어요. 그 식당으로 이동해봐요',
+            ),
+            duration: Duration(seconds: 3),
+          ),
+        );
+        return;
+      }
+    }
+    // 통과 — MenuScreen 으로 진입
     final name = _restaurant?.name ?? widget.initialName ?? '식당';
     Navigator.of(context).push(
       MaterialPageRoute(
