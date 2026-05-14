@@ -45,18 +45,20 @@ import { FriendsModule } from './friends/friends.module';
       envFilePath: '.env',
     }),
 
-    // Rate Limiting — 박검토 후 강화 (2026-05-12) → 라이브 테스트 후 보정 (2026-05-13):
-    //   default: 모든 엔드포인트 기본 — 분당 200 요청 (100 → 200 완화)
-    //     이유: 손님 앱 3초 폴링 + 동시 화면 다수(홈/투표/주문추적) + LSPOS 좌석 시드 일괄 호출이
-    //     겹치면 분당 100 한도를 빠르게 초과해 정상 동작이 429로 차단됨.
-    //     폴링 전용 GET 은 컨트롤러에서 @SkipThrottle() 로 추가 제외하고,
-    //     글로벌 한도는 두 배로 올려 안전 마진 확보. (캡스톤 라이브 시연 대응)
-    //   auth:    로그인/이메일 OTP — 분당 5회 (부르트포스 방어, login/email-otp 컨트롤러에서 @Throttle 로 지정)
-    //   signup:  가입 — 시간당 10회 (대량 가입 폭주로 Supabase quota 소진 방어)
+    // Rate Limiting — 시연 라이브 발견 (2026-05-15):
+    //   사장님 시연 중 ThrottlerException: Too Many Requests 빈번 발생.
+    //   추천/멤버/투표 폴링이 누적되어 분당 200 한도를 초과 → 정상 흐름 차단.
+    //   시연 환경에서 사용자 1~2명이 화면 전환 + 재시도 클릭만으로도 200 초과.
+    //
+    //   default: 200 → 1000 (5배) — 시연 안전 마진. 단일 사용자 폴링/재시도 누적이
+    //            절대 한도에 닿지 않게.
+    //   auth:    5 → 30 — 시연 중 빠른 로그인 재시도 + 토큰 갱신에서 5회는 너무 빡빡.
+    //            30회 / 분당 = 2초당 1회. 부르트포스 방어 의미는 유지.
+    //   signup:  10 → 30 — 시연 중 시드 사용자 생성 + 손님/사장 가입 흐름 위해.
     ThrottlerModule.forRoot([
-      { name: 'default', ttl: 60_000, limit: 200 },
-      { name: 'auth', ttl: 60_000, limit: 5 },
-      { name: 'signup', ttl: 3_600_000, limit: 10 },
+      { name: 'default', ttl: 60_000, limit: 1000 },
+      { name: 'auth', ttl: 60_000, limit: 30 },
+      { name: 'signup', ttl: 3_600_000, limit: 30 },
     ]),
 
     // 정적 파일 서빙 (toss-checkout.html 등)

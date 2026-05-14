@@ -357,46 +357,47 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
 
         const SizedBox(height: 8),
 
-        // ── 화면 제목 + "친구 추가" 작은 버튼 한 줄 ─────────
-        // 제목과 같은 줄에 우측 정렬로 friends_screen 진입점 노출
-        Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              child: Text(
-                '함께 먹을 사람을\n선택해주세요',
-                style: AppTextStyles.heading1,
-              ),
+        // ── 화면 제목 (단독 줄, 전체 폭 사용) ──────────────
+        // 2026-05-15 사장님 라이브 발견 — 친구 추가 버튼과 같은 Row 안에
+        // heading1 텍스트를 Expanded 로 감싸니 버튼이 폭을 점유해 글자가
+        // 1글자씩 세로로 깨지는 회귀 발생. Row 를 두 줄로 분리해 텍스트가
+        // 전체 폭을 사용하도록 변경.
+        Text(
+          '함께 먹을 사람을\n선택해주세요',
+          style: AppTextStyles.heading1,
+        ),
+
+        const SizedBox(height: 8),
+
+        // ── 친구 추가/관리 버튼 (별도 줄, 좌측 정렬) ────────
+        Align(
+          alignment: Alignment.centerLeft,
+          child: OutlinedButton.icon(
+            onPressed: _openFriendsScreen,
+            icon: Icon(
+              Icons.person_add_alt_1_rounded,
+              size: 16,
+              color: primary,
             ),
-            // 친구 추가/관리 버튼 (FriendsScreen 으로 이동)
-            // OutlinedButton.icon — primary 톤만 사용, 새 색상 없음
-            OutlinedButton.icon(
-              onPressed: _openFriendsScreen,
-              icon: Icon(
-                Icons.person_add_alt_1_rounded,
-                size: 16,
+            label: Text(
+              '친구 추가',
+              style: AppTextStyles.bodySmall.copyWith(
                 color: primary,
-              ),
-              label: Text(
-                '친구 추가',
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: primary,
-                  fontWeight: FontWeight.w700,
-                ),
-              ),
-              style: OutlinedButton.styleFrom(
-                side: BorderSide(color: primary.withAlpha(80)),
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 10,
-                  vertical: 6,
-                ),
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(AppRadius.chip),
-                ),
-                visualDensity: VisualDensity.compact,
+                fontWeight: FontWeight.w700,
               ),
             ),
-          ],
+            style: OutlinedButton.styleFrom(
+              side: BorderSide(color: primary.withAlpha(80)),
+              padding: const EdgeInsets.symmetric(
+                horizontal: 10,
+                vertical: 6,
+              ),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppRadius.chip),
+              ),
+              visualDensity: VisualDensity.compact,
+            ),
+          ),
         ),
 
         const SizedBox(height: 8),
