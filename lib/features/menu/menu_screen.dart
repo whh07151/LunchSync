@@ -832,30 +832,58 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
               final canOrder =
                   !_isResolvingSession && resolved != null && resolved.isNotEmpty;
 
-              // 버튼 라벨: 세션 미확정 상태에서도 사용자가 상황을 빠르게
-              // 이해할 수 있도록 친근한 톤("~봐요") 으로 안내.
+              // 2026-05-15 UX 미세 개선 (배민 패턴):
+              //   기존: 비활성 시 라벨이 "먼저 점심 세션을 만들어 봐요"로 바뀜 → 혼란
+              //   변경: 라벨은 "주문하기" 항상 유지, 비활성 시 상단 안내 줄 1행 추가.
+              //         배민/쿠팡이츠도 비활성 사유는 별도 텍스트로 분리.
               final label = _isResolvingSession
                   ? '세션 확인 중…'
-                  : (canOrder
-                      ? '주문하기 ($formattedTotal)'
-                      : '먼저 점심 세션을 만들어 봐요');
+                  : '주문하기 ($formattedTotal)';
+              final disabledHint = !canOrder && !_isResolvingSession
+                  ? '먼저 점심 세션을 만들어야 주문할 수 있어요'
+                  : null;
 
-              return AppPrimaryButton(
-                label: label,
-                // canOrder == false 면 onPressed 를 null 로 두어
-                // AppPrimaryButton 의 기본 비활성 스타일을 그대로 활용.
-                onPressed: canOrder
-                    ? () {
-                        Navigator.of(context).push(
-                          MaterialPageRoute(
-                            builder: (_) => OrderReviewScreen(
-                              sessionId: resolved,
-                              restaurantName: widget.restaurantName,
-                            ),
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  if (disabledHint != null) ...[
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(
+                          Icons.info_outline,
+                          size: 14,
+                          color: AppColors.textHint,
+                        ),
+                        const SizedBox(width: 4),
+                        Text(
+                          disabledHint,
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.textHint,
                           ),
-                        );
-                      }
-                    : null,
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 6),
+                  ],
+                  AppPrimaryButton(
+                    label: label,
+                    // canOrder == false 면 onPressed 를 null 로 두어
+                    // AppPrimaryButton 의 기본 비활성 스타일을 그대로 활용.
+                    onPressed: canOrder
+                        ? () {
+                            Navigator.of(context).push(
+                              MaterialPageRoute(
+                                builder: (_) => OrderReviewScreen(
+                                  sessionId: resolved,
+                                  restaurantName: widget.restaurantName,
+                                ),
+                              ),
+                            );
+                          }
+                        : null,
+                  ),
+                ],
               );
             },
           ),

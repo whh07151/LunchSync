@@ -463,15 +463,11 @@ class _RecommendationListScreenState
               ),
               // 📊 투표 현황 보기 — VOTING/ORDERED 단계에서만 노출.
               // 사장님 시연 피드백("투표 어떻게 진행되는지 모름") 해결 핵심 진입점.
-              // 카드 탭 → 식당 상세 라는 기존 동작과 분리해 액션을 명시적으로 제공.
-              if (_sessionStatus == 'VOTING' || _sessionStatus == 'ORDERED')
-                IconButton(
-                  icon: const Icon(Icons.how_to_vote_rounded),
-                  tooltip: '투표 현황 보기',
-                  color: Theme.of(context).colorScheme.primary,
-                  onPressed: _openVoteProgress,
-                ),
-              // 🎯 미니게임 버튼 — 후보 식당으로 룰렛/사다리 결정 (시연 임팩트 + 동률 보조)
+              // 2026-05-15 UX 미세 개선:
+              //   기존: 5개 아이콘 헤더 직접 노출 (시각 복잡도 ↑, 자율 UX 감사 ★4)
+              //   변경: 핵심 2개 (미니게임/지도) + 더보기 메뉴 (투표현황/비교/새로고침)
+              //   배민 패턴 — 헤더는 핵심 1~2개만, 나머지는 more_vert
+              // 🎯 미니게임 버튼 — 후보 식당으로 룰렛/사다리 결정 (시연 임팩트)
               IconButton(
                 icon: const Icon(Icons.casino_rounded),
                 tooltip: '재미있게 결정해봐요',
@@ -529,27 +525,70 @@ class _RecommendationListScreenState
                   );
                 },
               ),
-              // 비교 모드 토글 버튼
-              IconButton(
-                icon: Icon(
-                  _isCompareMode
-                      ? Icons.compare_arrows_rounded
-                      : Icons.compare_rounded,
-                  color: _isCompareMode
-                      ? Theme.of(context).colorScheme.primary
-                      : null,
-                ),
-                tooltip: _isCompareMode ? '비교 모드 끄기' : '비교 모드 켜기',
-                onPressed: _toggleCompareMode,
-              ),
-              // 새로고침 버튼
-              IconButton(
-                icon: const Icon(Icons.refresh_rounded),
-                tooltip: '새로고침',
-                onPressed: () {
-                  setState(() => _isLoading = true);
-                  _loadRecommendations();
+              // ── 더보기 메뉴 (3개: 투표현황/비교/새로고침) ──────
+              // 헤더가 너무 복잡해지지 않도록 보조 액션을 묶음.
+              PopupMenuButton<String>(
+                icon: const Icon(Icons.more_vert_rounded),
+                tooltip: '더보기',
+                onSelected: (value) {
+                  switch (value) {
+                    case 'vote_progress':
+                      _openVoteProgress();
+                      break;
+                    case 'compare':
+                      _toggleCompareMode();
+                      break;
+                    case 'refresh':
+                      setState(() => _isLoading = true);
+                      _loadRecommendations();
+                      break;
+                  }
                 },
+                itemBuilder: (context) => [
+                  if (_sessionStatus == 'VOTING' || _sessionStatus == 'ORDERED')
+                    PopupMenuItem(
+                      value: 'vote_progress',
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.how_to_vote_rounded,
+                            size: 18,
+                            color: Theme.of(context).colorScheme.primary,
+                          ),
+                          const SizedBox(width: 8),
+                          const Text('투표 현황 보기'),
+                        ],
+                      ),
+                    ),
+                  PopupMenuItem(
+                    value: 'compare',
+                    child: Row(
+                      children: [
+                        Icon(
+                          _isCompareMode
+                              ? Icons.compare_arrows_rounded
+                              : Icons.compare_rounded,
+                          size: 18,
+                          color: _isCompareMode
+                              ? Theme.of(context).colorScheme.primary
+                              : null,
+                        ),
+                        const SizedBox(width: 8),
+                        Text(_isCompareMode ? '비교 모드 끄기' : '비교 모드'),
+                      ],
+                    ),
+                  ),
+                  const PopupMenuItem(
+                    value: 'refresh',
+                    child: Row(
+                      children: [
+                        Icon(Icons.refresh_rounded, size: 18),
+                        SizedBox(width: 8),
+                        Text('새로고침'),
+                      ],
+                    ),
+                  ),
+                ],
               ),
             ],
           ),

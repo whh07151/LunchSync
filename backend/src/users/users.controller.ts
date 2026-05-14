@@ -1,4 +1,14 @@
-import { Body, Controller, Get, Patch, Post, Req, UseGuards } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Param,
+  Patch,
+  Post,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import {
   IsOptional,
   IsString,
@@ -31,6 +41,14 @@ class SaveFcmTokenDto {
   @IsNotEmpty({ message: 'FCM 토큰이 비어 있습니다.' })
   @MaxLength(500, { message: 'FCM 토큰이 너무 깁니다.' })
   token: string;
+}
+
+// 2026-05-15 즐겨찾기 (배민 패턴)
+class AddFavoriteDto {
+  @IsString()
+  @IsNotEmpty({ message: '식당 ID 가 필요해요.' })
+  @MaxLength(64)
+  restaurantId: string;
 }
 
 // 보안 패치: 모든 입력 필드에 길이/범위 제한 추가 (DoS + DB bloat 방어)
@@ -123,5 +141,42 @@ export class UsersController {
   ) {
     await this.usersService.saveFcmToken(req.user.userId, dto.token);
     return { success: true };
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 즐겨찾기 (배민 패턴 — 2026-05-15 발전 로드맵)
+  // ══════════════════════════════════════════════════════
+
+  // ── POST /api/users/me/favorites — 즐겨찾기 추가 ─────
+  @Post('me/favorites')
+  async addFavorite(
+    @Req() req: { user: { userId: string } },
+    @Body() dto: AddFavoriteDto,
+  ) {
+    const favorites = await this.usersService.addFavorite(
+      req.user.userId,
+      dto.restaurantId,
+    );
+    return { success: true, data: { favorites } };
+  }
+
+  // ── DELETE /api/users/me/favorites/:restaurantId ─────
+  @Delete('me/favorites/:restaurantId')
+  async removeFavorite(
+    @Req() req: { user: { userId: string } },
+    @Param('restaurantId') restaurantId: string,
+  ) {
+    const favorites = await this.usersService.removeFavorite(
+      req.user.userId,
+      restaurantId,
+    );
+    return { success: true, data: { favorites } };
+  }
+
+  // ── GET /api/users/me/favorites — 내 즐겨찾기 목록 ───
+  @Get('me/favorites')
+  async listFavorites(@Req() req: { user: { userId: string } }) {
+    const items = await this.usersService.listFavorites(req.user.userId);
+    return { success: true, data: items };
   }
 }

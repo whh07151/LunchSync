@@ -11,6 +11,7 @@ import '../../services/sessions_api_service.dart';
 import '../../services/external_map_launcher.dart';
 import '../../services/geolocation_service.dart';
 import '../menu/menu_screen.dart';
+import '../../services/favorites_api_service.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-13 식당 상세 화면
@@ -79,6 +80,13 @@ class _RestaurantDetailScreenState
   String? _activeSessionStatus;
   String? _activeWinnerRestaurantId;
 
+  // 2026-05-15 즐겨찾기 (배민 패턴):
+  //   진입 시 GET /favorites 로 현재 식당이 즐겨찾기인지 확인 → 하트 아이콘 상태 결정.
+  //   탭 시 add / remove 토글.
+  bool _isFavorite = false;
+  bool _favoriteBusy = false; // 중복 클릭 방지
+  static const _favoritesApi = FavoritesApiService();
+
   @override
   void initState() {
     super.initState();
@@ -88,7 +96,70 @@ class _RestaurantDetailScreenState
       _loadMenus();
       _loadUserLocation();
       _loadActiveSession();
+      _loadFavoriteStatus();
     });
+  }
+
+  // 2026-05-15 즐겨찾기 상태 진입 시 1회 조회
+  Future<void> _loadFavoriteStatus() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+    final list = await _favoritesApi.list(accessToken: token);
+    if (!mounted) return;
+    setState(() {
+      _isFavorite = list.any((f) => f.id == widget.restaurantId);
+    });
+  }
+
+  // 하트 탭 → 토글 (add/remove)
+  Future<void> _toggleFavorite() async {
+    if (_favoriteBusy) return;
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('로그인이 필요해요')),
+      );
+      return;
+    }
+
+    setState(() => _favoriteBusy = true);
+    final prev = _isFavorite;
+    // Optimistic UI — 즉시 토글 후 실패 시 롤백
+    setState(() => _isFavorite = !prev);
+
+    final result = prev
+        ? await _favoritesApi.remove(
+            accessToken: token,
+            restaurantId: widget.restaurantId,
+          )
+        : await _favoritesApi.add(
+            accessToken: token,
+            restaurantId: widget.restaurantId,
+          );
+
+    if (!mounted) return;
+    setState(() => _favoriteBusy = false);
+
+    if (result == null) {
+      // 실패 → 롤백 + 안내
+      setState(() => _isFavorite = prev);
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(prev
+              ? '즐겨찾기 해제에 실패했어요. 잠시 후 다시 시도해봐요'
+              : '즐겨찾기 추가에 실패했어요 (한도 100개 초과 가능성)'),
+        ),
+      );
+      return;
+    }
+
+    // 성공 토스트
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(prev ? '즐겨찾기에서 뺐어요' : '즐겨찾기에 추가했어요'),
+        duration: const Duration(seconds: 2),
+      ),
+    );
   }
 
   // ── 활성 점심 세션 1회 조회 ────────────────────────────
@@ -283,11 +354,24 @@ class _RestaurantDetailScreenState
 
   @override
   Widget build(BuildContext context) {
+    final primary = Theme.of(context).colorScheme.primary;
     return Scaffold(
       backgroundColor: AppColors.background,
       appBar: AppCustomBar(
         showBack: true,
         title: _restaurant?.name ?? widget.initialName ?? '식당',
+        actions: [
+          // 2026-05-15 즐겨찾기 토글 (배민 패턴) — AppBar 우측 하트 아이콘.
+          // 진입 시 _loadFavoriteStatus 가 GET /favorites 조회.
+          IconButton(
+            icon: Icon(
+              _isFavorite ? Icons.favorite : Icons.favorite_border,
+              color: primary,
+            ),
+            tooltip: _isFavorite ? '즐겨찾기 해제' : '즐겨찾기 추가',
+            onPressed: _favoriteBusy ? null : _toggleFavorite,
+          ),
+        ],
       ),
       body: _isRestaurantLoading
           ? const Center(child: CircularProgressIndicator())

@@ -960,6 +960,34 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
+              // 2026-05-15 발전 (배민/쿠팡이츠 패턴):
+              // 거절 시 손님에게 자동 환불 명확히 안내 — 사장이 알고 결정하도록.
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: AppColors.warning.withAlpha(20),
+                  borderRadius: BorderRadius.circular(6),
+                  border: Border.all(color: AppColors.warning.withAlpha(60)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Icon(Icons.info_outline,
+                        color: AppColors.warning, size: 16),
+                    const SizedBox(width: 6),
+                    Expanded(
+                      child: Text(
+                        '취소 처리 시 손님에게 자동으로 환불됩니다 (토스 결제 취소).',
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.warning,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 12),
               Wrap(
                 spacing: 6,
                 runSpacing: 6,
@@ -993,7 +1021,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
               onPressed: () =>
                   Navigator.of(dialogContext).pop(controller.text.trim()),
               style: FilledButton.styleFrom(backgroundColor: AppColors.error),
-              child: const Text('취소 처리'),
+              child: const Text('취소 + 환불'),
             ),
           ],
         ),

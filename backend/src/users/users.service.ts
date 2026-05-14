@@ -1,4 +1,11 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import {
+  BadRequestException,
+  ConflictException,
+  Injectable,
+  InternalServerErrorException,
+  Logger,
+  NotFoundException,
+} from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
 // ══════════════════════════════════════════════════════════
@@ -26,6 +33,8 @@ export interface UpdateUserDto {
 
 @Injectable()
 export class UsersService {
+  private readonly logger = new Logger(UsersService.name);
+
   constructor(private readonly supabase: SupabaseService) {}
 
   // ── GET /users/me ─────────────────────────────────────
@@ -132,5 +141,169 @@ export class UsersService {
     if (error) {
       throw new Error(`FCM 토큰 저장 실패: ${error.message}`);
     }
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 즐겨찾기 (배민 패턴 — 2026-05-15 발전 로드맵)
+  //
+  // DB: users.favorites JSONB DEFAULT '[]'::jsonb (식당 ID 배열)
+  // 정책:
+  //   - 최대 100개 (한도 초과 시 409 Conflict)
+  //   - 중복 추가 → 멱등 (이미 있으면 추가 안 함)
+  //   - 추가 순 정렬 — 가장 최근이 배열 마지막
+  // ══════════════════════════════════════════════════════════
+
+  // ── POST /users/me/favorites ─────────────────────────────
+  // 식당 ID 를 즐겨찾기 배열에 추가.
+  async addFavorite(userId: string, restaurantId: string): Promise<string[]> {
+    if (!restaurantId || restaurantId.trim().length === 0) {
+      throw new BadRequestException('식당 ID 가 비어있어요.');
+    }
+
+    // 1) 현재 favorites 조회 (JSONB 그대로)
+    const { data: user, error: getError } = await this.supabase.client
+      .from('users')
+      .select('favorites')
+      .eq('id', userId)
+      .single();
+
+    if (getError || !user) {
+      throw new NotFoundException('사용자를 찾을 수 없어요.');
+    }
+
+    const current: string[] = Array.isArray(user.favorites)
+      ? (user.favorites as string[])
+      : [];
+
+    if (current.includes(restaurantId)) {
+      // 멱등 — 이미 있으면 그대로 반환
+      return current;
+    }
+
+    if (current.length >= 100) {
+      throw new ConflictException(
+        '즐겨찾기는 최대 100개까지 등록할 수 있어요.',
+      );
+    }
+
+    const next = [...current, restaurantId];
+
+    // 2) 업데이트
+    const { error: updateError } = await this.supabase.client
+      .from('users')
+      .update({ favorites: next })
+      .eq('id', userId);
+
+    if (updateError) {
+      this.logger.error(`즐겨찾기 추가 실패: ${updateError.message}`);
+      throw new InternalServerErrorException(
+        '즐겨찾기를 추가하지 못했어요.',
+      );
+    }
+
+    return next;
+  }
+
+  // ── DELETE /users/me/favorites/:restaurantId ─────────────
+  // 즐겨찾기 배열에서 해당 식당 ID 제거 (멱등).
+  async removeFavorite(
+    userId: string,
+    restaurantId: string,
+  ): Promise<string[]> {
+    const { data: user, error: getError } = await this.supabase.client
+      .from('users')
+      .select('favorites')
+      .eq('id', userId)
+      .single();
+
+    if (getError || !user) {
+      throw new NotFoundException('사용자를 찾을 수 없어요.');
+    }
+
+    const current: string[] = Array.isArray(user.favorites)
+      ? (user.favorites as string[])
+      : [];
+
+    const next = current.filter((id) => id !== restaurantId);
+
+    if (next.length === current.length) {
+      // 멱등 — 이미 없는 경우 그대로 반환
+      return next;
+    }
+
+    const { error: updateError } = await this.supabase.client
+      .from('users')
+      .update({ favorites: next })
+      .eq('id', userId);
+
+    if (updateError) {
+      this.logger.error(`즐겨찾기 제거 실패: ${updateError.message}`);
+      throw new InternalServerErrorException(
+        '즐겨찾기를 제거하지 못했어요.',
+      );
+    }
+
+    return next;
+  }
+
+  // ── GET /users/me/favorites ──────────────────────────────
+  // 내 즐겨찾기 식당 목록 (식당 정보 join).
+  // restaurants 의 image_url/rating 등 모든 필드 포함.
+  async listFavorites(
+    userId: string,
+  ): Promise<
+    Array<{
+      id: string;
+      name: string;
+      category: string;
+      address: string | null;
+      imageUrl: string | null;
+      rating: number | null;
+    }>
+  > {
+    const { data: user, error: getError } = await this.supabase.client
+      .from('users')
+      .select('favorites')
+      .eq('id', userId)
+      .single();
+
+    if (getError || !user) {
+      throw new NotFoundException('사용자를 찾을 수 없어요.');
+    }
+
+    const ids: string[] = Array.isArray(user.favorites)
+      ? (user.favorites as string[])
+      : [];
+
+    if (ids.length === 0) return [];
+
+    const { data: restaurants, error: restError } = await this.supabase.client
+      .from('restaurants')
+      .select('id, name, category, address, image_url, rating')
+      .in('id', ids);
+
+    if (restError) {
+      this.logger.error(`즐겨찾기 식당 조회 실패: ${restError.message}`);
+      throw new InternalServerErrorException(
+        '즐겨찾기 식당을 불러오지 못했어요.',
+      );
+    }
+
+    // 추가 순서 보존 (ids 배열 순서대로) — 가장 최근이 마지막
+    const byId = new Map(
+      (restaurants ?? []).map((r: any) => [r.id, r]),
+    );
+
+    return ids
+      .map((id) => byId.get(id))
+      .filter(Boolean)
+      .map((r: any) => ({
+        id: r.id,
+        name: r.name ?? '식당',
+        category: r.category ?? '기타',
+        address: r.address ?? null,
+        imageUrl: r.image_url ?? null,
+        rating: r.rating != null ? Number(r.rating) : null,
+      }));
   }
 }

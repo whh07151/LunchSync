@@ -112,20 +112,19 @@ export class RestaurantsService {
       throw new NotFoundException('식당을 찾을 수 없습니다.');
     }
 
+    // 2026-05-15: 사장님 발견 "식당 정보 표시 불안정" 회귀 안전망.
+    // 모든 필드에 명시적 fallback — null/empty 시에도 화면이 빈 채로
+    // 머물지 않게. ensureRestaurantImageUrl 은 이미 3층 안전망.
     return {
       id: data.id,
-      name: data.name,
-      category: data.category,
+      name: data.name ?? '식당',
+      category: data.category ?? '기타',
       priceRange: data.price_range,
-      // 2026-05-14: 목록과 동일하게 환산된 원(₩) 단위 평균가 동봉.
-      // 상세 화면 가격 표기·정렬·필터 모두 이 값을 기준으로 동작 가능.
       estimatedPriceWon: normalizePriceRangeToWon(data.price_range),
-      address: data.address,
+      address: data.address ?? '',
       lat: data.lat,
       lng: data.lng,
-      // 2026-05-14: 상세 화면도 동일 폴백 적용 — getRestaurants 와 일치.
       imageUrl: ensureRestaurantImageUrl(data.image_url, data.category, data.name),
-      // NUMERIC 은 Supabase JS 에서 string 으로 들어오는 경우가 있어 명시적 변환.
       rating: data.rating != null ? Number(data.rating) : null,
       createdAt: data.created_at,
     };
@@ -147,13 +146,18 @@ export class RestaurantsService {
       throw new Error(`메뉴 조회 실패: ${error.message}`);
     }
 
+    // 2026-05-15: menu_items 의 image_url 이 null/empty 인 옛 레코드도
+    // 카테고리·이름 기반 Unsplash URL 로 자동 폴백. 시드/크롤 누락 안전망.
     const menus = (data ?? []).map((m) => ({
       id: m.id,
-      name: m.name,
-      price: m.price,
-      category: m.category,
-      description: m.description,
-      imageUrl: m.image_url,
+      name: m.name ?? '메뉴',
+      price: m.price ?? 0,
+      category: m.category ?? '기타',
+      description: m.description ?? '',
+      imageUrl:
+        m.image_url && String(m.image_url).trim().length > 0
+          ? m.image_url
+          : `https://source.unsplash.com/400x300/?korean,food,${encodeURIComponent(m.name ?? 'meal')}`,
     }));
 
     // DTO 기준: { categories[], menus[] } 구조로 반환

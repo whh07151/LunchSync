@@ -330,6 +330,9 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
     // ── 3. 자동 로그인 성공 → 해당 화면으로 ───────────────
     // 온보딩 미완료 사용자도 적절한 단계로 정확히 진입하도록 분기.
     if (_autoLoginNextStep != null) {
+      // 2026-05-15 안전망: 어떤 분기로 갔는지 추적 — 흰 화면 회귀 디버그용.
+      // 사장님 라이브에서 흰 화면 발생 시 logcat 으로 어디서 멈췄는지 확인 가능.
+      debugPrint('[_RootNavigator] autoLoginNextStep=$_autoLoginNextStep');
       switch (_autoLoginNextStep) {
         case 'OWNER_PENDING':
           return const OwnerPendingScreen();
@@ -364,6 +367,12 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
         case 'HOME':
           return const HomeScreen();
         default:
+          // 2026-05-15 안전망: 알 수 없는 nextStep 도 HomeScreen 으로 폴백.
+          // 흰 화면 회귀 차단 — UI 가 비지 않게 안전한 기본 화면 반환.
+          debugPrint(
+            '[_RootNavigator] 알 수 없는 nextStep=$_autoLoginNextStep '
+            '→ HomeScreen 으로 폴백',
+          );
           return const HomeScreen();
       }
     }
