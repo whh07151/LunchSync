@@ -234,8 +234,52 @@ A. 5/14 거리 칩 정합 패치 이후로는 더 이상 모순 라벨이 표시
 - **권한별 인증·결제**: 캡스톤 시연은 데모 환경 기준이며, 실 운영 시 모바일/실 기기 검증을 권장해봐요
 - **일/주/월 매출 그래프**: 백엔드 통계 엔드포인트 확장 후 사장 앱·POS에 추가될 예정
 - **OAuth**: 카카오 외 OAuth(Google, Apple 등)는 현재 미지원
-- **POS 환불 흐름**: 토스 실 환불 API 연동(POS-13)은 졸업 후 운영 전환 시 추가 예정
 - **WebSocket 실시간**: 현재 3초 폴링 기반, 향후 WebSocket으로 교체 가능한 구조로 설계돼 있어요
+
+> 2026-05-15 업데이트: POS 환불 흐름은 자동 환불(토스 cancel API) 로 구현 완료. 사장님 거절 시 손님 결제 자동 환불 + status CANCELLED 원자성 보장.
+
+---
+
+## 9. 2026-05-15 발전 로드맵 (배민/쿠팡이츠/캐치테이블 패턴 통합)
+
+자율 진행 로드맵 9 commit — 임시 브랜치 `experiment/roadmap-20260515`. 사장님 라이브 검증 후 `feat/hyunho` 로 merge 결정.
+
+### 새 기능 5종
+
+| 기능 | 시중 앱 패턴 | 사장님 검증 시나리오 |
+|---|---|---|
+| **자동 환불** | 배민/쿠팡이츠 | 사장 어플에서 주문 "취소 + 환불" → 토스 결제 내역 환불 표시 + orders.status CANCELLED |
+| **주문 상태 5단계 + 푸시** | 배민 stepper | PAID → ACCEPTED → PREPARING → READY → COMPLETED 전이마다 손님 푸시 |
+| **즐겨찾기** | 배민 핵심 | 식당 상세 하트 토글 → 홈 화면 가로 스크롤 위젯 + 내정보 탭 카운트 |
+| **별점/리뷰** | 배민 | 손님 COMPLETED 후 별 5개 + 리뷰 → 사장 어플 매장 평점 카드 + 리뷰 리스트 |
+| **시드 데이터** | — | 식당 28개 + 메뉴 140개 + 주문 30건 + 리뷰 12건 (UUID 분리, 실데이터 영향 0) |
+
+### 사장님 복귀 시 Dashboard SQL 실행 순서
+
+```
+1. 2026-05-15-add-order-status-enum.sql   (이미 실행)
+2. 2026-05-15-add-user-favorites.sql      (즐겨찾기)
+3. 2026-05-15-add-order-review.sql        (별점/리뷰)
+```
+
+**시드 데이터 (선택 — 풍부한 데모용)**:
+```
+1. 2026-05-15-seed-diverse-restaurants.sql
+2. 2026-05-15-seed-diverse-users.sql
+3. 2026-05-15-seed-demo-friends.sql
+4. 2026-05-15-seed-demo-orders-reviews.sql
+5. 2026-05-15-verify-diverse-seed.sql
+```
+
+모두 멱등 (`ON CONFLICT DO NOTHING`, `IF NOT EXISTS`) → 재실행 안전.
+
+### 사장님 복귀 시 백엔드 재시작 1회 필요
+
+ae6aa69 E2E 에이전트가 fix 한 회귀 3건 (health throttle, POS ACCEPTED ENUM, orders.service 빌드) 효과 발휘에 백엔드 1회 재시작 필요.
+
+```
+cd backend && npm run start:dev
+```
 
 ---
 
