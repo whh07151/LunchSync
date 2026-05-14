@@ -6,6 +6,7 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { PaymentsService } from '../payments/payments.service';
+import { NotificationsService } from '../notifications/notifications.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 점주앱/POS 비즈니스 로직
@@ -57,6 +58,8 @@ export class PosService {
     private readonly supabase: SupabaseService,
     // 2026-05-15 단계 2: 사장 거절 시 자동 환불 (토스 cancel API) 호출용.
     private readonly paymentsService: PaymentsService,
+    // 2026-05-15 단계 3: 상태 전이 시 손님에게 푸시 알림 송신.
+    private readonly notificationsService: NotificationsService,
   ) {}
 
   // ── OW-10 + POS-08: 점주용 주문 목록 조회 ────────────
@@ -209,6 +212,14 @@ export class PosService {
 
   // ── 점주 주문 상태 변경 (조리중 → 준비완료 등) ────────
   async updateOrderStatus(orderId: string, status: string) {
+    // 2026-05-15 단계 3: 푸시 알림 hook — 상태 전이 시 손님 user_id 받아두기.
+    // notifications.createNotification 이 알림 INSERT + FCM 자동 송신 둘 다 처리.
+    const { data: prevOrder } = await this.supabase.client
+      .from('orders')
+      .select('user_id, status')
+      .eq('id', orderId)
+      .single();
+
     const { data, error } = await this.supabase.client
       .from('orders')
       .update({ status })
@@ -218,6 +229,36 @@ export class PosService {
 
     if (error || !data) {
       throw new NotFoundException('주문을 찾을 수 없습니다.');
+    }
+
+    // 알림 송신 — best-effort (실패해도 응답 정상)
+    // 상태별 친근 메시지 매핑 (배민 패턴 톤)
+    if (prevOrder?.user_id && prevOrder.status !== status) {
+      const titleMap: Record<string, { title: string; msg: string }> = {
+        ACCEPTED: { title: '주문이 수락됐어요', msg: '사장님이 주문을 확인했어요. 곧 조리를 시작합니다' },
+        PREPARING: { title: '조리가 시작됐어요', msg: '사장님이 메뉴를 만들고 있어요' },
+        READY: { title: '픽업 준비 완료', msg: '메뉴가 준비됐어요. 식당으로 가주세요' },
+        COMPLETED: { title: '주문 완료', msg: '맛있게 드셨나요? 리뷰를 남겨봐요' },
+        DONE: { title: '주문 완료', msg: '맛있게 드셨나요?' },
+      };
+      const notif = titleMap[status];
+      if (notif) {
+        try {
+          await this.notificationsService.createNotification({
+            userId: prevOrder.user_id,
+            type: `ORDER_${status}`,
+            title: notif.title,
+            message: notif.msg,
+            pushData: { orderId, status },
+          });
+        } catch (notifErr: any) {
+          // 알림 실패는 주문 상태 변경에 영향 없음 — 로그만
+          this.logger.warn(
+            `[updateOrderStatus] 알림 송신 실패 order=${orderId} ` +
+              `status=${status} error=${notifErr?.message}`,
+          );
+        }
+      }
     }
 
     return { id: data.id, status: data.status, updatedAt: data.updated_at };
