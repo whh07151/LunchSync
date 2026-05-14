@@ -1,6 +1,7 @@
 import { NestFactory } from '@nestjs/core';
 import { ValidationPipe, Logger } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
+import { join } from 'path';
 import helmet from 'helmet';
 import { AppModule } from './app.module';
 
@@ -86,7 +87,20 @@ async function bootstrap() {
     maxAge: 3600,
   });
 
-  // ── 3. API 전역 prefix ────────────────────────────────────
+  // ── 3. 정적 파일 서빙 (결제 webview 호스트 페이지 등) ────
+  // 모바일 결제 흐름 (lib/features/payment/order_review_screen.dart)
+  //   → ${backendOrigin}/toss-checkout.html 을 WebView 로 로드 →
+  //   → CDN v2 SDK 로드 → 카드/간편결제 위젯 렌더링
+  //
+  // 회귀 (2026-05-14 사장님 시연 발견):
+  //   이 정적 서빙 라인이 누락돼 있어 모바일 결제창이 404 빈 페이지로 뜸.
+  //   process.cwd() 는 pm2 가 backend/ 폴더에서 시작하므로 backend/public 을 가리킴.
+  //
+  // setGlobalPrefix('api') 보다 먼저 호출해야 /api/* 라우트와 충돌하지 않음.
+  // (정적 자원은 prefix 없이 루트 경로로 서빙됨)
+  app.useStaticAssets(join(process.cwd(), 'public'));
+
+  // ── 4. API 전역 prefix ────────────────────────────────────
   app.setGlobalPrefix('api');
 
   const port = process.env.PORT ?? 3000;
