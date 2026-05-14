@@ -346,8 +346,8 @@ class _PhoneVerifyScreenState extends ConsumerState<PhoneVerifyScreen> {
               const SizedBox(height: 6),
               Text(
                 _step == _Step.phone
-                    ? '본인확인용 SMS 가 전송돼요.\n테스트 번호(010-1234-5678)는 코드 123456으로 통과.'
-                    : '메시지가 안 오면 1~2분 후 다시 시도해주세요.',
+                    ? '본인확인용 SMS 가 전송돼요'
+                    : '메시지가 안 오면 1~2분 후 다시 시도해주세요',
                 style: AppTextStyles.bodySmall.copyWith(
                   color: AppColors.textSecondary,
                   height: 1.5,
@@ -456,7 +456,7 @@ class _PhoneVerifyScreenState extends ConsumerState<PhoneVerifyScreen> {
       style: AppTextStyles.heading2.copyWith(fontWeight: FontWeight.w600),
       textAlign: TextAlign.center,
       decoration: InputDecoration(
-        hintText: '010-1234-5678',
+        hintText: '010-0000-0000',
         hintStyle: AppTextStyles.heading2.copyWith(
           color: AppColors.textSecondary,
         ),
