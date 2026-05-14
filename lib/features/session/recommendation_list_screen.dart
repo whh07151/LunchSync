@@ -385,41 +385,81 @@ class _RecommendationListScreenState
 
     final recs = _recommendations ?? const <RecommendationDto>[];
 
-    // 빈 결과
+    // 빈 결과 — 배민 패턴 빈 상태 강화 (2026-05-15)
+    // 기존 결함: "찾지 못했어요" + "잠시 후 다시 시도" 만으로는 다음 액션이 약함.
+    // 개선:
+    //   1) 행동 가능한 다음 액션 2개를 박스 카드 안에 명시
+    //      ① 다시 불러오기 (primary CTA — 즉시 해소 시도)
+    //      ② 조건 다시 설정하기 (outlined — 멤버 조건이 너무 좁아 0건일 때)
+    //   2) 카피를 "주변에 추천할 식당이 없어요" 로 사용자 시점에 맞춤
+    //   3) 카드 형태로 감싸 빈 화면의 휑한 인상을 줄임.
     if (recs.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            const Icon(
-              Icons.restaurant_outlined,
-              size: 48,
-              color: AppColors.iconInactive,
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.screenHorizontal,
+          vertical: AppSpacing.lg,
+        ),
+        child: Center(
+          child: Container(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.md,
+              vertical: AppSpacing.lg,
             ),
-            const SizedBox(height: AppSpacing.sm),
-            Text(
-              // 빈 상태 — 검색 조건/위치 영향이 있다는 힌트로 다음 액션(재시도) 유도
-              '조건에 맞는 식당을 찾지 못했어요',
-              style: AppTextStyles.bodyMedium.copyWith(
-                color: AppColors.textSecondary,
-              ),
+            decoration: BoxDecoration(
+              color: AppColors.surface,
+              borderRadius: BorderRadius.circular(AppRadius.card),
+              border: Border.all(color: AppColors.border),
             ),
-            const SizedBox(height: 4),
-            Text(
-              '잠시 후 다시 시도하거나 위치를 확인해보세요',
-              style: AppTextStyles.bodySmall.copyWith(
-                color: AppColors.textHint,
-              ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                const Icon(
+                  Icons.restaurant_outlined,
+                  size: 48,
+                  color: AppColors.iconInactive,
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                Text(
+                  '주변에 추천할 식당이 없어요',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '조건을 조금 넓혀보거나 잠시 후 다시 시도해주세요',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: AppSpacing.md),
+                AppPrimaryButton(
+                  label: '다시 불러오기',
+                  onPressed: () {
+                    setState(() => _isLoading = true);
+                    _loadRecommendations();
+                  },
+                ),
+                const SizedBox(height: AppSpacing.sm),
+                // 사용자 입장에서 "조건 때문일까?" 의문에 대한 즉답 액션.
+                // 세션 로비로 돌아가면 멤버 조건/세션 설정을 다시 손볼 수 있음.
+                OutlinedButton.icon(
+                  onPressed: () {
+                    // 세션 로비로 복귀 (이전 화면) — 조건 재설정 진입점.
+                    Navigator.of(context).maybePop();
+                  },
+                  icon: const Icon(Icons.tune_rounded, size: 16),
+                  label: const Text('조건 다시 설정하기'),
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: AppColors.border),
+                    foregroundColor: AppColors.textPrimary,
+                  ),
+                ),
+              ],
             ),
-            const SizedBox(height: AppSpacing.md),
-            AppPrimaryButton(
-              label: '다시 불러오기',
-              onPressed: () {
-                setState(() => _isLoading = true);
-                _loadRecommendations();
-              },
-            ),
-          ],
+          ),
         ),
       );
     }

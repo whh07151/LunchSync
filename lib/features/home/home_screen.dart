@@ -25,7 +25,9 @@ import '../../services/restaurants_api_service.dart';
 import '../../services/geolocation_service.dart';
 import '../../services/crawl_api_service.dart';
 import '../../services/notifications_api_service.dart';
+import '../../services/favorites_api_service.dart';
 import '../../models/session.dart';
+import '../my_info/favorites_list_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-06 홈 대시보드 화면
@@ -75,6 +77,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // 각 섹션 로딩 상태 — UI에서 스켈레톤/스피너 표시용
   bool _isSessionsLoading = true;
   bool _isRestaurantsLoading = true;
+
+  // ── 내 즐겨찾기 위젯 상태 (배민 패턴) ─────────────────
+  // 홈에서 가로 스크롤 칩으로 즐겨찾기한 식당 미리보기.
+  // 0개면 안내 박스 노출, 1개 이상이면 카드 가로 스크롤.
+  // 화면 진입 + 식당 상세 pop 복귀 시 갱신.
+  List<FavoriteDto> _myFavorites = const [];
+  bool _isFavoritesLoading = true;
 
   // ── 알림 미읽음 카운트 (배지 표시용) ────────────────────
   // 0 일 때는 배지 숨김, 1 이상이면 빨간 점.
@@ -127,6 +136,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       _loadTodaySessions();
       _loadRecommendedRestaurants();
       _loadUnreadNotifications();
+      _loadMyFavorites();
       // 진입 즉시 1회 자동 크롤링 + 이동 스트림 구독
       _startAutoCrawl();
 
@@ -347,6 +357,37 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     });
   }
 
+  // ── 내 즐겨찾기 목록 조회 (배민 "찜한 가게" 패턴) ───────
+  // GET /api/users/me/favorites — 식당 정보 join된 결과.
+  // 로그인 토큰 없으면 빈 리스트로 폴백(가드).
+  // 식당 상세에서 하트 토글 후 pop으로 돌아오는 경우에도 자동 갱신되도록
+  // 즐겨찾기 위젯 우측 "전체 보기" 진입 후 복귀 시점에 한 번 더 호출.
+  Future<void> _loadMyFavorites() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      if (mounted) setState(() => _isFavoritesLoading = false);
+      return;
+    }
+    final list =
+        await const FavoritesApiService().list(accessToken: token);
+    if (!mounted) return;
+    setState(() {
+      _myFavorites = list;
+      _isFavoritesLoading = false;
+    });
+  }
+
+  // ── 즐겨찾기 목록 화면으로 이동 + 복귀 시 자동 갱신 ────
+  // 사용자가 목록에서 항목을 탭해 식당 상세로 들어가 하트 해제 후
+  // 두 번 pop 으로 홈에 돌아오면, 홈 위젯도 즉시 반영되어야 함.
+  Future<void> _openFavoritesList() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const FavoritesListScreen()),
+    );
+    if (!mounted) return;
+    _loadMyFavorites();
+  }
+
   // ── UI 구성 ─────────────────────────────────────────────
   @override
   Widget build(BuildContext context) {
@@ -519,6 +560,17 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             ),
             child: _buildTodaySession(),
           ),
+
+          const SizedBox(height: AppSpacing.lg),
+
+          // ── 내 즐겨찾기 섹션 (배민 "찜한 가게" 패턴, 2026-05-15 추가) ─
+          // AI 추천 위에 두는 이유:
+          //   사용자가 이미 검증한 식당이 추천보다 신뢰도가 높음.
+          //   특히 단골 점심 패턴이 있는 직장인은 이 영역에서 바로 점심 결정 가능.
+          // 0개면 안내 박스(즐겨찾기 사용 유도) → 잠재 사용자 학습.
+          _buildFavoritesSectionHeader(),
+          const SizedBox(height: AppSpacing.sm),
+          _buildFavoritesList(),
 
           const SizedBox(height: AppSpacing.lg),
 
@@ -707,6 +759,241 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       child: Text(
         title,
         style: AppTextStyles.heading3,
+      ),
+    );
+  }
+
+  // ── "내 즐겨찾기" 섹션 헤더 (2026-05-15 신규) ────────────
+  // 타이틀 + 카운트 칩 + 우측 "전체 보기" 액션.
+  // 카운트는 즐겨찾기 1개 이상일 때만 노출(0개면 안내 박스로 충분).
+  Widget _buildFavoritesSectionHeader() {
+    final count = _myFavorites.length;
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.screenHorizontal,
+      ),
+      child: Row(
+        children: [
+          Text('내 즐겨찾기', style: AppTextStyles.heading3),
+          if (count > 0) ...[
+            const SizedBox(width: AppSpacing.sm),
+            Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: 8,
+                vertical: 3,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.backgroundGrey,
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                '$count',
+                style: AppTextStyles.caption.copyWith(
+                  color: AppColors.textSecondary,
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ),
+          ],
+          const Spacer(),
+          // 1개 이상일 때만 "전체 보기" 노출 — 0개일 때 의미 없음.
+          if (count > 0)
+            TextButton(
+              onPressed: _openFavoritesList,
+              style: TextButton.styleFrom(
+                foregroundColor: AppColors.textSecondary,
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                minimumSize: const Size(0, 32),
+                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text(
+                    '전체 보기',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  const SizedBox(width: 2),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    size: 16,
+                    color: AppColors.iconInactive,
+                  ),
+                ],
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  // ── 즐겨찾기 가로 스크롤 위젯 ─────────────────────────────
+  // 상태:
+  //   - 로딩 : 80픽셀 회색 박스 1줄로 placeholder
+  //   - 빈   : 안내 박스 ("자주 가는 식당의 하트를 눌러보세요")
+  //   - 정상 : 가로 스크롤 카드 (이미지 + 이름 + 카테고리)
+  // 카드 폭은 추천 식당 카드보다 작게(140) — 위/아래 시각 위계 정리.
+  Widget _buildFavoritesList() {
+    // 로딩: 가로 가는 회색 박스로 placeholder (스피너보다 페이지 점프 적음)
+    if (_isFavoritesLoading) {
+      return SizedBox(
+        height: 92,
+        child: ListView.separated(
+          scrollDirection: Axis.horizontal,
+          physics: const NeverScrollableScrollPhysics(),
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.screenHorizontal,
+          ),
+          itemCount: 3,
+          separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+          itemBuilder: (_, _) => Container(
+            width: 140,
+            decoration: BoxDecoration(
+              color: AppColors.backgroundGrey,
+              borderRadius: BorderRadius.circular(AppRadius.card),
+            ),
+          ),
+        ),
+      );
+    }
+
+    // 빈 상태: 즐겨찾기 학습 유도 박스 + "둘러보기" CTA
+    if (_myFavorites.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.screenHorizontal,
+        ),
+        child: Container(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.md,
+            vertical: AppSpacing.md + 2,
+          ),
+          width: double.infinity,
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.favorite_outline_rounded,
+                size: 28,
+                color: AppColors.iconInactive,
+              ),
+              const SizedBox(width: AppSpacing.sm + 2),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '자주 가는 식당을 즐겨찾기 해보세요',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w600,
+                        color: AppColors.textPrimary,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '식당 상세에서 하트를 누르면 여기에 모여요',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // 정상: 가로 스크롤 카드 리스트
+    // 최대 10개만 — 그 이상은 "전체 보기" 진입으로 유도.
+    final preview = _myFavorites.length > 10
+        ? _myFavorites.sublist(0, 10)
+        : _myFavorites;
+    return SizedBox(
+      height: 110,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        physics: const BouncingScrollPhysics(),
+        padding: const EdgeInsets.symmetric(
+          horizontal: AppSpacing.screenHorizontal,
+        ),
+        itemCount: preview.length,
+        separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+        itemBuilder: (_, index) => _buildFavoriteCard(preview[index]),
+      ),
+    );
+  }
+
+  // ── 즐겨찾기 카드 한 장 (홈 미리보기) ─────────────────────
+  // 작은 가로 카드 — 이미지(48) + 이름 + 카테고리.
+  // 탭 시 식당 상세로 이동, 복귀 시 즐겨찾기 다시 조회(하트 해제 반영).
+  Widget _buildFavoriteCard(FavoriteDto fav) {
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => RestaurantDetailScreen(
+              restaurantId: fav.id,
+              initialName: fav.name,
+            ),
+          ),
+        );
+        if (!mounted) return;
+        // 하트 해제 후 복귀했을 수 있어 갱신.
+        _loadMyFavorites();
+      },
+      child: SizedBox(
+        width: 160,
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.small),
+              child: FoodImage(
+                // 2026-05-15 자율 E2E 회귀 fix: categoryLabel required 누락 → analyze error.
+                // FavoriteDto.category 를 그대로 전달. 이미지 없으면 이 라벨 기반 fallback.
+                imageUrl: fav.imageUrl,
+                categoryLabel: fav.category,
+                width: 48,
+                height: 48,
+                emojiSize: 22,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    fav.name,
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    fav.category,
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

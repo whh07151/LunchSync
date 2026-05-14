@@ -5,6 +5,8 @@ import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/users_api_service.dart';
+import '../../services/favorites_api_service.dart';
+import 'favorites_list_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-23 내정보/설정 화면
@@ -53,6 +55,12 @@ class _MyInfoScreenState extends ConsumerState<MyInfoScreen> {
   // true일 때 버튼 비활성화, 로딩 표시
   bool _isLoading = true;
   bool _isSaving = false;
+
+  // ── 활동 요약: 즐겨찾기 카운트 (2026-05-15 신규) ───────
+  // GET /api/users/me/favorites 로 1회 조회.
+  // 로딩 중에는 null, 조회 완료 후 정확한 개수. 실패 시 0.
+  // 즐겨찾기 목록 화면 진입 후 복귀 시 자동 재조회.
+  int? _favoritesCount;
 
   // ── 편집 모드 여부 ────────────────────────────────────────
   // true: 텍스트 필드와 칩이 활성화되어 수정 가능
@@ -111,7 +119,32 @@ class _MyInfoScreenState extends ConsumerState<MyInfoScreen> {
     // 첫 프레임 렌더링 후 DB에서 프로필 조회
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _loadProfile();
+      _loadFavoritesCount();
     });
+  }
+
+  // ── 즐겨찾기 개수 조회 (활동 요약 섹션용) ────────────────
+  // 별도 API 가 없어 list() 결과 길이로 카운트.
+  // 향후 GET /users/me/stats 같은 통합 엔드포인트 생기면 거기로 이전.
+  Future<void> _loadFavoritesCount() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      if (mounted) setState(() => _favoritesCount = 0);
+      return;
+    }
+    final list =
+        await const FavoritesApiService().list(accessToken: token);
+    if (!mounted) return;
+    setState(() => _favoritesCount = list.length);
+  }
+
+  // ── 즐겨찾기 목록 화면 진입 + 복귀 시 카운트 동기화 ───
+  Future<void> _openFavoritesList() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const FavoritesListScreen()),
+    );
+    if (!mounted) return;
+    _loadFavoritesCount();
   }
 
   // ── 생명주기: 메모리 해제 ────────────────────────────────
@@ -412,6 +445,13 @@ class _MyInfoScreenState extends ConsumerState<MyInfoScreen> {
 
             const SizedBox(height: AppSpacing.md),
 
+            // ── 활동 요약 섹션 (2026-05-15 신규) ──────────
+            // 배민/쿠팡이츠 "내 활동" 패턴. 즐겨찾기 식당 수를
+            // 노출해 사용자의 자기 데이터 인지를 도움.
+            _buildActivitySection(),
+
+            const SizedBox(height: AppSpacing.md),
+
             // ── 내 설정 섹션 (반경/예산/속도) ────────────
             _buildPreferencesSection(),
 
@@ -530,6 +570,95 @@ class _MyInfoScreenState extends ConsumerState<MyInfoScreen> {
                     color: AppColors.textSecondary,
                   ),
                 ),
+        ],
+      ),
+    );
+  }
+
+  // ── 활동 요약 섹션 위젯 (2026-05-15 신규) ─────────────────
+  // 카드 형태로 "내 즐겨찾기 N개" 표시 + 탭 시 즐겨찾기 목록 화면 이동.
+  // 향후 "이번 달 주문 N건" 같은 통계 추가 가능 — 지금은 즐겨찾기만.
+  // 디자인 토큰만 사용 (색상 변경 0).
+  Widget _buildActivitySection() {
+    final primary = Theme.of(context).colorScheme.primary;
+    final countLabel = _favoritesCount == null ? '...' : '${_favoritesCount!}개';
+    return Container(
+      color: AppColors.background,
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.lg,
+        vertical: AppSpacing.md + 2,
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            '내 활동',
+            style: AppTextStyles.bodyLarge.copyWith(
+              fontWeight: FontWeight.w700,
+              color: AppColors.textPrimary,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.sm + 2),
+          // 즐겨찾기 카드 — 탭하면 즐겨찾기 목록 화면 이동.
+          InkWell(
+            onTap: _openFavoritesList,
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            child: Container(
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.md,
+                vertical: AppSpacing.md,
+              ),
+              decoration: BoxDecoration(
+                color: AppColors.surface,
+                borderRadius: BorderRadius.circular(AppRadius.card),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(
+                children: [
+                  // 아이콘 원형 — 추천 토큰만 사용(primary alpha 20).
+                  Container(
+                    width: 40,
+                    height: 40,
+                    decoration: BoxDecoration(
+                      color: primary.withAlpha(25),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      Icons.favorite_rounded,
+                      color: primary,
+                      size: 20,
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm + 2),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          '내 즐겨찾기',
+                          style: AppTextStyles.bodyMedium.copyWith(
+                            fontWeight: FontWeight.w600,
+                            color: AppColors.textPrimary,
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          countLabel,
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const Icon(
+                    Icons.chevron_right_rounded,
+                    color: AppColors.iconInactive,
+                  ),
+                ],
+              ),
+            ),
+          ),
         ],
       ),
     );
