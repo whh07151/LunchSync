@@ -19,6 +19,7 @@ import {
   Max,
   ArrayMinSize,
   ArrayMaxSize,
+  MaxLength,
 } from 'class-validator';
 import { Type } from 'class-transformer';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -58,6 +59,12 @@ class CreateOrderDto {
 
 class UpdateOrderStatusDto {
   @IsString() @IsNotEmpty() status: string;
+}
+
+// 2026-05-15 별점/리뷰 (배민 패턴)
+class AddReviewDto {
+  @IsInt() @Min(1) @Max(5) score: number;
+  @IsOptional() @IsString() @MaxLength(500) text?: string;
 }
 
 @Controller('orders')
@@ -105,6 +112,22 @@ export class OrdersController {
       req.user.userId,
       dto,
     );
+    return { success: true, data: result };
+  }
+
+  // ══════════════════════════════════════════════════════
+  // 별점/리뷰 (배민 패턴 — 2026-05-15)
+  // ══════════════════════════════════════════════════════
+
+  // ── PATCH /api/orders/:id/review ─────────────────────
+  // 본인 주문에 별점/리뷰 작성 또는 수정 (COMPLETED 만)
+  @Patch(':id/review')
+  async addReview(
+    @Req() req: { user: { userId: string } },
+    @Param('id') id: string,
+    @Body() dto: AddReviewDto,
+  ) {
+    const result = await this.ordersService.addReview(req.user.userId, id, dto);
     return { success: true, data: result };
   }
 }

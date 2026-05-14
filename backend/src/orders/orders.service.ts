@@ -298,4 +298,110 @@ export class OrdersService {
 
     return { id: data.id, status: data.status, updatedAt: data.updated_at };
   }
+
+  // ══════════════════════════════════════════════════════════
+  // 별점/리뷰 (배민 패턴 — 2026-05-15 자율 발전 로드맵)
+  //
+  // 정책:
+  //   - COMPLETED 상태에서만 리뷰 작성 가능
+  //   - 본인 주문만 (orders.user_id 비교)
+  //   - 1주문 1리뷰 (update 패턴 — 재작성 시 덮어쓰기)
+  //   - score 1~5, text 최대 500자 (서비스 단 검증)
+  // ══════════════════════════════════════════════════════════
+
+  // ── PATCH /orders/:id/review ───────────────────────────
+  // 본인 주문에 별점/리뷰 작성 또는 수정.
+  async addReview(
+    userId: string,
+    orderId: string,
+    dto: { score: number; text?: string },
+  ) {
+    // 입력 검증
+    if (!Number.isInteger(dto.score) || dto.score < 1 || dto.score > 5) {
+      throw new BadRequestException('별점은 1~5 사이 정수여야 해요.');
+    }
+    if (dto.text && dto.text.length > 500) {
+      throw new BadRequestException('리뷰는 500자 이하로 작성해주세요.');
+    }
+
+    // 주문 조회 + 본인 검증 + 상태 검증
+    const { data: order, error: getError } = await this.supabase.client
+      .from('orders')
+      .select('id, user_id, status')
+      .eq('id', orderId)
+      .single();
+
+    if (getError || !order) {
+      throw new NotFoundException('주문을 찾을 수 없어요.');
+    }
+    if (order.user_id !== userId) {
+      throw new ForbiddenException('본인 주문에만 리뷰 작성 가능해요.');
+    }
+    if (order.status !== 'COMPLETED' && order.status !== 'DONE') {
+      throw new BadRequestException(
+        '주문이 완료된 후에 리뷰 작성 가능해요.',
+      );
+    }
+
+    // 리뷰 INSERT/UPDATE (단일 컬럼 update)
+    const { data, error } = await this.supabase.client
+      .from('orders')
+      .update({
+        review_score: dto.score,
+        review_text: dto.text ?? null,
+        review_at: new Date().toISOString(),
+      })
+      .eq('id', orderId)
+      .select('id, review_score, review_text, review_at')
+      .single();
+
+    if (error || !data) {
+      throw new InternalServerErrorException('리뷰를 저장하지 못했어요.');
+    }
+
+    return {
+      id: data.id,
+      reviewScore: data.review_score,
+      reviewText: data.review_text,
+      reviewAt: data.review_at,
+    };
+  }
+
+  // ── GET /restaurants/:id/reviews — 매장 별 리뷰 목록 ───
+  // 사장 어플에서 매장 평점/리뷰 보기 용. 공개 정보 — 인증 필요하지만 본인 매장만 권한 X.
+  // (향후 사장 권한 검증 추가 가능 — 현재는 단순 조회)
+  async getReviewsByRestaurant(restaurantId: string) {
+    const { data, error } = await this.supabase.client
+      .from('orders')
+      .select(
+        'id, review_score, review_text, review_at, ' +
+          'user:users!orders_user_id_fkey(name)',
+      )
+      .eq('restaurant_id', restaurantId)
+      .not('review_score', 'is', null)
+      .order('review_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      throw new InternalServerErrorException('리뷰를 불러오지 못했어요.');
+    }
+
+    const reviews = (data ?? []).map((r: any) => ({
+      id: r.id,
+      score: r.review_score,
+      text: r.review_text,
+      at: r.review_at,
+      authorName: r.user?.name ?? '익명',
+    }));
+
+    // 평균 평점 계산
+    const sum = reviews.reduce((acc, r) => acc + (r.score ?? 0), 0);
+    const avg = reviews.length > 0 ? sum / reviews.length : 0;
+
+    return {
+      averageScore: Math.round(avg * 10) / 10, // 소수점 1자리
+      count: reviews.length,
+      reviews,
+    };
+  }
 }
