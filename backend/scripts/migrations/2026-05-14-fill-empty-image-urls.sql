@@ -42,6 +42,12 @@
 
 BEGIN;
 
+-- ── 0. image_url 컬럼이 없으면 먼저 생성 ───────────────────
+-- d379484 에서 백엔드 select 는 컬럼 사용을 시작했으나, DB 스키마에는
+-- 컬럼 자체가 추가된 적이 없어 ERROR 42703 발생 가능.
+-- 안전하게 IF NOT EXISTS 로 멱등성 보장.
+ALTER TABLE restaurants ADD COLUMN IF NOT EXISTS image_url TEXT;
+
 -- ── 한식 ────────────────────────────────────────────────
 UPDATE restaurants
 SET image_url = 'https://source.unsplash.com/400x300/?korean,food'
