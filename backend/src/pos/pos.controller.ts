@@ -30,8 +30,11 @@ type AuthedRequest = { user: AuthedRequestUser };
 // ══════════════════════════════════════════════════════════
 
 // 2026-05-13 보안 패치: status 는 정해진 ENUM 값만 허용, reason 길이 제한
+// 2026-05-15 자율 E2E 회귀 fix: 사장님 결정 ENUM 5단계 (PAID/ACCEPTED/PREPARING/READY/COMPLETED)
+//   기존 매트릭스는 ACCEPTED 가 누락되어 PAID → ACCEPTED 전이 시 400 발생.
+//   POS DTO 에 ACCEPTED 추가 (CANCELLED 는 별도 cancel 엔드포인트가 담당하므로 제외).
 class UpdatePosOrderStatusDto {
-  @IsIn(['PREPARING', 'READY', 'COMPLETED'])
+  @IsIn(['ACCEPTED', 'PREPARING', 'READY', 'COMPLETED'])
   status: string;
 }
 

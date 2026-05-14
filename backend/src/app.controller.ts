@@ -1,4 +1,7 @@
 import { Controller, Get } from '@nestjs/common';
+// 2026-05-15 자율 E2E 회귀 발견: /api/health 가 글로벌 throttle 에 걸려 429 반환.
+// 모니터링 엔드포인트는 throttle 적용 대상이 아님 → @SkipThrottle 적용.
+import { SkipThrottle } from '@nestjs/throttler';
 import { AppService } from './app.service';
 
 // ══════════════════════════════════════════════════════════
@@ -27,6 +30,9 @@ export class AppController {
   // ── GET /api/health ─────────────────────────────────────
   // 모니터링 서비스가 5분~1분 간격으로 호출.
   // 200 응답이면 정상, 그 외엔 알림 트리거.
+  // 2026-05-15 SkipThrottle: 글로벌 ThrottlerGuard 가 health 도 막아서 UptimeRobot 이 false alarm 을 받음.
+  // 모니터링 엔드포인트는 IP당 호출수 제한 없음.
+  @SkipThrottle()
   @Get('health')
   health() {
     const mem = process.memoryUsage();

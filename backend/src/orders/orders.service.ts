@@ -171,15 +171,38 @@ export class OrdersService {
   // 2026-05-13 보안 패치: 본인 주문 또는 같은 세션 멤버만 조회 가능.
   // 그룹 식사 특성상 같은 세션 멤버가 서로의 주문 상태/금액 확인할 수 있어야 함.
   async getOrderById(orderId: string, requesterId: string) {
-    const { data: order, error } = await this.supabase.client
+    // 2026-05-15 별점/리뷰 표시 위해 review_score/review_text/review_at 추가 select.
+    // 컬럼이 없는 환경(마이그레이션 미적용)에서도 PostgREST 는 silent fail 하지 않고
+    // 에러를 반환하므로 마이그레이션 적용 여부 확인 후 노출.
+    // 2026-05-15 자율 E2E build 회귀: select 문자열을 ' + ' 로 분리하면
+    // supabase 타입 추론이 GenericStringError 로 떨어져 빌드 실패.
+    // 한 줄 리터럴 + as 캐스팅으로 수정.
+    type OrderRow = {
+      id: string;
+      session_id: string;
+      user_id: string;
+      status: string;
+      total_price: number;
+      payment_key: string | null;
+      created_at: string;
+      updated_at: string;
+      restaurant_id?: string | null;
+      review_score?: number | null;
+      review_text?: string | null;
+      review_at?: string | null;
+    };
+    const { data: orderRaw, error } = await this.supabase.client
       .from('orders')
-      .select('id, session_id, user_id, status, total_price, payment_key, created_at, updated_at')
+      .select(
+        'id, session_id, user_id, status, total_price, payment_key, created_at, updated_at, restaurant_id, review_score, review_text, review_at',
+      )
       .eq('id', orderId)
       .single();
 
-    if (error || !order) {
+    if (error || !orderRaw) {
       throw new NotFoundException('주문을 찾을 수 없습니다.');
     }
+    const order = orderRaw as unknown as OrderRow;
 
     // 본인 주문이 아니면 같은 세션 멤버인지 확인
     if (order.user_id !== requesterId) {
@@ -209,6 +232,12 @@ export class OrdersService {
       paymentKey: order.payment_key,
       createdAt: order.created_at,
       updatedAt: order.updated_at,
+      // 2026-05-15 별점/리뷰 — 손님 어플이 "이미 작성된 리뷰" 인지 판단해
+      // 별점 카드 노출 여부를 결정하기 위해 함께 내려보낸다.
+      restaurantId: (order as { restaurant_id?: string }).restaurant_id ?? null,
+      reviewScore: (order as { review_score?: number | null }).review_score ?? null,
+      reviewText: (order as { review_text?: string | null }).review_text ?? null,
+      reviewAt: (order as { review_at?: string | null }).review_at ?? null,
       items: (items ?? []).map((i: any) => ({
         id: i.id,
         menuItemId: i.menu_item_id,
