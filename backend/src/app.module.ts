@@ -20,6 +20,7 @@ import { PaymentsModule } from './payments/payments.module';
 import { PosModule } from './pos/pos.module';
 import { CrawlModule } from './crawl/crawl.module';
 import { NotificationsModule } from './notifications/notifications.module';
+import { FriendsModule } from './friends/friends.module';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: NestJS 루트 모듈
@@ -60,9 +61,16 @@ import { NotificationsModule } from './notifications/notifications.module';
 
     // 정적 파일 서빙 (toss-checkout.html 등)
     // 모바일 앱에서 인앱 WebView로 결제 페이지 접근 시 사용
-    // __dirname = dist/ → '../public' = backend/public
+    //
+    // 2026-05-14 사장님 시연 발견 — 404 Cannot GET /toss-checkout.html:
+    //   기존 `join(__dirname, '..', '..', 'public')` 는 NestJS 빌드 후
+    //   __dirname 이 dist/src 또는 dist 가 되어 backend/public 을 못 가리킴.
+    //   `process.cwd()` 는 pm2 가 backend/ 에서 start 하므로 항상 backend/.
+    //   → process.cwd() + '/public' 으로 변경 (절대적 안정).
+    //
+    // main.ts 의 useStaticAssets 와 중복이지만 안전망으로 둘 다 유지.
     ServeStaticModule.forRoot({
-      rootPath: join(__dirname, '..', '..', 'public'),
+      rootPath: join(process.cwd(), 'public'),
       serveRoot: '/',
       exclude: ['/api/(.*)'],
     }),
@@ -105,6 +113,9 @@ import { NotificationsModule } from './notifications/notifications.module';
 
     // CU-22 알림함 (주문/투표 이벤트 기반 알림)
     NotificationsModule,
+
+    // CU-08 보강 — 친구 관계 (2026-05-14 사장님 시연 피드백 반영)
+    FriendsModule,
   ],
   controllers: [AppController],
   providers: [
