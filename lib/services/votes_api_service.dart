@@ -75,6 +75,7 @@ class VotesProgressDto {
     required this.totalMembers,
     required this.votedCount,
     required this.results,
+    required this.votedUserIds,
     this.winner,
   });
 
@@ -83,6 +84,10 @@ class VotesProgressDto {
   final int votedCount;      // 지금까지 던진 표 총합 (1인 1표라 곧 투표 완료자 수)
   final List<VoteResultItem> results;
   final WinnerInfo? winner;  // 우승 — 결정 후에만
+  // Phase D: 멤버별 투표 ✓/대기 가시화용 — raw votes 의 userId 집합.
+  // vote_progress_screen 에서 멤버 목록(SessionsApi.getSessionMembers)과
+  // 교차 매칭해 "누가 투표했고 누가 대기 중인지" 표시.
+  final Set<String> votedUserIds;
 }
 
 /// POST /decide 응답 (CU-15 결과 확정 직후 호스트 화면에서 사용)
@@ -253,7 +258,9 @@ class VotesApiService {
 
       // 식당별 그룹핑 (Map: restaurantId → { name, count })
       // 식당명은 백엔드 join 으로 함께 내려오나 null 가능 → 안전 처리.
+      // Phase D 추가: 투표한 사용자 ID 집합도 함께 수집 → 멤버별 ✓/대기 가시화.
       final grouped = <String, _Bucket>{};
+      final votedUserIds = <String>{};
       for (final v in list) {
         final rid = (v['restaurantId'] as String?) ?? '';
         if (rid.isEmpty) continue;
@@ -262,6 +269,9 @@ class VotesApiService {
         bucket.count += 1;
         // 후행 row 가 이름을 더 정확히 가질 수도 있어 빈 값일 때만 업데이트
         if (bucket.name.isEmpty && rname.isNotEmpty) bucket.name = rname;
+        // 투표한 사용자 ID 모으기 (Phase D)
+        final uid = (v['userId'] as String?) ?? '';
+        if (uid.isNotEmpty) votedUserIds.add(uid);
       }
 
       final votedCount = list.length;
@@ -308,6 +318,7 @@ class VotesApiService {
         votedCount: votedCount,
         results: results,
         winner: winner,
+        votedUserIds: votedUserIds,
       );
     } catch (e) {
       debugPrint('[VotesApiService] getVotes 예외: $e');

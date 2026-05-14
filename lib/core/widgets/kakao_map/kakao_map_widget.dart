@@ -193,13 +193,29 @@ String buildKakaoMapHtml({
     var map = new kakao.maps.Map(container, options);
 
     var pins = [$pinsJson];
-    pins.forEach(function(pin) {
-      var marker = new kakao.maps.Marker({
-        position: new kakao.maps.LatLng(pin.lat, pin.lng),
-        map: map
+    pins.forEach(function(pin, index) {
+      var pos = new kakao.maps.LatLng(pin.lat, pin.lng);
+      var marker = new kakao.maps.Marker({ position: pos, map: map });
+
+      // 식당 순위 번호 라벨 (마커 위 작은 원형 배지)
+      // 2026-05-15 사장님 요청: "핀 위에 식당 번호도 보이면 좋겠다"
+      var numLabel = document.createElement('div');
+      numLabel.textContent = (index + 1);
+      numLabel.style.cssText = 'background:#FF6B2C;color:#fff;font-size:11px;' +
+                               'font-weight:700;border-radius:50%;width:20px;' +
+                               'height:20px;display:flex;align-items:center;' +
+                               'justify-content:center;box-shadow:0 1px 2px rgba(0,0,0,0.3);' +
+                               'border:2px solid #fff;';
+      new kakao.maps.CustomOverlay({
+        map: map,
+        position: pos,
+        content: numLabel,
+        yAnchor: 2.6,  // 마커 위쪽으로 살짝 띄움
       });
+
       var infowindow = new kakao.maps.InfoWindow({
-        content: '<div style="padding:4px 8px;font-size:12px;">' + pin.name + '</div>'
+        content: '<div style="padding:4px 8px;font-size:12px;font-weight:600;">' +
+                 (index + 1) + '. ' + pin.name + '</div>'
       });
       kakao.maps.event.addListener(marker, 'click', function() {
         infowindow.open(map, marker);

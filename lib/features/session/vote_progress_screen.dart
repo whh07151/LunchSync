@@ -8,6 +8,7 @@ import '../../providers/user_provider.dart';
 import '../../services/recommendations_api_service.dart';
 import '../../services/sessions_api_service.dart';
 import '../../services/votes_api_service.dart';
+import '../../models/session.dart' show SessionMember;
 import '../menu/menu_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -79,6 +80,11 @@ class _VoteProgressScreenState extends ConsumerState<VoteProgressScreen>
 
   // 멤버 분모 (joinedCount) — 진행도 계산용
   int _totalMembers = 0;
+
+  // Phase D 추가: 멤버 목록 (id+name+isHost) — 누가 투표했고 누가 대기 중인지
+  // 가시화하기 위한 데이터. _refreshOnce 폴링마다 GET /sessions/:id/members
+  // 응답의 members 배열을 그대로 보관. 빈 리스트면 _buildMembersList 안 그림.
+  List<SessionMember> _members = const <SessionMember>[];
 
   // 투표 진행도 + 결과 (VotesApiService 가 raw 배열을 집계해 만든 DTO)
   VotesProgressDto? _progress;
@@ -222,6 +228,7 @@ class _VoteProgressScreenState extends ConsumerState<VoteProgressScreen>
       _status = session?.status;
       _hostUserId = session?.createdBy?.id;
       _totalMembers = members?.joinedCount ?? _totalMembers;
+      _members = members?.members ?? _members;
       _progress = progress;
     });
 
@@ -471,6 +478,14 @@ class _VoteProgressScreenState extends ConsumerState<VoteProgressScreen>
         _buildProgressCard(),
         const SizedBox(height: AppSpacing.md),
 
+        // ── 멤버별 ✓/대기 카드 (Phase D, 2026-05-15) ─
+        // 사장님 시연 피드백: "다른 팀원들 투표 어떻게 되는지 모르겠다"
+        // 멤버 목록 + 투표 완료 여부를 한 화면에 시각화.
+        if (_members.isNotEmpty) ...[
+          _buildMembersList(),
+          const SizedBox(height: AppSpacing.md),
+        ],
+
         // ── 결과 차트 ────────────────────────────────
         if ((_progress?.results.isNotEmpty ?? false)) ...[
           Text(
@@ -630,6 +645,127 @@ class _VoteProgressScreenState extends ConsumerState<VoteProgressScreen>
               minHeight: 8,
             ),
           ),
+        ],
+      ),
+    );
+  }
+
+  // ── 멤버별 ✓/대기 가시화 카드 (Phase D 신규) ──────────
+  // 사장님 시연 피드백: "다른 팀원들 투표 어떻게 되는지 모르겠다"
+  //
+  // 데이터:
+  //   - _members         GET /sessions/:id/members 응답의 멤버 배열
+  //   - votedUserIds     VotesProgressDto.votedUserIds (이번 사이클 raw votes 의 userId 집합)
+  //
+  // 표시:
+  //   각 멤버 한 줄 — 아바타(이름 첫 글자) + 이름 + 방장 chip + 우측 ✓투표완료 / 대기중
+  //
+  // 디자인 토큰만 사용 (primary.withAlpha) — 새 색상 추가 없음.
+  Widget _buildMembersList() {
+    final primary = Theme.of(context).colorScheme.primary;
+    final voted = _progress?.votedUserIds ?? const <String>{};
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.people_outline_rounded, size: 18, color: primary),
+              const SizedBox(width: AppSpacing.sm),
+              Text(
+                '참여 멤버 (${_members.length}명)',
+                style: AppTextStyles.bodyMedium.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.sm),
+          ..._members.map((m) {
+            final hasVoted = voted.contains(m.id);
+            final name = (m.name ?? '').trim();
+            final initial = name.isEmpty ? '?' : name[0];
+            return Padding(
+              padding: const EdgeInsets.symmetric(vertical: 6),
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundColor: hasVoted
+                        ? primary.withAlpha(40)
+                        : AppColors.backgroundGrey,
+                    child: Text(
+                      initial,
+                      style: AppTextStyles.caption.copyWith(
+                        color: hasVoted ? primary : AppColors.textSecondary,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Row(
+                      children: [
+                        Flexible(
+                          child: Text(
+                            name.isEmpty ? '이름 없음' : name,
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ),
+                        if (m.isHost) ...[
+                          const SizedBox(width: 6),
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 6,
+                              vertical: 2,
+                            ),
+                            decoration: BoxDecoration(
+                              color: primary.withAlpha(25),
+                              borderRadius:
+                                  BorderRadius.circular(AppRadius.chip),
+                            ),
+                            child: Text(
+                              '방장',
+                              style: AppTextStyles.caption.copyWith(
+                                color: primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
+                  ),
+                  // 투표 완료 / 대기 중 표시
+                  Icon(
+                    hasVoted
+                        ? Icons.check_circle_rounded
+                        : Icons.hourglass_top_rounded,
+                    size: 16,
+                    color: hasVoted ? primary : AppColors.textHint,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    hasVoted ? '투표 완료' : '대기 중',
+                    style: AppTextStyles.caption.copyWith(
+                      color: hasVoted ? primary : AppColors.textHint,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            );
+          }),
         ],
       ),
     );

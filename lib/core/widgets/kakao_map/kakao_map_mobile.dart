@@ -70,8 +70,12 @@ class _MobileKakaoMapState extends State<_MobileKakaoMap> {
       ..setJavaScriptMode(JavaScriptMode.unrestricted)
       // 투명 배경 방지: 로딩 중 검은 화면 깜빡임 회피
       ..setBackgroundColor(Colors.white)
-      // baseUrl을 http로 지정해야 외부 스크립트 태그(카카오 SDK)가 로드됨
-      ..loadHtmlString(html, baseUrl: 'https://localhost/');
+      // 2026-05-15 사장님 라이브 발견 — 웹에서는 지도 잘 뜨는데 모바일만 안 뜸.
+      // 카카오 개발자센터 "웹 도메인 화이트리스트" 에 http://localhost:8080 은
+      // 등록돼 있지만 https://localhost (모바일 baseUrl) 는 없을 수 있음.
+      // → 등록된 도메인 http://localhost:8080 으로 baseUrl 통일해 화이트리스트
+      //   미스매치 제거. (실제 호스트 통신은 안 함 — origin 만 카카오 SDK 검증용)
+      ..loadHtmlString(html, baseUrl: 'http://localhost:8080/');
   }
 
   @override
