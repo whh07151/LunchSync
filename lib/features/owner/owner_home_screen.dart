@@ -5,7 +5,9 @@ import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../providers/user_provider.dart';
 import '../../services/pos_api_service.dart';
+import '../../services/reviews_api_service.dart';
 import '../auth/login_screen.dart';
+import '../restaurant/restaurant_reviews_screen.dart';
 import 'menu_management_screen.dart';
 import 'owner_profile_edit_screen.dart';
 import 'sales_screen.dart';
@@ -57,6 +59,11 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
   /// 현재 PATCH 진행 중인 주문 ID — 중복 클릭 방지 + 버튼 로딩 표시.
   /// null 이면 아무 주문도 처리 중이 아님.
   String? _processingOrderId;
+
+  // ── 매장 평점 캐시 (2026-05-15 배민 패턴) ──────────────
+  // 홈 탭 진입 시 1회 조회 → 평점 카드 표시.
+  // null = 미조회 / 빈 결과 = "아직 리뷰가 없어요"로 카드 노출.
+  RestaurantReviewsResult? _reviews;
 
   Timer? _pollTimer;
 
@@ -125,15 +132,24 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
 
     try {
       const api = PosApiService();
+      // 2026-05-15: 별점/리뷰 카드도 같은 사이클로 갱신 — 평점 변화 즉시 반영.
+      // 실패해도 stats/orders 흐름은 그대로 (try 안에서 별도 catch 없이 묶음 처리,
+      // ReviewsApiService 가 자체 catch 후 empty 반환하므로 throw 위험 X).
+      const reviewsApi = ReviewsApiService();
       final results = await Future.wait([
         api.getStats(accessToken: token, restaurantId: restaurantId),
         api.getOrders(accessToken: token, restaurantId: restaurantId),
+        reviewsApi.getReviewsByRestaurant(
+          accessToken: token,
+          restaurantId: restaurantId,
+        ),
       ]);
 
       if (!mounted) return;
       setState(() {
         _stats = results[0] as PosStats;
         _orders = results[1] as List<PosOrder>;
+        _reviews = results[2] as RestaurantReviewsResult;
         _loadError = null;
         _isLoading = false;
       });
@@ -379,6 +395,113 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
     );
   }
 
+  // ── 매장 평점 카드 (2026-05-15 배민 패턴) ────────────────
+  // 우리 매장 평균 평점 + 리뷰 개수를 한눈에 보여주는 콜투액션.
+  // 카드 탭 → RestaurantReviewsScreen 진입.
+  //
+  // 상태:
+  //   _reviews == null   → 로딩 중 placeholder ("-")
+  //   count == 0         → "아직 리뷰가 없어요" 안내
+  //   count > 0          → 평균 + 개수 + 별 표시
+  //
+  // 디자인 토큰: amber 600 (별점 표준), AppColors / AppTextStyles / AppRadius.
+  Widget _buildRatingCard(String restaurantId) {
+    final amber = Colors.amber.shade600;
+    final r = _reviews;
+    final hasData = r != null;
+    final hasReviews = hasData && r.count > 0;
+    final scoreLabel = hasReviews ? r.averageScore.toStringAsFixed(1) : '-';
+    final countLabel =
+        hasData ? '${r.count}개 리뷰' : '리뷰 불러오는 중';
+
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        onTap: () => _openReviewsScreen(restaurantId),
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: AppColors.surface,
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            border: Border.all(color: AppColors.border),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 44,
+                height: 44,
+                decoration: BoxDecoration(
+                  color: amber.withAlpha(30),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.star_rounded, color: amber, size: 26),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Row(
+                      children: [
+                        Text(
+                          scoreLabel,
+                          style: AppTextStyles.heading3.copyWith(
+                            fontWeight: FontWeight.w800,
+                            color: hasReviews
+                                ? AppColors.textPrimary
+                                : AppColors.textHint,
+                          ),
+                        ),
+                        const SizedBox(width: 6),
+                        Text(
+                          '($countLabel)',
+                          style: AppTextStyles.bodySmall.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      hasReviews
+                          ? '손님 후기 보기'
+                          : (hasData
+                              ? '첫 리뷰를 기다리고 있어요'
+                              : '잠시만 기다려주세요'),
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: AppColors.iconInactive,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── 리뷰 리스트 화면 진입 ─────────────────────────────────
+  // 매장명은 user state 의 businessName 우선 사용, 없으면 null 로 두고
+  // RestaurantReviewsScreen 이 기본 "리뷰" 타이틀로 표시.
+  void _openReviewsScreen(String restaurantId) {
+    final user = ref.read(userProvider);
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RestaurantReviewsScreen(
+          restaurantId: restaurantId,
+          restaurantName: user.businessName,
+        ),
+      ),
+    );
+  }
+
   // ── 홈 탭 ────────────────────────────────────────────
   Widget _buildHomeTab() {
     final user = ref.watch(userProvider);
@@ -447,6 +570,18 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
                   ? _buildTodaySummaryCard()
                   : _buildRestaurantPendingCard(),
             ),
+
+            // ── 매장 평점 카드 (2026-05-15 배민 패턴) ─────────
+            // 매장 매핑된 경우에만 표시. 카드 클릭 시 리뷰 리스트 화면 진입.
+            if (hasRestaurant) ...[
+              const SizedBox(height: AppSpacing.md),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.screenHorizontal,
+                ),
+                child: _buildRatingCard(user.restaurantId!),
+              ),
+            ],
 
             const SizedBox(height: AppSpacing.lg),
 

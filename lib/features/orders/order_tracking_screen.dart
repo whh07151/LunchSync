@@ -8,6 +8,7 @@ import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/orders_api_service.dart';
 import '../../services/sessions_api_service.dart';
+import '../../services/reviews_api_service.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-20 주문 추적 화면
@@ -53,6 +54,17 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
   // 더치페이 명세서를 위한 세션 멤버 수 (sessionId 로 조회)
   // null = 미조회 / 0 = 조회 실패 / 1+ = 멤버 수
   int? _memberCount;
+
+  // ── 별점/리뷰 로컬 상태 (2026-05-15) ──────────────────
+  // Optimistic UI 패턴: 바텀시트에서 등록 성공 시 즉시 카드 숨김.
+  // 폴링 응답이 review_score 를 반영하기 전 깜빡임을 막기 위해 로컬 캐싱.
+  // null = 미작성 / 1~5 = 작성 완료
+  int? _localReviewScore;
+
+  /// 리뷰 제출 중 중복 클릭 방지 + 버튼 스피너 표시.
+  bool _submittingReview = false;
+
+  static const _reviewsApi = ReviewsApiService();
 
   @override
   void initState() {
@@ -196,6 +208,16 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
           if (_memberCount != null && _memberCount! > 1) ...[
             const SizedBox(height: AppSpacing.md),
             _buildDutchPayCard(order.totalPrice, _memberCount!),
+          ],
+
+          // ── 별점 카드 (COMPLETED 도달 + 아직 미작성일 때만) ──
+          // 2026-05-15 배민 패턴 — 주문 완료 직후 화면 하단에 카드 등장.
+          //   - 카드 탭 → 바텀시트 (별 5개 + 리뷰 텍스트)
+          //   - 등록 후 카드 숨김 (Optimistic UI, _localReviewScore 상태 갱신)
+          if (order.status == 'COMPLETED' &&
+              (order.reviewScore ?? _localReviewScore) == null) ...[
+            const SizedBox(height: AppSpacing.md),
+            _buildReviewPromptCard(order),
           ],
 
           const SizedBox(height: AppSpacing.md),
@@ -505,5 +527,301 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
         ],
       ),
     );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 별점/리뷰 UI (배민 패턴 — 2026-05-15 자율 발전 로드맵)
+  // ══════════════════════════════════════════════════════════
+
+  // ── 별점 작성 유도 카드 ──────────────────────────────────
+  // 주문 추적 화면 하단에 노출되는 콜투액션 카드.
+  //   - amber 톤 (별점 표준 색) 으로 시선 유도
+  //   - 한 줄 헤더 + 보조 카피 + Pen 아이콘
+  //   - 카드 전체가 InkWell → 탭 시 바텀시트 오픈
+  //
+  // 기존 디자인 토큰만 사용 (AppRadius/AppSpacing/AppColors), 새 색상 추가 X.
+  Widget _buildReviewPromptCard(OrderDetailDto order) {
+    final amber = Colors.amber.shade600;
+    return Material(
+      color: Colors.transparent,
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        onTap: _submittingReview ? null : () => _openReviewSheet(order),
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            color: amber.withAlpha(15),
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            border: Border.all(color: amber.withAlpha(70)),
+          ),
+          child: Row(
+            children: [
+              Container(
+                width: 40,
+                height: 40,
+                decoration: BoxDecoration(
+                  color: amber.withAlpha(40),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(Icons.star_rounded, color: amber, size: 24),
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '오늘 식사는 어땠어요?',
+                      style: AppTextStyles.bodyMedium.copyWith(
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '별점을 남기면 다음 점심 추천에 반영돼요',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              Icon(
+                Icons.chevron_right_rounded,
+                color: amber,
+                size: 22,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ── 별점/리뷰 작성 바텀시트 ───────────────────────────────
+  // 1) 별 5개 (1~5 클릭 가능). 클릭 시 인덱스만 setState — 등록 전엔 서버 호출 X.
+  // 2) 선택 텍스트 입력 (TextField, maxLength 500).
+  // 3) "등록" 버튼 → API 호출 (Optimistic UI).
+  //
+  // dispose 안전성 — controller 는 StatefulBuilder 내부에서 만들고
+  // 닫힐 때 dispose. showModalBottomSheet 의 builder 안에서 만든
+  // 컨트롤러는 sheet pop 시 자동 해제되지 않으므로 명시 dispose.
+  Future<void> _openReviewSheet(OrderDetailDto order) async {
+    int selectedScore = 5; // 기본값 5점 (긍정 가설 — 손님이 가장 자주 누르는 값)
+    final textController = TextEditingController();
+    final primary = Theme.of(context).colorScheme.primary;
+    final amber = Colors.amber.shade600;
+
+    try {
+      await showModalBottomSheet<void>(
+        context: context,
+        isScrollControlled: true, // 키보드 올라올 때 화면 가려지지 않게
+        shape: const RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        ),
+        builder: (sheetCtx) {
+          // StatefulBuilder 로 별 토글/제출 중 상태 관리.
+          return StatefulBuilder(
+            builder: (ctx, setSheetState) {
+              final bottomInset = MediaQuery.of(ctx).viewInsets.bottom;
+              return Padding(
+                padding: EdgeInsets.fromLTRB(
+                  AppSpacing.md,
+                  AppSpacing.md,
+                  AppSpacing.md,
+                  bottomInset + AppSpacing.md,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    // 핸들바
+                    Center(
+                      child: Container(
+                        width: 36,
+                        height: 4,
+                        margin: const EdgeInsets.only(bottom: AppSpacing.md),
+                        decoration: BoxDecoration(
+                          color: AppColors.divider,
+                          borderRadius: BorderRadius.circular(2),
+                        ),
+                      ),
+                    ),
+                    // 헤더
+                    Text(
+                      '별점 남기기',
+                      style: AppTextStyles.heading3,
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      '주문 #${order.id.substring(0, 8)}',
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                      textAlign: TextAlign.center,
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    // 별 5개 — 인덱스 1~5
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: List.generate(5, (i) {
+                        final starIdx = i + 1;
+                        final isFilled = starIdx <= selectedScore;
+                        return IconButton(
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          iconSize: 36,
+                          onPressed: _submittingReview
+                              ? null
+                              : () => setSheetState(
+                                    () => selectedScore = starIdx,
+                                  ),
+                          icon: Icon(
+                            isFilled
+                                ? Icons.star_rounded
+                                : Icons.star_border_rounded,
+                            color: isFilled ? amber : AppColors.iconInactive,
+                          ),
+                          tooltip: '$starIdx점',
+                        );
+                      }),
+                    ),
+                    const SizedBox(height: 4),
+                    Center(
+                      child: Text(
+                        _scoreLabel(selectedScore),
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.md),
+                    // 텍스트 입력 (선택)
+                    TextField(
+                      controller: textController,
+                      maxLength: 500,
+                      maxLines: 3,
+                      minLines: 2,
+                      enabled: !_submittingReview,
+                      decoration: const InputDecoration(
+                        labelText: '한 줄 후기 (선택)',
+                        hintText: '맛, 양, 친절도 등 의견을 적어주세요',
+                        border: OutlineInputBorder(),
+                      ),
+                    ),
+                    const SizedBox(height: AppSpacing.sm),
+                    // 등록 버튼
+                    FilledButton.icon(
+                      onPressed: _submittingReview
+                          ? null
+                          : () async {
+                              setSheetState(() {});
+                              await _submitReview(
+                                orderId: order.id,
+                                score: selectedScore,
+                                text: textController.text.trim(),
+                                onDone: () {
+                                  if (sheetCtx.mounted) {
+                                    Navigator.of(sheetCtx).pop();
+                                  }
+                                },
+                              );
+                            },
+                      icon: _submittingReview
+                          ? const SizedBox(
+                              width: 16,
+                              height: 16,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                                valueColor: AlwaysStoppedAnimation<Color>(
+                                  Colors.white,
+                                ),
+                              ),
+                            )
+                          : const Icon(Icons.send_rounded, size: 18),
+                      label: Text(_submittingReview ? '등록 중...' : '등록'),
+                      style: FilledButton.styleFrom(
+                        backgroundColor: primary,
+                        minimumSize: const Size.fromHeight(48),
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            },
+          );
+        },
+      );
+    } finally {
+      // showModalBottomSheet 결과와 무관하게 컨트롤러 누수 방지.
+      textController.dispose();
+    }
+  }
+
+  // ── 별점 등록 API 호출 + Optimistic UI ────────────────────
+  // 성공: 스낵바 "별점 등록 완료" + _localReviewScore 갱신 → 카드 자동 숨김
+  // 실패: 스낵바 안내 + 카드 유지 (사용자가 다시 시도 가능)
+  Future<void> _submitReview({
+    required String orderId,
+    required int score,
+    required String text,
+    required VoidCallback onDone,
+  }) async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('로그인이 필요해요')),
+      );
+      return;
+    }
+
+    setState(() => _submittingReview = true);
+
+    final ok = await _reviewsApi.submitReview(
+      accessToken: token,
+      orderId: orderId,
+      score: score,
+      text: text.isEmpty ? null : text,
+    );
+
+    if (!mounted) return;
+    setState(() => _submittingReview = false);
+
+    if (ok) {
+      // 카드 즉시 숨김 — 폴링이 review_score 를 가져오기 전 깜빡임 방지.
+      setState(() => _localReviewScore = score);
+      onDone();
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('별점 등록 완료'),
+          duration: Duration(seconds: 2),
+        ),
+      );
+    } else {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('별점 등록에 실패했어요. 잠시 후 다시 시도해주세요'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+    }
+  }
+
+  /// 별점 숫자 → 사람 친화 라벨. 작성 동기 부여 + 입력 확인 보조.
+  String _scoreLabel(int score) {
+    switch (score) {
+      case 1:
+        return '많이 아쉬웠어요';
+      case 2:
+        return '아쉬웠어요';
+      case 3:
+        return '괜찮았어요';
+      case 4:
+        return '좋았어요';
+      case 5:
+        return '아주 좋았어요!';
+      default:
+        return '';
+    }
   }
 }

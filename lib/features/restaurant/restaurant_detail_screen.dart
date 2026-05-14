@@ -12,6 +12,8 @@ import '../../services/external_map_launcher.dart';
 import '../../services/geolocation_service.dart';
 import '../menu/menu_screen.dart';
 import '../../services/favorites_api_service.dart';
+import '../../services/reviews_api_service.dart';
+import 'restaurant_reviews_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-13 식당 상세 화면
@@ -87,6 +89,13 @@ class _RestaurantDetailScreenState
   bool _favoriteBusy = false; // 중복 클릭 방지
   static const _favoritesApi = FavoritesApiService();
 
+  // 2026-05-15 별점/리뷰 (배민 패턴):
+  //   GET /restaurants/:id/reviews 로 평균 평점 + 리뷰 개수 1회 조회.
+  //   헤더 칩에 ⭐ 4.3 (12) 형식으로 표시 + 칩 탭 → RestaurantReviewsScreen.
+  //   네이버 rating (RestaurantDto.rating) 과는 다른 출처(주문 후 손님 직접 입력).
+  RestaurantReviewsResult? _reviewSummary;
+  static const _reviewsApi = ReviewsApiService();
+
   @override
   void initState() {
     super.initState();
@@ -97,7 +106,33 @@ class _RestaurantDetailScreenState
       _loadUserLocation();
       _loadActiveSession();
       _loadFavoriteStatus();
+      _loadReviewSummary();
     });
+  }
+
+  // ── 별점 요약 1회 조회 (2026-05-15 배민 패턴) ──────────
+  // 실패해도 화면 흐름 영향 없음 (ReviewsApiService 가 empty 반환).
+  Future<void> _loadReviewSummary() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+    final result = await _reviewsApi.getReviewsByRestaurant(
+      accessToken: token,
+      restaurantId: widget.restaurantId,
+    );
+    if (!mounted) return;
+    setState(() => _reviewSummary = result);
+  }
+
+  // ── 리뷰 리스트 화면 진입 (평점 칩 탭 시) ────────────────
+  void _openReviewsScreen() {
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => RestaurantReviewsScreen(
+          restaurantId: widget.restaurantId,
+          restaurantName: _restaurant?.name ?? widget.initialName,
+        ),
+      ),
+    );
   }
 
   // 2026-05-15 즐겨찾기 상태 진입 시 1회 조회
@@ -558,7 +593,69 @@ class _RestaurantDetailScreenState
               ],
             ),
           ],
+
+          // ── 손님 리뷰 평점 (2026-05-15 배민 패턴) ──────────
+          // 네이버 rating(상단 별 칩)과 분리된 별도 표시 — 손님 직접 작성.
+          // _reviewSummary == null  → 로딩 중(생략)
+          // count == 0              → "리뷰 0개 — 첫 후기를 남겨봐요"
+          // count > 0               → "⭐ 4.3 (12) 리뷰 보기 →"
+          // 한 줄 전체가 InkWell 로 RestaurantReviewsScreen 진입.
+          if (_reviewSummary != null) ...[
+            const SizedBox(height: 6),
+            _buildCustomerReviewLine(),
+          ],
         ],
+      ),
+    );
+  }
+
+  // ── 손님 리뷰 요약 라인 (탭 가능) ────────────────────────
+  // 디자인 토큰: amber 600 (별점 표준), AppTextStyles.bodySmall.
+  // 새 색상/폰트 추가 X — 기존 토큰만 사용.
+  Widget _buildCustomerReviewLine() {
+    final amber = Colors.amber.shade600;
+    final summary = _reviewSummary!;
+    final hasReviews = summary.count > 0;
+
+    return InkWell(
+      onTap: _openReviewsScreen,
+      borderRadius: BorderRadius.circular(AppRadius.chip),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          children: [
+            Icon(Icons.rate_review_outlined,
+                size: 14, color: AppColors.textSecondary),
+            const SizedBox(width: 4),
+            if (hasReviews) ...[
+              Icon(Icons.star_rounded, size: 14, color: amber),
+              const SizedBox(width: 2),
+              Text(
+                summary.averageScore.toStringAsFixed(1),
+                style: AppTextStyles.bodySmall.copyWith(
+                  fontWeight: FontWeight.w700,
+                ),
+              ),
+              const SizedBox(width: 4),
+              Text(
+                '(${summary.count}) 리뷰 보기',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ] else ...[
+              Text(
+                '리뷰 0개 — 첫 후기를 남겨봐요',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+            const SizedBox(width: 2),
+            Icon(Icons.chevron_right_rounded,
+                size: 14, color: AppColors.iconInactive),
+          ],
+        ),
       ),
     );
   }

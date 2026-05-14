@@ -2,14 +2,16 @@ import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
 import { IsOptional, IsString, IsNumberString } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RestaurantsService } from './restaurants.service';
+import { OrdersService } from '../orders/orders.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당/메뉴 관련 HTTP 엔드포인트
 //
 // 엔드포인트:
-//   GET /api/restaurants            — 식당 목록 (필터)
-//   GET /api/restaurants/:id        — 식당 상세
-//   GET /api/restaurants/:id/menus  — 식당 메뉴 목록
+//   GET /api/restaurants               — 식당 목록 (필터)
+//   GET /api/restaurants/:id           — 식당 상세
+//   GET /api/restaurants/:id/menus     — 식당 메뉴 목록
+//   GET /api/restaurants/:id/reviews   — 매장별 별점/리뷰 (2026-05-15 배민 패턴)
 // ══════════════════════════════════════════════════════════
 
 class GetRestaurantsQueryDto {
@@ -27,7 +29,12 @@ class GetRestaurantsQueryDto {
 @Controller('restaurants')
 @UseGuards(JwtAuthGuard)
 export class RestaurantsController {
-  constructor(private readonly restaurantsService: RestaurantsService) {}
+  constructor(
+    private readonly restaurantsService: RestaurantsService,
+    // 2026-05-15 별점/리뷰는 orders 테이블의 review_* 컬럼을 사용하므로
+    // OrdersService 를 재사용 (도메인 분리 — 리뷰는 주문에 종속).
+    private readonly ordersService: OrdersService,
+  ) {}
 
   // ── GET /api/restaurants ──────────────────────────────
   @Get()
@@ -55,6 +62,19 @@ export class RestaurantsController {
   @Get(':id/menus')
   async getMenus(@Param('id') id: string) {
     const result = await this.restaurantsService.getMenusByRestaurant(id);
+    return { success: true, data: result };
+  }
+
+  // ── GET /api/restaurants/:id/reviews — 매장별 리뷰 (2026-05-15) ─
+  // 사장 어플 / 손님 식당 상세 화면에서 평균 평점 + 리뷰 리스트 표시 용.
+  // OrdersService.getReviewsByRestaurant 를 그대로 위임 — 별점 데이터는
+  // orders 테이블의 review_score/review_text/review_at 컬럼에 저장되므로
+  // 도메인 소유자(OrdersService) 가 단일 진입점.
+  //
+  // 응답 형태: { averageScore: number, count: number, reviews: [...] }
+  @Get(':id/reviews')
+  async getReviews(@Param('id') id: string) {
+    const result = await this.ordersService.getReviewsByRestaurant(id);
     return { success: true, data: result };
   }
 }

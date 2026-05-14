@@ -92,6 +92,13 @@ class OrderItemDetailDto {
 }
 
 /// 주문 상세 (GET /orders/:id 응답)
+///
+/// [별점/리뷰 필드 — 2026-05-15 추가]
+///   백엔드 OrdersService.getOrderById 가 review_score / review_text / review_at /
+///   restaurant_id 도 함께 select 해서 내려주므로 클라이언트 측 DTO 도 동기화한다.
+///   reviewScore 가 null = 아직 리뷰 미작성 → 손님 어플 "별점 남기기" 카드 노출.
+///   reviewScore != null = 이미 작성 → 카드 숨김 (배민 패턴, 1주문 1리뷰).
+///   restaurantId 는 사장 리뷰 화면 진입 등에 활용 가능 (현재는 표시 용).
 class OrderDetailDto {
   const OrderDetailDto({
     required this.id,
@@ -103,6 +110,10 @@ class OrderDetailDto {
     this.paymentKey,
     this.createdAt,
     this.updatedAt,
+    this.restaurantId,
+    this.reviewScore,
+    this.reviewText,
+    this.reviewAt,
   });
 
   final String id;
@@ -115,6 +126,18 @@ class OrderDetailDto {
   final String? updatedAt;
   final List<OrderItemDetailDto> items;
 
+  /// 주문이 속한 식당 ID (별점 카드 컨텍스트 표시 등 보조 용도).
+  final String? restaurantId;
+
+  /// 별점 (1~5). null = 아직 미작성.
+  final int? reviewScore;
+
+  /// 리뷰 본문. null 또는 빈 문자열 = 작성 안 함.
+  final String? reviewText;
+
+  /// 리뷰 작성 시각 (ISO 8601). null = 미작성.
+  final String? reviewAt;
+
   factory OrderDetailDto.fromJson(Map<String, dynamic> json) {
     final itemsRaw = json['items'] as List<dynamic>? ?? [];
     return OrderDetailDto(
@@ -126,6 +149,10 @@ class OrderDetailDto {
       paymentKey: json['paymentKey'] as String?,
       createdAt: json['createdAt'] as String?,
       updatedAt: json['updatedAt'] as String?,
+      restaurantId: json['restaurantId'] as String?,
+      reviewScore: (json['reviewScore'] as num?)?.toInt(),
+      reviewText: json['reviewText'] as String?,
+      reviewAt: json['reviewAt'] as String?,
       items: itemsRaw
           .map((e) => OrderItemDetailDto.fromJson(e as Map<String, dynamic>))
           .toList(),
