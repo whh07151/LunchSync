@@ -105,6 +105,7 @@ class _MenuManagementScreenState
       price: result.price,
       category: result.category,
       description: result.description,
+      prepTimeMinutes: result.prepTimeMinutes,
     );
     if (!mounted) return;
 
@@ -135,6 +136,7 @@ class _MenuManagementScreenState
       price: result.price,
       category: result.category,
       description: result.description,
+      prepTimeMinutes: result.prepTimeMinutes,
     );
     if (!mounted) return;
     setState(() {
@@ -434,11 +436,14 @@ class _MenuFormResult {
     required this.price,
     this.category,
     this.description,
+    this.prepTimeMinutes,
   });
   final String name;
   final int price;
   final String? category;
   final String? description;
+  // 2026-05-16 배민 패턴 — 예상 조리 시간 (분, 1~120, null 이면 백엔드 DEFAULT 15)
+  final int? prepTimeMinutes;
 }
 
 Future<_MenuFormResult?> _showMenuFormDialog(
@@ -451,6 +456,10 @@ Future<_MenuFormResult?> _showMenuFormDialog(
   final categoryCtrl = TextEditingController(text: initial?.category ?? '');
   final descCtrl =
       TextEditingController(text: initial?.description ?? '');
+  // 2026-05-16 배민 패턴 — 예상 조리 시간 입력 (1~120 분, 기본 15)
+  final prepCtrl = TextEditingController(
+    text: (initial?.prepTimeMinutes ?? 15).toString(),
+  );
   String? errorText;
 
   return showDialog<_MenuFormResult>(
@@ -500,6 +509,21 @@ Future<_MenuFormResult?> _showMenuFormDialog(
                     border: OutlineInputBorder(),
                   ),
                 ),
+                const SizedBox(height: 8),
+                // 2026-05-16 배민 패턴 — 예상 조리 시간 입력
+                TextField(
+                  controller: prepCtrl,
+                  keyboardType: TextInputType.number,
+                  inputFormatters: [
+                    FilteringTextInputFormatter.digitsOnly,
+                  ],
+                  decoration: const InputDecoration(
+                    labelText: '예상 조리 시간 (분)',
+                    hintText: '1~120 (기본 15분)',
+                    border: OutlineInputBorder(),
+                    helperText: '손님 주문 추적 화면에 "약 N분 후 픽업" 으로 표시돼요',
+                  ),
+                ),
                 if (errorText != null) ...[
                   const SizedBox(height: 6),
                   Text(errorText!,
@@ -528,11 +552,24 @@ Future<_MenuFormResult?> _showMenuFormDialog(
                 }
                 final cat = categoryCtrl.text.trim();
                 final desc = descCtrl.text.trim();
+                // 2026-05-16 prep_time 범위 검증 (1~120). 비워두면 DEFAULT 15.
+                final prepStr = prepCtrl.text.trim();
+                int? prepTime;
+                if (prepStr.isNotEmpty) {
+                  final p = int.tryParse(prepStr);
+                  if (p == null || p < 1 || p > 120) {
+                    setState(() =>
+                        errorText = '예상 조리 시간은 1~120 분 사이여야 해요.');
+                    return;
+                  }
+                  prepTime = p;
+                }
                 Navigator.of(ctx).pop(_MenuFormResult(
                   name: name,
                   price: price,
                   category: cat.isEmpty ? null : cat,
                   description: desc.isEmpty ? null : desc,
+                  prepTimeMinutes: prepTime,
                 ));
               },
               child: Text(initial == null ? '추가' : '수정'),

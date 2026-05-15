@@ -14,6 +14,7 @@ import {
   IsInt,
   IsOptional,
   IsString,
+  Max,
   Min,
 } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -47,6 +48,8 @@ class CreateMenuRequestDto implements CreateMenuDto {
   @IsOptional() @IsString() category?: string;
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() imageUrl?: string;
+  // 2026-05-16 배민 패턴 — 예상 조리 시간 (분, 1~120)
+  @IsOptional() @IsInt() @Min(1) @Max(120) prepTimeMinutes?: number;
 }
 
 class UpdateMenuRequestDto implements UpdateMenuDto {
@@ -56,6 +59,7 @@ class UpdateMenuRequestDto implements UpdateMenuDto {
   @IsOptional() @IsString() description?: string;
   @IsOptional() @IsString() imageUrl?: string;
   @IsOptional() @IsBoolean() isAvailable?: boolean;
+  @IsOptional() @IsInt() @Min(1) @Max(120) prepTimeMinutes?: number;
 }
 
 @Controller('pos/menus')

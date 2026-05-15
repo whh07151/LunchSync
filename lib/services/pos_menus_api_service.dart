@@ -28,6 +28,7 @@ class PosMenuItem {
     this.category,
     this.description,
     this.imageUrl,
+    this.prepTimeMinutes = 15,
   });
 
   final String id;
@@ -39,6 +40,9 @@ class PosMenuItem {
   final String? description;
   final String? imageUrl;
 
+  /// 2026-05-16 배민 패턴 — 예상 조리 시간 (분, 1~120, 미설정 시 15)
+  final int prepTimeMinutes;
+
   factory PosMenuItem.fromJson(Map<String, dynamic> json) {
     return PosMenuItem(
       id: json['id'] as String,
@@ -49,6 +53,10 @@ class PosMenuItem {
       category: json['category'] as String?,
       description: json['description'] as String?,
       imageUrl: (json['imageUrl'] ?? json['image_url']) as String?,
+      prepTimeMinutes:
+          ((json['prepTimeMinutes'] ?? json['prep_time_minutes']) as num?)
+                  ?.toInt() ??
+              15,
     );
   }
 }
@@ -83,6 +91,7 @@ class PosMenusApiService {
   }
 
   /// 메뉴 추가. 성공 시 추가된 PosMenuItem, 실패 시 null.
+  /// 2026-05-16: prepTimeMinutes 입력 가능 (배민 패턴 ETA)
   Future<PosMenuItem?> create({
     required String accessToken,
     required String restaurantId,
@@ -91,8 +100,17 @@ class PosMenusApiService {
     String? category,
     String? description,
     String? imageUrl,
+    int? prepTimeMinutes,
   }) async {
     try {
+      final payload = <String, dynamic>{
+        'name': name,
+        'price': price,
+        'category': ?category,
+        'description': ?description,
+        'imageUrl': ?imageUrl,
+        'prepTimeMinutes': ?prepTimeMinutes,
+      };
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/pos/menus/$restaurantId'),
@@ -100,13 +118,7 @@ class PosMenusApiService {
               'Authorization': 'Bearer $accessToken',
               'Content-Type': 'application/json',
             },
-            body: jsonEncode({
-              'name': name,
-              'price': price,
-              'category': ?category,
-              'description': ?description,
-              'imageUrl': ?imageUrl,
-            }),
+            body: jsonEncode(payload),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -130,6 +142,7 @@ class PosMenusApiService {
     String? description,
     String? imageUrl,
     bool? isAvailable,
+    int? prepTimeMinutes,
   }) async {
     try {
       final body = <String, dynamic>{};
@@ -139,6 +152,7 @@ class PosMenusApiService {
       if (description != null) body['description'] = description;
       if (imageUrl != null) body['imageUrl'] = imageUrl;
       if (isAvailable != null) body['isAvailable'] = isAvailable;
+      if (prepTimeMinutes != null) body['prepTimeMinutes'] = prepTimeMinutes;
 
       final response = await http
           .patch(

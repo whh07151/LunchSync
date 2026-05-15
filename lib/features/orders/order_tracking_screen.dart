@@ -204,6 +204,17 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
             ],
           ),
 
+          // ── ETA 카드 (PAID/ACCEPTED/PREPARING 시) ────────
+          // 2026-05-16 배민 패턴 — 예상 픽업 시각 표시.
+          //   - 백엔드가 max(prep_time_minutes) + 기준시각 으로 계산
+          //   - estimatedReadyAt 없으면 카드 숨김
+          if (order.estimatedReadyAt != null &&
+              const {'PAID', 'ACCEPTED', 'PREPARING'}
+                  .contains(order.status)) ...[
+            const SizedBox(height: AppSpacing.md),
+            _buildEtaCard(order.estimatedReadyAt!),
+          ],
+
           // ── 더치페이 명세서 (2명 이상 세션일 때만) ─────────
           if (_memberCount != null && _memberCount! > 1) ...[
             const SizedBox(height: AppSpacing.md),
@@ -521,6 +532,56 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
               style: OutlinedButton.styleFrom(
                 foregroundColor: primary,
                 side: BorderSide(color: primary.withAlpha(120)),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ETA 카드 (배민 패턴 — 2026-05-16 자율 발전 로드맵 단계 2)
+  // ══════════════════════════════════════════════════════════
+
+  /// 예상 픽업 시각 카드.
+  /// - 백엔드가 max(prep_time_minutes) + 기준시각 으로 ISO8601 으로 내려줌
+  /// - "약 N분 후 픽업" 형식, 시각이 지난 경우 "곧 픽업 가능" 으로 처리
+  Widget _buildEtaCard(String etaIso) {
+    final eta = DateTime.tryParse(etaIso);
+    if (eta == null) return const SizedBox.shrink();
+    final now = DateTime.now();
+    final diff = eta.difference(now);
+    final mins = diff.inMinutes;
+    final hh = eta.hour.toString().padLeft(2, '0');
+    final mm = eta.minute.toString().padLeft(2, '0');
+    final label = mins <= 0
+        ? '곧 픽업 가능 (예정 $hh:$mm)'
+        : '약 $mins분 후 픽업 가능 (예정 $hh:$mm)';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.md,
+        vertical: AppSpacing.sm,
+      ),
+      decoration: BoxDecoration(
+        color: CustomerColors.primary.withValues(alpha: 0.06),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(
+          color: CustomerColors.primary.withValues(alpha: 0.2),
+        ),
+      ),
+      child: Row(
+        children: [
+          Icon(Icons.timer_outlined,
+              size: 20, color: CustomerColors.primary),
+          const SizedBox(width: AppSpacing.sm),
+          Expanded(
+            child: Text(
+              label,
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: AppColors.textPrimary,
+                fontWeight: FontWeight.w600,
               ),
             ),
           ),

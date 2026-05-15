@@ -114,6 +114,7 @@ class OrderDetailDto {
     this.reviewScore,
     this.reviewText,
     this.reviewAt,
+    this.estimatedReadyAt,
   });
 
   final String id;
@@ -138,6 +139,10 @@ class OrderDetailDto {
   /// 리뷰 작성 시각 (ISO 8601). null = 미작성.
   final String? reviewAt;
 
+  /// 2026-05-16 배민 패턴 — 예상 픽업 시각 (ISO 8601).
+  /// PAID/ACCEPTED/PREPARING 일 때만 채워짐. 그 외는 null.
+  final String? estimatedReadyAt;
+
   factory OrderDetailDto.fromJson(Map<String, dynamic> json) {
     final itemsRaw = json['items'] as List<dynamic>? ?? [];
     return OrderDetailDto(
@@ -153,6 +158,7 @@ class OrderDetailDto {
       reviewScore: (json['reviewScore'] as num?)?.toInt(),
       reviewText: json['reviewText'] as String?,
       reviewAt: json['reviewAt'] as String?,
+      estimatedReadyAt: json['estimatedReadyAt'] as String?,
       items: itemsRaw
           .map((e) => OrderItemDetailDto.fromJson(e as Map<String, dynamic>))
           .toList(),

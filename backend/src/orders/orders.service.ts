@@ -217,11 +217,34 @@ export class OrdersService {
       }
     }
 
-    // 주문 아이템 조회
+    // 주문 아이템 조회 — 2026-05-16: menu_items.prep_time_minutes 도 함께 가져와 ETA 계산
     const { data: items } = await this.supabase.client
       .from('order_items')
-      .select('id, menu_item_id, quantity, price, menu_items(name)')
+      .select('id, menu_item_id, quantity, price, menu_items(name, prep_time_minutes)')
       .eq('order_id', orderId);
+
+    // 2026-05-16 배민 패턴 — 예상 픽업 시각 계산
+    // 한 주문 중 가장 오래 걸리는 메뉴 기준 = max(prep_time_minutes)
+    // 기준 시각: ACCEPTED/PREPARING 이면 updated_at(수락 시각 근사), 그 외에는 created_at
+    // estimated_ready_at 은 null 가능 (READY/COMPLETED/CANCELLED 등에는 굳이 표시 X)
+    let estimatedReadyAt: string | null = null;
+    const activeStatuses = ['ACCEPTED', 'PAID', 'PREPARING'];
+    if (activeStatuses.includes(order.status) && items && items.length > 0) {
+      let maxPrep = 0;
+      for (const it of items as any[]) {
+        const m: number = Number(it.menu_items?.prep_time_minutes ?? 15);
+        if (m > maxPrep) maxPrep = m;
+      }
+      if (maxPrep > 0) {
+        const base =
+          order.status === 'PAID'
+            ? new Date(order.created_at)
+            : new Date(order.updated_at);
+        estimatedReadyAt = new Date(
+          base.getTime() + maxPrep * 60_000,
+        ).toISOString();
+      }
+    }
 
     return {
       id: order.id,
@@ -238,10 +261,13 @@ export class OrdersService {
       reviewScore: (order as { review_score?: number | null }).review_score ?? null,
       reviewText: (order as { review_text?: string | null }).review_text ?? null,
       reviewAt: (order as { review_at?: string | null }).review_at ?? null,
+      // 2026-05-16 배민 패턴 — 예상 픽업 시각 (ISO8601, null 가능)
+      estimatedReadyAt,
       items: (items ?? []).map((i: any) => ({
         id: i.id,
         menuItemId: i.menu_item_id,
         menuName: i.menu_items?.name,
+        prepTimeMinutes: i.menu_items?.prep_time_minutes ?? 15,
         quantity: i.quantity,
         price: i.price,
       })),
