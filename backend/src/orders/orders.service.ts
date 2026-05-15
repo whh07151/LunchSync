@@ -191,10 +191,17 @@ export class OrdersService {
       review_text?: string | null;
       review_at?: string | null;
     };
+    // 2026-05-15 회귀 fix (폰 라이브 검증 — 주문 상세 404):
+    //   별점 commit d07d3ca 가 select 에 review_* 컬럼을 넣었는데,
+    //   add-order-review.sql 미적용 환경에서는 PostgREST 가 "없는 컬럼"
+    //   때문에 쿼리 전체를 실패시켜 → 주문 상세/추적 화면 전체가 깨짐.
+    //   재발방지: 확실히 존재하는 기본 컬럼만 먼저 조회하고,
+    //   review_* 는 별도 안전 조회(실패 시 null)로 분리해 스키마에
+    //   회복탄력적이게 만든다. ([[feedback-db-schema-migration]])
     const { data: orderRaw, error } = await this.supabase.client
       .from('orders')
       .select(
-        'id, session_id, user_id, status, total_price, payment_key, created_at, updated_at, restaurant_id, review_score, review_text, review_at',
+        'id, session_id, user_id, status, total_price, payment_key, created_at, updated_at, restaurant_id',
       )
       .eq('id', orderId)
       .single();
@@ -203,6 +210,29 @@ export class OrdersService {
       throw new NotFoundException('주문을 찾을 수 없습니다.');
     }
     const order = orderRaw as unknown as OrderRow;
+
+    // review_* 별도 안전 조회 — 컬럼 미존재(마이그레이션 전)면 조용히 null
+    try {
+      const { data: reviewRaw } = await this.supabase.client
+        .from('orders')
+        .select('review_score, review_text, review_at')
+        .eq('id', orderId)
+        .single();
+      if (reviewRaw) {
+        const rv = reviewRaw as {
+          review_score?: number | null;
+          review_text?: string | null;
+          review_at?: string | null;
+        };
+        order.review_score = rv.review_score ?? null;
+        order.review_text = rv.review_text ?? null;
+        order.review_at = rv.review_at ?? null;
+      }
+    } catch {
+      order.review_score = null;
+      order.review_text = null;
+      order.review_at = null;
+    }
 
     // 본인 주문이 아니면 같은 세션 멤버인지 확인
     if (order.user_id !== requesterId) {
