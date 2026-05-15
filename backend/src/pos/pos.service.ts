@@ -309,7 +309,19 @@ export class PosService {
       canceledAt?: string;
     } | null = null;
 
-    if (order.payment_key && order.payment_key.trim().length > 0) {
+    // 2026-05-15 회귀 fix (폰 라이브 검증 — SIMULATE 환불 불가):
+    //   SIMULATE(가상) 결제는 payment_key 가 'sim_' prefix 로 실제 토스
+    //   결제가 아니다. 기존엔 무조건 토스 cancel API 호출 → NOT_FOUND_PAYMENT
+    //   → 원자성 가드가 status 를 PAID 에 영구히 묶음 (데모 거절 시 주문 갇힘).
+    //   재발방지: sim_ prefix 는 실제 돈이 안 나갔으므로 토스 cancel 을
+    //   스킵하고 바로 CANCELLED. 실제 토스결제만 cancelPayment 호출(원자성 유지).
+    const isSimulated = order.payment_key?.startsWith('sim_') ?? false;
+
+    if (
+      order.payment_key &&
+      order.payment_key.trim().length > 0 &&
+      !isSimulated
+    ) {
       try {
         refundResult = await this.paymentsService.cancelPayment(
           order.payment_key,
@@ -320,10 +332,13 @@ export class PosService {
           `환불 실패 — status 미변경 유지: order=${orderId} ` +
             `payment_key=${order.payment_key} error=${refundError?.message}`,
         );
-        // 원자성 — 환불 실패 시 status 도 변경하지 않고 예외 그대로 전파.
-        // 호출부(컨트롤러)가 사용자에게 친근 에러 메시지 표시.
+        // 원자성 — 실제 결제 환불 실패 시 status 도 변경하지 않고 예외 전파.
         throw refundError;
       }
+    } else if (isSimulated) {
+      this.logger.log(
+        `SIMULATE 결제 — 토스 cancel 스킵, 즉시 CANCELLED: order=${orderId}`,
+      );
     }
 
     // 4) 환불 성공(또는 payment_key 없음) → 상태 CANCELLED 로 변경
