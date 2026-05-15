@@ -330,9 +330,12 @@ class VotesApiService {
   // 호스트만 호출 가능 (백엔드가 403 으로 차단).
   // 성공 시 sessions.status → ORDERED, winner_restaurant_id 채워짐.
   // 응답: { winnerId, winnerName, voteCount, totalVotes, tally:[...] }
+  // [restaurantId] 지정 시 = 룰렛/사다리 즉석 결정 (WAITING 에서도 호스트가 바로 확정).
+  // 미지정 시 = 기존 투표 집계 (VOTING + 최소 1표). 2026-05-15 회귀 fix.
   Future<DecideResultDto?> decide({
     required String accessToken,
     required String sessionId,
+    String? restaurantId,
   }) async {
     try {
       final response = await http
@@ -340,6 +343,9 @@ class VotesApiService {
             Uri.parse(
                 '${AppConfig.backendBaseUrl}/sessions/$sessionId/decide'),
             headers: _headers(accessToken),
+            body: restaurantId != null
+                ? jsonEncode({'restaurantId': restaurantId})
+                : null,
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);

@@ -1,5 +1,5 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
-import { IsString, IsNotEmpty } from 'class-validator';
+import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { VotesService } from './votes.service';
 
@@ -16,6 +16,14 @@ class CastVoteDto {
   @IsString()
   @IsNotEmpty()
   restaurantId: string;
+}
+
+// 2026-05-15 회귀 fix — restaurantId 있으면 즉석 결정(룰렛/사다리),
+// 없으면 기존 투표 집계(tallyAndDecide). 하위호환 유지.
+class DecideDto {
+  @IsOptional()
+  @IsString()
+  restaurantId?: string;
 }
 
 @Controller('sessions')
@@ -43,16 +51,22 @@ export class VotesController {
     return { success: true, data: result };
   }
 
-  // CU-15: 투표 결과 집계 → 식당 확정 (호스트만)
+  // CU-15: 결과 확정 (호스트만)
+  //   - body.restaurantId 있음 → 즉석 결정 (룰렛/사다리, WAITING 도 허용)
+  //   - body 없음 → 기존 투표 집계 (VOTING + 최소 1표)
   @Post(':id/decide')
   async decide(
     @Req() req: { user: { userId: string } },
     @Param('id') sessionId: string,
+    @Body() dto: DecideDto,
   ) {
-    const result = await this.votesService.tallyAndDecide(
-      sessionId,
-      req.user.userId,
-    );
+    const result = dto?.restaurantId
+      ? await this.votesService.decideManually(
+          sessionId,
+          req.user.userId,
+          dto.restaurantId,
+        )
+      : await this.votesService.tallyAndDecide(sessionId, req.user.userId);
     return { success: true, data: result };
   }
 }

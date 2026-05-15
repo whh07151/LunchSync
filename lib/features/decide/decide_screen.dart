@@ -168,21 +168,17 @@ class _DecideScreenState extends ConsumerState<DecideScreen> {
     setState(() => _isSubmitting = true);
 
     if (widget.isHost) {
-      // ── 2) 호스트 — decide() → ORDERED 전이 → MenuScreen ─
-      // 호스트가 한 명도 투표 안 한 상태에서 decide 를 호출해도 백엔드가
-      // 최소 1표 조건을 검증하므로 여기선 그대로 호출만 시도.
-      // 사장님 시연 시나리오: 호스트가 룰렛 돌려서 바로 결정하는 케이스.
-      // 우선 본인 한 표를 등록한 뒤 decide 를 호출해 전체 흐름의 정합성을 맞춘다.
-      // (이미 투표한 식당이 있으면 409 — 무시하고 decide 진행)
-      await _votesApi.castVote(
-        accessToken: token,
-        sessionId: widget.sessionId!,
-        restaurantId: winner.id,
-      );
-
+      // ── 2) 호스트 — decide(restaurantId) → ORDERED → MenuScreen ─
+      // 2026-05-15 회귀 fix (폰 라이브 검증):
+      //   룰렛/사다리는 "투표 건너뛰고 호스트가 바로 정하기" 흐름.
+      //   기존엔 castVote(VOTING 강제) + decide(투표집계) 라 WAITING 에서
+      //   "결정을 마치지 못했어요" 발생. 이제 winner.id 를 decide 에 직접
+      //   전달 → 백엔드 decideManually 가 WAITING 에서도 즉석 확정.
+      //   castVote 선행 호출 제거 (불필요 + WAITING 에서 실패 원인).
       final result = await _votesApi.decide(
         accessToken: token,
         sessionId: widget.sessionId!,
+        restaurantId: winner.id,
       );
 
       if (!mounted) return;

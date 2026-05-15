@@ -112,6 +112,89 @@ export class VotesService {
     }));
   }
 
+  // ── 룰렛/사다리 즉석 결정 — 호스트가 식당 직접 지정 ────
+  // 2026-05-15 회귀 fix (폰 라이브 검증):
+  //   룰렛/사다리 미니게임은 "투표를 건너뛰고 호스트가 바로 정하기" 기능.
+  //   기존엔 tallyAndDecide(투표 집계) 만 있어 VOTING + 최소 1표를 강제 →
+  //   WAITING 상태에서 미니게임으로 결정 시 "결정을 마치지 못했어요" 발생.
+  //   본 메서드는 votes 무관하게 호스트가 특정 식당을 즉석 확정한다.
+  //
+  // 허용 상태: WAITING / VOTING (ORDERED·DONE 은 이미 결정/종료라 거부)
+  // 권한: 호스트만 (tallyAndDecide 와 동일한 정규화 비교)
+  async decideManually(
+    sessionId: string,
+    requesterId: string,
+    restaurantId: string,
+  ) {
+    if (!requesterId) {
+      throw new UnauthorizedException(
+        '사용자 인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+    }
+    if (!restaurantId) {
+      throw new BadRequestException('결정할 식당을 지정해주세요.');
+    }
+
+    const { data: session, error: sessionError } = await this.supabase.client
+      .from('sessions')
+      .select('created_by, status')
+      .eq('id', sessionId)
+      .single();
+    if (sessionError || !session) {
+      throw new NotFoundException('세션을 찾을 수 없어요.');
+    }
+
+    const hostId = String(session.created_by ?? '').trim().toLowerCase();
+    const reqId = String(requesterId).trim().toLowerCase();
+    if (hostId !== reqId) {
+      this.logger.warn(
+        `[decideManually] 호스트 불일치 session=${sessionId} ` +
+          `host=${hostId || '(empty)'} requester=${reqId}`,
+      );
+      throw new ForbiddenException('세션 호스트만 결과를 확정할 수 있어요.');
+    }
+
+    // WAITING/VOTING 만 허용 — 이미 확정(ORDERED)·종료(DONE) 는 재결정 금지
+    if (session.status !== 'WAITING' && session.status !== 'VOTING') {
+      throw new BadRequestException(
+        `${session.status} 상태에서는 식당을 결정할 수 없어요.`,
+      );
+    }
+
+    // 식당 존재 확인 (Gemini 가상/잘못된 ID 거부) + 이름 확보
+    const { data: restaurant } = await this.supabase.client
+      .from('restaurants')
+      .select('id, name')
+      .eq('id', restaurantId)
+      .single();
+    if (!restaurant) {
+      throw new NotFoundException('유효하지 않은 식당이에요.');
+    }
+
+    const { error: updateError } = await this.supabase.client
+      .from('sessions')
+      .update({
+        winner_restaurant_id: restaurantId,
+        status: 'ORDERED',
+      })
+      .eq('id', sessionId);
+    if (updateError) {
+      this.logger.error(
+        `[decideManually] winner 업데이트 실패 session=${sessionId}: ${updateError.message}`,
+      );
+      throw new InternalServerErrorException('결과를 확정하지 못했어요.');
+    }
+
+    // tallyAndDecide 와 동일한 응답 형태 — 프론트 분기 불필요
+    return {
+      winnerId: restaurantId,
+      winnerName: (restaurant as { name?: string }).name ?? '',
+      voteCount: 0,
+      totalVotes: 0,
+      tally: [],
+    };
+  }
+
   // ── CU-15: 투표 결과 집계 + 최다 득표 식당 확정 ────────
   // 보안 패치: 호스트만 가능 + VOTING 상태에서만
   //
