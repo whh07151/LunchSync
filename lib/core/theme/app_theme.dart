@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'app_colors.dart';
 import 'app_text_styles.dart';
 import 'app_spacing.dart';
@@ -68,8 +67,11 @@ class AppTheme {
 
       // ── 텍스트 테마 ──────────────────────────────────────
       // 앱 전체의 기본 글자 스타일을 설정
-      // Noto Sans 폰트를 기반으로, 각 역할별 스타일을 연결
-      textTheme: GoogleFonts.notoSansTextTheme().copyWith(
+      // 번들된 NotoSansKR(한글 포함) 기반 — google_fonts 런타임 페치 제거.
+      // 미오버라이드 스타일도 한글 폰트로 통일. 각 역할별 스타일을 연결
+      textTheme: Typography.blackMountainView
+          .apply(fontFamily: kAppFontFamily)
+          .copyWith(
         displayLarge: AppTextStyles.heading1,
         displayMedium: AppTextStyles.heading2,
         headlineMedium: AppTextStyles.heading3,

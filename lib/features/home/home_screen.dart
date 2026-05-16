@@ -1548,7 +1548,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
 
     return SizedBox(
-      height: 176,
+      // 카드 내부 Column(이미지+이름+카테고리+가격+거리줄)이 거리 줄 포함 시
+      // 176 기준 ~4px 세로 overflow → 여유 높이 확보(잘림 없이). 카드 자체
+      // 레이아웃/디자인 토큰은 그대로.
+      height: 188,
       child: ListView.separated(
         // scrollDirection.horizontal: 가로 방향으로 스크롤
         scrollDirection: Axis.horizontal,

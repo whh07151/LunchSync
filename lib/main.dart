@@ -1,4 +1,5 @@
 import 'package:firebase_core/firebase_core.dart';
+import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
@@ -58,6 +59,8 @@ Future<void> main() async {
     debugPrint('Firebase 초기화 실패: $e');
   }
 
+  // 폰트는 pubspec 에 번들된 NotoSansKR(한글 포함)를 사용 — 런타임
+  // 다운로드 없음. 첫 프레임부터 한글 글리프 존재(폰트 폴백 경고 제거).
   runApp(const ProviderScope(child: LunchSyncApp()));
 }
 
@@ -83,7 +86,78 @@ class LunchSyncApp extends ConsumerWidget {
       title: 'LunchSync',
       debugShowCheckedModeBanner: false,
       theme: AppTheme.of(appType),
+      // 웹(데스크톱 Chrome)에서 모바일 기준 UI 가 가로/세로로 넘치지 않도록
+      // 앱 전체를 폰 크기 프레임으로 고정. builder 는 Navigator 를 감싸므로
+      // 모든 화면·다이얼로그·스낵바에 일괄 적용된다.
+      builder: (context, child) => _WebFrame(child: child),
       home: const _RootNavigator(),
+    );
+  }
+}
+
+
+// ─────────────────────────────────────────────────────────
+// _WebFrame: 웹에서 앱을 폰 크기 중앙 프레임으로 고정
+//
+// 이 앱은 모바일 기준 설계라 데스크톱 Chrome 의 넓은 뷰포트에서
+// RenderFlex overflow 가 다수 발생한다. 웹일 때만 내부를 고정 폭
+// 프레임으로 감싸고, MediaQuery.size 도 프레임 크기로 덮어써서
+// 화면들이 모바일 폭/높이를 기준으로 레이아웃되게 한다.
+// (네이티브 모바일 빌드에는 영향 없음 — kIsWeb 가드)
+// ─────────────────────────────────────────────────────────
+class _WebFrame extends StatelessWidget {
+  const _WebFrame({required this.child});
+
+  final Widget? child;
+
+  // 일반적인 모바일 세로 화면 폭(논리 px). 디자인 시스템이 이 폭 기준.
+  static const double _frameWidth = 420;
+
+  @override
+  Widget build(BuildContext context) {
+    final content = child ?? const SizedBox.shrink();
+    if (!kIsWeb) return content;
+
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final double availW = constraints.maxWidth;
+        final double availH = constraints.maxHeight.isFinite
+            ? constraints.maxHeight
+            : 800;
+        final double frameH = availH;
+
+        final media = MediaQuery.of(context);
+        // 프레임 내부 화면들이 모바일 크기를 기준으로 계산하도록 size 덮어쓰기.
+        final framed = SizedBox(
+          width: _frameWidth,
+          height: frameH,
+          child: ClipRect(
+            child: MediaQuery(
+              data: media.copyWith(
+                size: Size(_frameWidth, frameH),
+                viewPadding: EdgeInsets.zero,
+                padding: EdgeInsets.zero,
+              ),
+              child: content,
+            ),
+          ),
+        );
+
+        // 창이 프레임보다 좁으면(좁은 브라우저/실모바일 너비) 축소해 맞춤,
+        // 넓으면 중앙 정렬 + 바깥 배경.
+        final fitted = availW >= _frameWidth
+            ? framed
+            : FittedBox(
+                fit: BoxFit.contain,
+                alignment: Alignment.topCenter,
+                child: framed,
+              );
+
+        return ColoredBox(
+          color: const Color(0xFFE9ECF1),
+          child: Center(child: fitted),
+        );
+      },
     );
   }
 }

@@ -1,6 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:google_fonts/google_fonts.dart';
 import 'app_colors.dart';
+
+// 앱 기본 글꼴 패밀리 — pubspec 에 번들된 Noto Sans KR(한글 포함).
+// google_fonts 런타임 페치 대신 로컬 에셋을 써서 첫 프레임부터 한글
+// 글리프가 존재하게 함 (웹 폰트 폴백 경고 제거).
+const String kAppFontFamily = 'NotoSansKR';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 앱 전체에서 사용하는 글자 스타일(폰트)을 한 곳에 모아둔 파일
@@ -21,10 +25,12 @@ class AppTextStyles {
   // ── 기본 스타일 ─────────────────────────────────────────
   // 모든 글자 스타일의 베이스가 되는 기본값
   // 다른 스타일들은 이걸 복사(copyWith)해서 일부만 바꿉니다
-  static TextStyle get _base => GoogleFonts.notoSans(
-        color: AppColors.textPrimary, // 기본 글자색: 거의 검정
-        letterSpacing: -0.3,         // 글자 간격을 살짝 좁힘 (한글에 더 자연스러움)
-      );
+  // 번들된 NotoSansKR(한글 포함) 사용 — docs "한글 최적화" 의도와 일치.
+  static const TextStyle _base = TextStyle(
+    fontFamily: kAppFontFamily,
+    color: AppColors.textPrimary, // 기본 글자색: 거의 검정
+    letterSpacing: -0.3,         // 글자 간격을 살짝 좁힘 (한글에 더 자연스러움)
+  );
 
 
   // ── 제목 스타일 (Heading) ───────────────────────────────

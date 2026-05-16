@@ -71,6 +71,15 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # 한글 포함 Noto Sans KR 를 로컬 번들. google_fonts 런타임 페치 대신
+  # 에셋 폰트를 사용해 첫 프레임부터 한글 글리프가 존재하도록 함.
+  # (웹 CanvasKit 의 "Could not find a set of Noto fonts" 경고 제거)
+  # 가변(variable) 폰트 1개로 w400~w700 weight 축 커버.
+  fonts:
+    - family: NotoSansKR
+      fonts:
+        - asset: assets/fonts/NotoSansKR.ttf
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

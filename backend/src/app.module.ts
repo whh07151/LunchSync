@@ -45,20 +45,21 @@ import { FriendsModule } from './friends/friends.module';
       envFilePath: '.env',
     }),
 
-    // Rate Limiting — 시연 라이브 발견 (2026-05-15):
-    //   사장님 시연 중 ThrottlerException: Too Many Requests 빈번 발생.
-    //   추천/멤버/투표 폴링이 누적되어 분당 200 한도를 초과 → 정상 흐름 차단.
-    //   시연 환경에서 사용자 1~2명이 화면 전환 + 재시도 클릭만으로도 200 초과.
+    // Rate Limiting
     //
-    //   default: 200 → 1000 (5배) — 시연 안전 마진. 단일 사용자 폴링/재시도 누적이
-    //            절대 한도에 닿지 않게.
-    //   auth:    5 → 30 — 시연 중 빠른 로그인 재시도 + 토큰 갱신에서 5회는 너무 빡빡.
-    //            30회 / 분당 = 2초당 1회. 부르트포스 방어 의미는 유지.
-    //   signup:  10 → 30 — 시연 중 시드 사용자 생성 + 손님/사장 가입 흐름 위해.
+    // ⚠️ 2026-05-17 회귀 수정:
+    //   NestJS Throttler 는 forRoot 에 등록된 "모든" 명명 throttler 를
+    //   "모든" 라우트에 동시 적용한다. 기존엔 default/auth/signup 3개를
+    //   전역 등록 → signup(시간당 30회)이 투표 폴링·주문·결제·리뷰 등
+    //   전 API 에 적용되어, 3초 폴링 시 ~90초 만에 시간당 30회를 초과한
+    //   뒤 모든 요청이 429(ThrottlerException) 로 막혔다. (결제 실패 포함)
+    //
+    //   해결: 전역에는 넉넉한 default 1개만 둔다. auth/signup 라우트의
+    //   브루트포스 방어 강화는 해당 컨트롤러에서 @Throttle({ default: ... })
+    //   로 그 라우트에만 한정 적용한다 (auth.controller / pos-auth.controller).
+    //   docs/LUNCHSYNC_SPECIFICATION.md 의 3초 폴링 설계와 양립.
     ThrottlerModule.forRoot([
       { name: 'default', ttl: 60_000, limit: 1000 },
-      { name: 'auth', ttl: 60_000, limit: 30 },
-      { name: 'signup', ttl: 3_600_000, limit: 30 },
     ]),
 
     // 정적 파일 서빙 (toss-checkout.html 등)
