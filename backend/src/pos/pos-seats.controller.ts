@@ -51,8 +51,7 @@ class UpdateSeatDto {
 export class PosSeatsController {
   constructor(private readonly seatsService: PosSeatsService) {}
 
-  // 좌석 목록 폴링 → throttler 제외 (2026-05-13)
-  @SkipThrottle()
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Get(':restaurantId')
   async list(
     @Req() req: AuthedRequest,
@@ -63,8 +62,7 @@ export class PosSeatsController {
     return { success: true, data };
   }
 
-  // 좌석 시드 일괄 (데모 진입 시 5개 연속 POST) → throttler 제외 (2026-05-13)
-  @SkipThrottle()
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Post(':restaurantId')
   async create(
     @Req() req: AuthedRequest,

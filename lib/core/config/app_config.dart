@@ -5,10 +5,6 @@
 //    GitHub 등 공개 저장소에 절대 올리지 마세요.
 //    팀원에게는 카카오 개발자 콘솔에서 직접 앱 키를 확인하도록 안내하세요.
 //
-// 팀원 셋업 방법:
-//   1. lib/core/config/app_config.example.dart 파일을 복사
-//   2. 이름을 app_config.dart로 변경
-//   3. 카카오 개발자 콘솔에서 Native 앱 키를 입력
 // ══════════════════════════════════════════════════════════
 
 class AppConfig {
@@ -27,24 +23,22 @@ class AppConfig {
 
   /// LunchSync 백엔드 서버 기본 URL
   ///
-  /// 실기기 테스트 시: PC의 로컬 IP 주소로 변경 (예: http://192.168.0.5:3000/api)
-  /// 에뮬레이터 테스트 시: http://10.0.2.2:3000/api (Android 에뮬레이터 → 호스트 PC)
+  /// 🟢 현재 기본값: AWS EC2 배포 서버 (http://13.125.165.80:3000/api)
   ///
-  /// 🟢 현재: 로컬 개발 서버 (결제/주문 모듈 AWS 미배포 상태라 localhost 사용)
-  /// 🔴 AWS 배포본: http://13.125.165.80:3000/api
-  ///    → AWS 재배포 완료 후 위 주소로 복귀
+  /// 로컬 개발 시 dart-define 으로 오버라이드:
+  ///   에뮬레이터: --dart-define=BACKEND_HOST=10.0.2.2
+  ///   실기기:     --dart-define=BACKEND_HOST=<PC의 로컬 IP>
+  ///   완전 URL:   --dart-define=BACKEND_URL=http://localhost:3000/api
 
   // ── 백엔드 URL 빌드 환경별 분기 ──────────────────────────
   //
-  // 빌드 시 dart-define 으로 환경 선택:
-  //   1) BACKEND_URL=<full url>       — 완전 URL 직접 지정 (가장 강력, HTTPS도 OK)
-  //      예) --dart-define=BACKEND_URL=https://lunchsync-api.duckdns.org/api
-  //   2) BACKEND_HOST=<IP or domain>  — 호스트만 지정 (포트 3000, HTTP 자동)
-  //      예) --dart-define=BACKEND_HOST=192.168.45.105
-  //   3) 둘 다 미지정                 — 기본값 (web: localhost, mobile: 10.0.2.2)
+  // 우선순위: BACKEND_URL > BACKEND_HOST > 기본값(EC2)
   //
-  // 프로덕션 시연: BACKEND_URL=https://lunchsync-api.duckdns.org/api 사용 권장
-  // (HTTPS + Caddy + DuckDNS 조합)
+  //   1) BACKEND_URL=<full url>      — 완전 URL 직접 지정 (HTTPS도 OK)
+  //      예) --dart-define=BACKEND_URL=http://localhost:3000/api
+  //   2) BACKEND_HOST=<IP or domain> — 호스트만 지정 (포트 3000, HTTP 자동)
+  //      예) --dart-define=BACKEND_HOST=10.0.2.2
+  //   3) 둘 다 미지정                — EC2 기본값 사용
 
   static const String _backendUrlOverride = String.fromEnvironment(
     'BACKEND_URL',
@@ -53,15 +47,13 @@ class AppConfig {
 
   static const String _backendHost = String.fromEnvironment(
     'BACKEND_HOST',
-    defaultValue: '10.0.2.2',
+    defaultValue: '13.125.165.80',
   );
 
-  // 우선순위: BACKEND_URL > BACKEND_HOST > 기본값(web localhost / mobile _backendHost)
+  // 우선순위: BACKEND_URL > BACKEND_HOST > 기본값(EC2)
   static const String backendBaseUrl = _backendUrlOverride.length > 0
       ? _backendUrlOverride
-      : (_isWeb
-          ? 'http://localhost:3000/api'
-          : 'http://$_backendHost:3000/api');
+      : 'http://$_backendHost:3000/api';
 
   // ══════════════════════════════════════════════════════════
   // 토스페이먼츠 (결제위젯 v2)
