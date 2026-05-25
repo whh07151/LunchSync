@@ -50,8 +50,7 @@ class UpdateStatusBody {
 export class PosReservationsController {
   constructor(private readonly service: PosReservationsService) {}
 
-  // 예약/웨이팅 목록 폴링 → throttler 제외 (2026-05-13)
-  @SkipThrottle()
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Get(':restaurantId')
   async list(
     @Req() req: AuthedRequest,

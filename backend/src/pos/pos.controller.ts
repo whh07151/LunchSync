@@ -49,8 +49,8 @@ export class PosController {
 
   // ── OW-10: 식당별 주문 목록 (정식 경로) ───────────────
   // 권한: POS 토큰의 매장 ID 와 path 매장 ID 일치 필수 (2026-05-12 박검토A)
-  // 폴링 엔드포인트 → throttler 제외 (2026-05-13)
-  @SkipThrottle()
+  // 폴링 엔드포인트 → 모든 throttler 제외 (default/auth/signup 전부)
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Get('restaurants/:id/orders')
   async getOrders(
     @Req() req: AuthedRequest,
@@ -66,8 +66,7 @@ export class PosController {
   }
 
   // ── 별칭: LSPOS POS_BUILD_GUIDE 명세 호환 ─────────────
-  // 폴링 엔드포인트 → throttler 제외 (2026-05-13)
-  @SkipThrottle()
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Get('orders/:restaurantId')
   async getOrdersAlias(
     @Req() req: AuthedRequest,
@@ -78,8 +77,7 @@ export class PosController {
   }
 
   // ── POS-08: 결제 상태 통계 (정식 경로) ────────────────
-  // 폴링 엔드포인트 → throttler 제외 (2026-05-13)
-  @SkipThrottle()
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Get('restaurants/:id/stats')
   async getStats(
     @Req() req: AuthedRequest,
@@ -91,8 +89,7 @@ export class PosController {
   }
 
   // ── 별칭: LSPOS POS_BUILD_GUIDE 명세 호환 ─────────────
-  // 폴링 엔드포인트 → throttler 제외 (2026-05-13)
-  @SkipThrottle()
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Get('orders/:restaurantId/stats')
   async getStatsAlias(
     @Req() req: AuthedRequest,

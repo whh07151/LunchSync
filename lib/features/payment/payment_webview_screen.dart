@@ -1,5 +1,6 @@
 import 'package:flutter/foundation.dart' show kIsWeb;
 import 'package:flutter/material.dart';
+import 'package:url_launcher/url_launcher.dart';
 import 'package:webview_flutter/webview_flutter.dart';
 import '../../core/theme/theme.dart';
 import 'payment_success_screen.dart';
@@ -74,7 +75,14 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
               return NavigationDecision.prevent;
             }
 
-            // 그 외 URL 은 WebView 내에서 정상 이동
+            // intent:// 또는 비표준 스킴 — 시스템(Android)으로 위임
+            // 토스, 카카오페이 등 앱 딥링크가 이 경로로 들어옴
+            final scheme = Uri.tryParse(url)?.scheme ?? '';
+            if (scheme != 'http' && scheme != 'https') {
+              launchUrl(Uri.parse(url), mode: LaunchMode.externalApplication);
+              return NavigationDecision.prevent;
+            }
+
             return NavigationDecision.navigate;
           },
         ),

@@ -128,9 +128,7 @@ export class SessionsController {
     return { success: true, data: result };
   }
 
-  // ── GET /api/sessions/today ───────────────────────────
-  // 홈 화면이 주기적으로 호출 → throttler 제외 (2026-05-13)
-  @SkipThrottle()
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Get('today')
   async getTodaySessions(@Req() req: AuthedRequest) {
     const result = await this.sessionsService.getTodaySessions(req.user.userId);
@@ -176,9 +174,7 @@ export class SessionsController {
     return { success: true, data: result };
   }
 
-  // ── GET /api/sessions/:id/members ─────────────────────
-  // 손님 앱이 3초 간격 폴링 → throttler 제외 (2026-05-13)
-  @SkipThrottle()
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Get(':id/members')
   async getSessionMembers(@Param('id') id: string) {
     const result = await this.sessionsService.getSessionMembers(id);

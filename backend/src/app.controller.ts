@@ -32,7 +32,7 @@ export class AppController {
   // 200 응답이면 정상, 그 외엔 알림 트리거.
   // 2026-05-15 SkipThrottle: 글로벌 ThrottlerGuard 가 health 도 막아서 UptimeRobot 이 false alarm 을 받음.
   // 모니터링 엔드포인트는 IP당 호출수 제한 없음.
-  @SkipThrottle()
+  @SkipThrottle({ default: true, auth: true, signup: true })
   @Get('health')
   health() {
     const mem = process.memoryUsage();

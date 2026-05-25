@@ -1,8 +1,8 @@
 # ╔══════════════════════════════════════════════════════════════╗
-# ║  deploy-backend.yml                                        ║
-# ║  GitHub Actions 워크플로우 — 백엔드 자동 배포               ║
-# ║  main 또는 temp 브랜치에 backend/ 변경 push 시              ║
-# ║  EC2 서버에 자동으로 배포합니다.                             ║
+# ║  deploy-backend.yml                                          ║
+# ║  GitHub Actions 워크플로우 — 백엔드 자동 배포                     ║
+# ║  main 또는 temp 브랜치에 backend/ 변경 push 시                   ║
+# ║  EC2 서버에 자동으로 배포합니다.                                  ║
 # ╚══════════════════════════════════════════════════════════════╝
 
 name: Deploy Backend to EC2
