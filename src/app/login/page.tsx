@@ -3,189 +3,238 @@
 import { FormEvent, useState } from "react";
 import { useRouter } from "next/navigation";
 import { useAuth } from "@/lib/hooks/useAuth";
-import { loginPOS } from "@/lib/api/auth";
-import { ApiError } from "@/lib/api/client";
+import { loginOwner, registerRestaurant } from "@/lib/api/auth";
+import type { RegisterRestaurantPayload } from "@/lib/api/auth";
 
-// pos_memo.md §2 / §3 — POS 로그인은 사장앱에서 발급된 고유번호(restaurant_id)
-// 단일 입력. 회원가입 없음. 정식 인증 엔드포인트는 백엔드 합의 후 추가.
+// 사장 계정(이메일+비번)으로 로그인 → 식당 등록 or 대시보드 진입
+// POST /api/pos/login-owner → restaurant 있으면 바로 대시보드
+//                           → 없으면 식당 등록 폼 표시
+// POST /api/pos/restaurants → 식당 생성 → 대시보드 진입
 
-// 사장앱이 아직 없을 때 UI를 둘러보기 위한 데모 단말 정보.
-// week2_jdy_summary.md UUID 규칙(rest_001 = bbbbbbbb-0000-4000-8000-000000000001)을 그대로 사용 →
-// 백엔드 시드 스크립트(`backend/scripts/seed-restaurants.ts`)가 돌아간 환경에선 실 데이터까지 자동 연결.
-const DEMO = {
-  restaurantId: "bbbbbbbb-0000-4000-8000-000000000001",
-  name: "데모 단말 (1번)",
-};
+const CATEGORIES = ["한식", "중식", "일식", "양식", "분식", "카페/디저트", "기타"];
+
+type Step = "login" | "register";
 
 export default function LoginPage() {
   const router = useRouter();
   const { login } = useAuth();
-  const [restaurantId, setRestaurantId] = useState("");
-  const [name, setName] = useState("");
+
+  const [step, setStep] = useState<Step>("login");
+  const [userToken, setUserToken] = useState("");
+
+  // 로그인 폼 상태
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+
+  // 식당 등록 폼 상태
+  const [form, setForm] = useState<RegisterRestaurantPayload>({
+    name: "",
+    category: "한식",
+    address: "",
+    lat: 0,
+    lng: 0,
+    priceRange: undefined,
+    imageUrl: "",
+  });
+
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // POS 로그인 공통 처리 — 백엔드(POST /pos/login/:restaurantId) 호출 후 토큰 저장.
-  // 백엔드가 꺼져있거나 식당이 등록되지 않은 경우엔 토큰 없이 localStorage 만 채우는
-  // 폴백으로 동작하여 UI 미리보기는 가능 (기존 동작 보존).
-  const performLogin = async (id: string, terminalName: string) => {
-    setBusy(true);
+  // ── 로그인 제출 ──────────────────────────────────────
+  const submitLogin = async (e: FormEvent) => {
+    e.preventDefault();
     setError(null);
+    if (!email.trim() || !password) {
+      setError("이메일과 비밀번호를 입력해 주세요.");
+      return;
+    }
+    setBusy(true);
     try {
-      try {
-        const result = await loginPOS(id, terminalName || undefined);
+      const result = await loginOwner(email.trim(), password);
+      if (result.restaurant) {
+        // 식당 있음 → POS 토큰으로 바로 로그인
         login({
-          restaurantId: result.restaurantId,
-          accessToken: result.accessToken,
+          restaurantId: result.restaurant.restaurantId,
+          accessToken: result.restaurant.posToken,
           user: {
             id: "pos-terminal",
-            name: result.restaurantName ?? terminalName ?? "POS 단말",
+            name: result.restaurant.restaurantName,
             role: "POS",
           },
         });
         router.replace("/dashboard");
-        return;
-      } catch (apiErr) {
-        // 404(식당 미등록) 또는 네트워크 오류 → UI 미리보기 폴백
-        // 그 외 4xx/5xx 는 사용자에게 메시지 노출
-        if (apiErr instanceof ApiError && apiErr.status !== 404 && apiErr.code !== "NETWORK_ERROR") {
-          setError(apiErr.message);
-          return;
-        }
-        // 폴백: 토큰 없이 진입 (백엔드 합의 전 흐름과 동일)
-        login({
-          restaurantId: id,
-          user: {
-            id: "pos-terminal",
-            name: terminalName || "POS 단말",
-            role: "POS",
-          },
-        });
-        router.replace("/dashboard");
+      } else {
+        // 식당 없음 → 식당 등록 단계로
+        setUserToken(result.userToken);
+        setStep("register");
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "로그인 실패");
+      setError(err instanceof Error ? err.message : "로그인에 실패했습니다.");
     } finally {
       setBusy(false);
     }
   };
 
-  const enterDemo = () => {
-    void performLogin(DEMO.restaurantId, DEMO.name);
-  };
-
-  const submit = (e: FormEvent) => {
+  // ── 식당 등록 제출 ────────────────────────────────────
+  const submitRegister = async (e: FormEvent) => {
     e.preventDefault();
     setError(null);
-    const id = restaurantId.trim();
-    if (!id) {
-      setError("식당 고유번호를 입력해 주세요.");
+    if (!form.name.trim() || !form.address.trim()) {
+      setError("식당 이름과 주소를 입력해 주세요.");
       return;
     }
-    if (id.length < 4) {
-      setError("고유번호 형식이 올바르지 않습니다.");
+    if (!form.lat || !form.lng) {
+      setError("위도와 경도를 입력해 주세요.");
       return;
     }
-    void performLogin(id, name.trim());
+    setBusy(true);
+    try {
+      const result = await registerRestaurant(userToken, {
+        ...form,
+        priceRange: form.priceRange || undefined,
+        imageUrl: form.imageUrl || undefined,
+      });
+      login({
+        restaurantId: result.id,
+        accessToken: result.posToken,
+        user: {
+          id: "pos-terminal",
+          name: result.name,
+          role: "POS",
+        },
+      });
+      router.replace("/dashboard");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "식당 등록에 실패했습니다.");
+    } finally {
+      setBusy(false);
+    }
   };
+
+  const setField = <K extends keyof RegisterRestaurantPayload>(
+    key: K,
+    value: RegisterRestaurantPayload[K]
+  ) => setForm((f) => ({ ...f, [key]: value }));
 
   return (
     <main className="min-h-screen relative overflow-hidden bg-gradient-to-br from-primary-surface via-white to-primary-surface flex items-center justify-center p-screen-x">
-      {/* 배경 장식 — LunchSync 온보딩 톤 */}
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full bg-primary/10 blur-3xl"
-      />
-      <div
-        aria-hidden
-        className="pointer-events-none absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-primary-light/20 blur-3xl"
-      />
+      <div aria-hidden className="pointer-events-none absolute -top-24 -right-24 h-72 w-72 rounded-full bg-primary/10 blur-3xl" />
+      <div aria-hidden className="pointer-events-none absolute -bottom-24 -left-24 h-72 w-72 rounded-full bg-primary-light/20 blur-3xl" />
 
       <div className="relative bg-white rounded-card shadow-elevated w-full max-w-md p-8">
         <div className="flex items-center gap-2 mb-1">
-          <span className="inline-flex h-9 w-9 rounded-xl bg-primary text-white items-center justify-center font-bold">
-            LS
-          </span>
-          <span className="text-xs font-semibold tracking-wider text-primary-dark uppercase">
-            POS Terminal
-          </span>
-        </div>
-        <h1 className="text-h1 text-ink-900 mt-2">LunchSync POS</h1>
-        <p className="text-sm text-ink-700 mt-1">매장 카운터/주방용 단말</p>
-
-        <section className="mt-6 bg-primary-surface border border-primary-light/50 rounded-input p-4 text-sm text-ink-700 leading-relaxed">
-          <p className="font-semibold text-ink-900 mb-1">회원가입은 따로 없어요</p>
-          POS에는 별도 회원가입이 없습니다. 사장님이 <b>사장앱</b>에서 식당을
-          등록하시면 <b>고유번호</b>가 발급됩니다. 그 번호를 아래에 입력해 주세요.
-        </section>
-
-        <form onSubmit={submit} className="mt-5 space-y-4">
-          <Field
-            label="식당 고유번호"
-            value={restaurantId}
-            onChange={setRestaurantId}
-            placeholder="예: bbbbbbbb-0000-4000-8000-000000000001"
-            hint="사장앱 → 식당 등록 → 고유번호 발급 후 받은 값"
-            autoFocus
-          />
-          <Field
-            label="단말 이름 (선택)"
-            value={name}
-            onChange={setName}
-            placeholder="예: 1번 카운터"
-            hint="여러 POS를 쓸 때 단말 구분용. 화면 우측 상단에 표시됩니다"
-          />
-
-          {error && (
-            <div className="text-sm text-state-error bg-red-50 border border-red-200 rounded-input p-3">
-              {error}
-            </div>
-          )}
-
-          <button
-            type="submit"
-            disabled={busy}
-            className="w-full h-12 rounded-button bg-primary text-white font-semibold hover:bg-primary-dark active:scale-[0.99] transition disabled:opacity-50"
-          >
-            {busy ? "확인 중…" : "POS 시작"}
-          </button>
-        </form>
-
-        {/* 사장앱이 준비되기 전 UI 미리보기용 */}
-        <div className="mt-5 pt-5 border-t border-line-divider">
-          <div className="flex items-baseline justify-between mb-2">
-            <p className="text-xs font-semibold text-ink-700">사장앱이 아직 없나요?</p>
-            <span className="text-[10px] text-ink-500">개발 전용</span>
-          </div>
-          <p className="text-[11px] text-ink-500 mb-2.5 leading-relaxed">
-            가짜 식당 고유번호로 UI를 둘러볼 수 있습니다. 백엔드 시드가 돌아간
-            환경이라면 식당 1번 데이터까지 자동 연결됩니다.
-          </p>
-          <button
-            type="button"
-            onClick={enterDemo}
-            className="w-full h-10 rounded-button border border-primary-light bg-primary-surface text-primary-dark text-sm font-semibold hover:bg-primary-light/20 transition-colors"
-          >
-            데모 단말로 시작 →
-          </button>
+          <span className="inline-flex h-9 w-9 rounded-xl bg-primary text-white items-center justify-center font-bold text-sm">LS</span>
+          <span className="text-xs font-semibold tracking-wider text-primary-dark uppercase">POS Terminal</span>
         </div>
 
-        <details className="mt-5 text-xs text-ink-500">
-          <summary className="cursor-pointer select-none hover:text-ink-700">
-            고유번호를 모르겠어요
-          </summary>
-          <ol className="mt-2 list-decimal pl-5 space-y-1 leading-relaxed">
-            <li>사장앱을 엽니다.</li>
-            <li>식당 등록 → 내 업체 선택 → 고유번호 발급 단계 진행.</li>
-            <li>발급된 고유번호를 받아서 이 화면에 붙여 넣습니다.</li>
-            <li>이미 등록된 매장이라면 사장앱 매장 정보 화면에 표시되어 있습니다.</li>
-          </ol>
-        </details>
+        {step === "login" ? (
+          <>
+            <h1 className="text-h1 text-ink-900 mt-2">사장님 로그인</h1>
+            <p className="text-sm text-ink-700 mt-1">LunchSync 사장 계정으로 로그인하세요</p>
 
-        <p className="text-[11px] text-ink-500 mt-5 leading-relaxed">
-          ※ 정식 POS 인증 엔드포인트가 정해지지 않아 현재는 고유번호를 단말에
-          저장만 합니다 (백엔드 협의 후 자동 토큰 발급 흐름으로 교체 예정).
-        </p>
+            <form onSubmit={submitLogin} className="mt-6 space-y-4">
+              <Field
+                label="이메일"
+                type="email"
+                value={email}
+                onChange={setEmail}
+                placeholder="owner@example.com"
+                autoFocus
+              />
+              <Field
+                label="비밀번호"
+                type="password"
+                value={password}
+                onChange={setPassword}
+                placeholder="비밀번호 입력"
+              />
+
+              {error && <ErrorBox message={error} />}
+
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full h-12 rounded-button bg-primary text-white font-semibold hover:bg-primary-dark active:scale-[0.99] transition disabled:opacity-50"
+              >
+                {busy ? "확인 중…" : "로그인"}
+              </button>
+            </form>
+
+            <p className="text-[11px] text-ink-500 mt-5 leading-relaxed">
+              LunchSync 앱에서 <b>사장(OWNER)</b> 계정으로 가입한 뒤 이 화면에서 로그인하세요.
+              로그인 후 식당과 메뉴를 등록하면 손님 앱에 바로 반영됩니다.
+            </p>
+          </>
+        ) : (
+          <>
+            <h1 className="text-h1 text-ink-900 mt-2">식당 등록</h1>
+            <p className="text-sm text-ink-700 mt-1">등록된 식당이 없어요. 식당 정보를 입력해 주세요.</p>
+
+            <form onSubmit={submitRegister} className="mt-6 space-y-4">
+              <Field label="식당 이름 *" value={form.name} onChange={(v) => setField("name", v)} placeholder="예: 한솥도시락 강남점" autoFocus />
+
+              <label className="block">
+                <span className="block text-xs font-medium text-ink-700 mb-1.5">카테고리 *</span>
+                <select
+                  value={form.category}
+                  onChange={(e) => setField("category", e.target.value)}
+                  className="w-full h-11 border border-line-border rounded-input px-3 text-sm focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 transition-shadow bg-white"
+                >
+                  {CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+                </select>
+              </label>
+
+              <Field label="주소 *" value={form.address} onChange={(v) => setField("address", v)} placeholder="예: 서울시 강남구 테헤란로 123" />
+
+              <div className="grid grid-cols-2 gap-3">
+                <Field
+                  label="위도 *"
+                  type="number"
+                  value={form.lat === 0 ? "" : String(form.lat)}
+                  onChange={(v) => setField("lat", parseFloat(v) || 0)}
+                  placeholder="예: 37.5014"
+                />
+                <Field
+                  label="경도 *"
+                  type="number"
+                  value={form.lng === 0 ? "" : String(form.lng)}
+                  onChange={(v) => setField("lng", parseFloat(v) || 0)}
+                  placeholder="예: 127.0396"
+                />
+              </div>
+
+              <p className="text-[11px] text-ink-500 -mt-2">
+                위도/경도는 구글맵에서 식당을 검색한 뒤 URL 또는 좌표 복사로 확인할 수 있습니다.
+              </p>
+
+              <Field
+                label="평균 가격대 (원)"
+                type="number"
+                value={form.priceRange === undefined ? "" : String(form.priceRange)}
+                onChange={(v) => setField("priceRange", v ? parseInt(v, 10) : undefined)}
+                placeholder="예: 9000"
+              />
+              <Field label="대표 이미지 URL" value={form.imageUrl ?? ""} onChange={(v) => setField("imageUrl", v)} placeholder="https://..." />
+
+              {error && <ErrorBox message={error} />}
+
+              <button
+                type="submit"
+                disabled={busy}
+                className="w-full h-12 rounded-button bg-primary text-white font-semibold hover:bg-primary-dark active:scale-[0.99] transition disabled:opacity-50"
+              >
+                {busy ? "등록 중…" : "식당 등록하고 시작하기"}
+              </button>
+              <button
+                type="button"
+                onClick={() => { setStep("login"); setError(null); }}
+                className="w-full h-10 rounded-button border border-line-border text-ink-700 text-sm hover:bg-gray-50 transition-colors"
+              >
+                ← 돌아가기
+              </button>
+            </form>
+          </>
+        )}
       </div>
     </main>
   );
@@ -196,25 +245,33 @@ interface FieldProps {
   value: string;
   onChange: (v: string) => void;
   placeholder?: string;
-  hint?: string;
   autoFocus?: boolean;
+  type?: string;
 }
 
-function Field({ label, value, onChange, placeholder, hint, autoFocus }: FieldProps) {
+function Field({ label, value, onChange, placeholder, autoFocus, type = "text" }: FieldProps) {
   return (
     <label className="block">
       <span className="block text-xs font-medium text-ink-700 mb-1.5">{label}</span>
       <input
-        type="text"
+        type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
         placeholder={placeholder}
         autoFocus={autoFocus}
         spellCheck={false}
         autoComplete="off"
+        step={type === "number" ? "any" : undefined}
         className="w-full h-11 border border-line-border rounded-input px-3 text-sm placeholder:text-ink-500 focus:outline-none focus:border-primary focus:ring-2 focus:ring-primary/15 transition-shadow"
       />
-      {hint && <span className="block text-[11px] text-ink-500 mt-1">{hint}</span>}
     </label>
+  );
+}
+
+function ErrorBox({ message }: { message: string }) {
+  return (
+    <div className="text-sm text-state-error bg-red-50 border border-red-200 rounded-input p-3">
+      {message}
+    </div>
   );
 }

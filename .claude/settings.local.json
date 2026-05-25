@@ -15,7 +15,10 @@
       "Bash(curl -s -o /dev/null -w \"orders=%{http_code}\\\\n\" http://localhost:3001/orders)",
       "Bash(curl -s -o /dev/null -w \"menu=%{http_code}\\\\n\" http://localhost:3001/menu)",
       "Bash(curl -s -o /dev/null -w \"reservations=%{http_code}\\\\n\" http://localhost:3001/reservations)",
-      "Bash(curl -s -o /dev/null -w \"payments=%{http_code}\\\\n\" http://localhost:3001/payments)"
+      "Bash(curl -s -o /dev/null -w \"payments=%{http_code}\\\\n\" http://localhost:3001/payments)",
+      "Bash(taskkill *)",
+      "PowerShell(Stop-Process *)",
+      "PowerShell(netstat *)"
     ]
   }
 }
