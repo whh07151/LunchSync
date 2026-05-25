@@ -131,6 +131,9 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
       _pollingTimer?.cancel();
       _countdownTimer?.cancel();
     } else if (state == AppLifecycleState.resumed) {
+      // 로비가 현재 최상위 화면일 때만 폴링 재시작.
+      // 다른 화면(추천/투표 등)이 위에 있으면 타이머를 되살리지 않는다.
+      if (ModalRoute.of(context)?.isCurrent != true) return;
       _loadMembers(); // 즉시 1회 갱신
       _startPolling();
       _startCountdown();
@@ -227,6 +230,7 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
   // 식당 이름은 우선 session 모델에 없어 fallback 으로 sessionName 또는
   // "결정된 식당" 사용. (백엔드가 winnerRestaurantName 도 함께 내려주면 더 정확)
   void _goToMenuForWinner(String winnerRestaurantId) {
+    _pollingTimer?.cancel();
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('이 식당으로 결정됐어요! 메뉴 골라봐요'),
@@ -244,6 +248,8 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
     ).then((_) {
       // 메뉴 화면에서 돌아왔을 때 status 가 여전히 ORDERED 면 가드는 유지.
       // DONE 으로 바뀌었다면 자동 라우팅이 다시 발동할 일이 없으므로 그대로 둠.
+      if (!mounted) return;
+      _startPolling();
     });
   }
 
@@ -264,6 +270,7 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
   //   - 안내 스낵바를 1회 보여 사용자에게 "왜 화면이 바뀌었는지" 알려준다.
   //   - 시연 피드백("어디서 투표하나요?") 의 핵심 해결 지점.
   void _goToRecommendations({bool autoTransition = false}) {
+    _pollingTimer?.cancel();
     if (autoTransition) {
       // 친근 톤 + 다음 액션(고르기) 명시
       ScaffoldMessenger.of(context).showSnackBar(
@@ -288,6 +295,7 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
       if (_session?.status != 'VOTING') {
         _autoNavigatedToVoting = false;
       }
+      _startPolling();
     });
   }
 

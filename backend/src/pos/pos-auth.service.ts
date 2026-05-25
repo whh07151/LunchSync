@@ -1,6 +1,7 @@
 import { Injectable, NotFoundException, UnauthorizedException } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { JwtService } from '@nestjs/jwt';
+import * as bcrypt from 'bcrypt';
 import { SupabaseService } from '../supabase/supabase.service';
 
 // ══════════════════════════════════════════════════════════
@@ -69,6 +70,65 @@ export class PosAuthService {
       restaurantId: data.id,
       restaurantName: data.name,
       terminalName: terminalName ?? null,
+    };
+  }
+
+  // ── 사장 계정(이메일+비번)으로 LSPOS 로그인 ────────────
+  // LSPOS 가 restaurantId 없이 사장 계정 자격증명만으로 로그인하는 신규 경로.
+  //
+  // 응답:
+  //   userToken   — USER JWT. 식당 미등록 시 식당 생성(POST /pos/restaurants)에 사용.
+  //   restaurant  — 이미 식당이 등록된 경우. posToken 포함 → 바로 대시보드 진입 가능.
+  //                 미등록이면 null → LSPOS 가 식당 등록 화면으로 안내.
+  async loginOwner(email: string, password: string): Promise<{
+    userToken: string;
+    restaurant: {
+      posToken: string;
+      restaurantId: string;
+      restaurantName: string;
+    } | null;
+  }> {
+    // 1. 이메일로 사용자 조회
+    const { data: user } = await this.supabase.client
+      .from('users')
+      .select('id, name, password_hash, role')
+      .eq('email', email)
+      .maybeSingle();
+
+    if (!user || !user.password_hash) {
+      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다.');
+    }
+
+    // 2. 비밀번호 검증
+    const isValid = await bcrypt.compare(password, user.password_hash);
+    if (!isValid) {
+      throw new UnauthorizedException('이메일 또는 비밀번호가 올바르지 않습니다.');
+    }
+
+    // 3. USER JWT 발급 (식당 등록 API 호출에 사용)
+    const userToken = this.jwt.sign({ sub: user.id, type: 'USER' });
+
+    // 4. 등록된 식당 조회
+    const { data: restaurant } = await this.supabase.client
+      .from('restaurants')
+      .select('id, name')
+      .eq('owner_user_id', user.id)
+      .maybeSingle();
+
+    if (!restaurant) {
+      return { userToken, restaurant: null };
+    }
+
+    // 5. 식당 있으면 POS JWT도 함께 발급
+    const posToken = this.jwt.sign({ sub: restaurant.id, type: 'POS' });
+
+    return {
+      userToken,
+      restaurant: {
+        posToken,
+        restaurantId: restaurant.id,
+        restaurantName: restaurant.name,
+      },
     };
   }
 }

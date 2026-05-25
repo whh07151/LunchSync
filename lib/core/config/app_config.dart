@@ -23,8 +23,7 @@ class AppConfig {
 
   /// 카카오 JavaScript 앱 키 (Web/Chrome)
   /// https://developers.kakao.com → 내 애플리케이션 → 앱 키 → JavaScript 앱 키
-  static const String kakaoJavaScriptAppKey =
-      '4873cbbe1f8110a38bb487677405a6ac';
+  static const String kakaoJavaScriptAppKey = '4873cbbe1f8110a38bb487677405a6ac';
 
   /// LunchSync 백엔드 서버 기본 URL
   ///

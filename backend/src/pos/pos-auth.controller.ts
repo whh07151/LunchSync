@@ -1,5 +1,5 @@
 import { Body, Controller, Param, Post } from '@nestjs/common';
-import { IsOptional, IsString } from 'class-validator';
+import { IsEmail, IsOptional, IsString } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { PosAuthService } from './pos-auth.service';
 
@@ -23,6 +23,11 @@ class PosLoginDto {
   @IsOptional() @IsString() pin?: string;
 }
 
+class PosOwnerLoginDto {
+  @IsEmail() email: string;
+  @IsString() password: string;
+}
+
 @Controller('pos')
 export class PosAuthController {
   constructor(private readonly posAuthService: PosAuthService) {}
@@ -44,6 +49,16 @@ export class PosAuthController {
       dto.terminalName,
       dto.pin,
     );
+    return { success: true, data: result };
+  }
+
+  // ── 사장 계정(이메일+비번)으로 LSPOS 로그인 ───────────
+  // 식당 고유번호 없이 사장이 자신의 계정으로 바로 로그인.
+  // 응답: { userToken, restaurant? } — 식당 미등록 시 restaurant=null
+  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
+  @Post('login-owner')
+  async loginOwner(@Body() dto: PosOwnerLoginDto) {
+    const result = await this.posAuthService.loginOwner(dto.email, dto.password);
     return { success: true, data: result };
   }
 }

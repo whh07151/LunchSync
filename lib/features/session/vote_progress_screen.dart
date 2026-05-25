@@ -133,6 +133,8 @@ class _VoteProgressScreenState extends ConsumerState<VoteProgressScreen>
     if (state == AppLifecycleState.paused) {
       _pollingTimer?.cancel();
     } else if (state == AppLifecycleState.resumed) {
+      // 투표 현황 화면이 현재 최상위일 때만 폴링 재시작
+      if (ModalRoute.of(context)?.isCurrent != true) return;
       // 복귀 시 즉시 1회 갱신 + 폴링 재시작
       _refreshOnce();
       _startPolling();
