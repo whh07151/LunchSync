@@ -134,7 +134,12 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
       }
     };
     _detectPaymentReturn();
-    _bootSequence();
+    // 첫 frame 이후로 부팅 시퀀스를 미뤄 widget tree build 중 provider state
+    // 가 변경되지 않도록 한다(Riverpod 제약). 결제 리턴 분기에서 호출되는
+    // restoreFromSession()/restoreFromStorage() 모두 이 시점부터 안전.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _bootSequence();
+    });
   }
 
   // ── 부팅 시퀀스 ──────────────────────────────────────
