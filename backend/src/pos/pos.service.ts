@@ -467,11 +467,14 @@ export class PosService {
   //     NotFoundException 으로 전환해 호출부에 명확한 에러 전파.
   //
   // 응답:
-  //   { restaurantId, todaysNote, updatedAt }
+  //   { restaurantId, todaysNote }
   //
   // 회귀 안전성:
   //   · DB 컬럼이 없는(마이그레이션 미적용) 환경에서는 UPDATE 가 컬럼 미존재 에러를
   //     던지므로 컨트롤러가 500 으로 응답. silent 무시(빈 결과) 방지.
+  //   · 2026-05-31 fix: select 절에 restaurants.updated_at 포함 시 컬럼 미존재 →
+  //     500 회귀가 있었음. updated_at 은 응답에서 노출하지 않으므로 select 에서 제거.
+  //     필요해지면 backend/scripts/migrations/2026-05-31-add-restaurants-updated-at.sql 적용.
   // ══════════════════════════════════════════════════════════
   async updateTodaysNote(
     restaurantId: string,
@@ -479,13 +482,17 @@ export class PosService {
   ): Promise<{
     restaurantId: string;
     todaysNote: string | null;
-    updatedAt: string | null;
   }> {
+    // 2026-05-31 fix: 기존 구현은 .select('id, todays_note, updated_at') 였으나
+    //   restaurants 테이블에 updated_at 컬럼이 없는 환경(현 production/local)에서
+    //   PostgREST 가 "column restaurants.updated_at does not exist" 로 500 을 던졌다.
+    //   응답 컨트랙트({ restaurantId, todaysNote })에는 updatedAt 이 노출되지 않아
+    //   select 와 반환 타입에서 updated_at 을 제거한다. (CLAUDE.md DB 스키마 변경 규칙 위반 복구)
     const { data, error } = await this.supabase.client
       .from('restaurants')
       .update({ todays_note: note })
       .eq('id', restaurantId)
-      .select('id, todays_note, updated_at')
+      .select('id, todays_note')
       .maybeSingle();
 
     if (error) {
@@ -502,8 +509,6 @@ export class PosService {
     return {
       restaurantId: data.id as string,
       todaysNote: (data.todays_note as string | null) ?? null,
-      // updated_at 컬럼이 없는 옛 스키마에서도 안전하게 null 폴백.
-      updatedAt: (data as { updated_at?: string | null }).updated_at ?? null,
     };
   }
 

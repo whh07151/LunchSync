@@ -9,6 +9,7 @@ import '../../providers/user_provider.dart';
 import '../../services/restaurants_api_service.dart';
 import '../../services/sessions_api_service.dart';
 import '../payment/order_review_screen.dart';
+import 'menu_swipe_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-16 메뉴 목록 / 장바구니 화면
@@ -453,6 +454,20 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
         ? '메뉴 불러오는 중...'
         : '메뉴 ${(_menuItems ?? const []).length}개';
 
+    // ── WOW#7: 스와이프 모드 토글 가용성 판단 ────────────────
+    // 카드 5장 미만이면 스택이 너무 빈약해 UX 가치가 떨어지므로 비활성.
+    // - 로딩 중에는 토글 자체를 보여주되 비활성 처리(Tooltip 안내).
+    // - 5장 이상이면 정상 진입 가능.
+    final menusForSwipe = (_menuItems ?? const <MenuItem>[])
+        .where((m) => !m.isSoldOut)
+        .toList();
+    final canEnterSwipe = !_isLoading && menusForSwipe.length >= 5;
+    final swipeTooltip = _isLoading
+        ? '메뉴 불러오는 중…'
+        : (menusForSwipe.length < 5
+            ? '메뉴가 부족해요 (5개 이상 필요)'
+            : '스와이프 모드로 메뉴 둘러보기');
+
     return AppBar(
       // 뒤로가기 버튼 자동 추가 (이전 화면으로 돌아갈 수 있음)
       leading: const BackButton(),
@@ -473,6 +488,32 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
           ),
         ],
       ),
+
+      // ── 우측 액션: 스와이프 모드 토글 (WOW#7) ─────────────
+      // 이 화면은 항상 리스트 모드, 스와이프는 별도 화면으로 push.
+      // 그래서 아이콘은 늘 Icons.swipe 만 표시(상태 토글 X). 스와이프 화면 안에서
+      // "리스트 모드로" 버튼으로 돌아오는 UX 가 자연스러움.
+      actions: [
+        Tooltip(
+          message: swipeTooltip,
+          child: IconButton(
+            icon: const Icon(Icons.swipe),
+            onPressed: canEnterSwipe
+                ? () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => MenuSwipeScreen(
+                          restaurantId: widget.restaurantId,
+                          restaurantName: widget.restaurantName,
+                          menus: menusForSwipe,
+                        ),
+                      ),
+                    );
+                  }
+                : null,
+          ),
+        ),
+      ],
 
       // 탭바: 카테고리 분류 탭 (앱바 하단에 붙음)
       bottom: TabBar(

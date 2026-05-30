@@ -43,6 +43,10 @@ dependencies:
   # (현재 코드는 클립보드 폴백으로도 동작 — 미설치여도 빌드 OK)
   share_plus: ^10.1.2
 
+  # 2026-05-31 회귀 fix: home_screen.dart + geolocation_service.dart가 사용 중인데
+  # pubspec 미선언 → flutter analyze 5건 error. 기존 사용처 그대로 살리기 위해 추가.
+  geolocator: ^13.0.1
+
 dev_dependencies:
   flutter_test:
     sdk: flutter

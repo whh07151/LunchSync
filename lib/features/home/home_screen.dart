@@ -29,6 +29,7 @@ import '../../services/notifications_api_service.dart';
 import '../../services/favorites_api_service.dart';
 import '../../models/session.dart';
 import '../my_info/favorites_list_screen.dart';
+import '../tournament/tournament_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-06 홈 대시보드 화면
@@ -36,7 +37,8 @@ import '../my_info/favorites_list_screen.dart';
 // 구성 (와이어프레임 기준):
 //   - 상단 앱바: 앱 로고 + 알림 아이콘
 //   - 인사말 헤더: 사용자 이름 + 소속
-//   - 빠른 실행 CTA 4개: 점심 만들기 / 코드로 참가 / 최근 이력 / 알림
+//   - 빠른 실행 CTA 4개: 점심 만들기 / 코드로 참가 / 최근 이력 / 토너먼트(WOW#6)
+//     (※ 알림은 AppBar 우측 아이콘 + 탭바에서 이미 도달 가능 — 중복 제거)
 //   - 오늘의 세션 섹션: 오늘 참여 중인 세션 카드
 //   - AI 추천 식당 섹션: 식당 카드 가로 스크롤 (지도 없음)
 //   - 하단 탭바 5개: 홈 / 점심세션 / 주문현황 / 내역 / 내정보
@@ -699,13 +701,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         onTap: () => setState(() => _currentTabIndex = 3),
       ),
       _QuickAction(
-        icon: Icons.notifications_rounded,
-        label: '알림',
-        // CU-22 알림함 화면으로 이동 (push: 뒤로가기로 홈 복귀)
+        // WOW#6 — 식당/메뉴 이상형월드컵 진입점 (2026-05-31).
+        // 알림은 AppBar 우측 아이콘에 이미 있으므로 결정 도우미를 4번째 슬롯으로.
+        icon: Icons.emoji_events_outlined,
+        label: '토너먼트',
         onTap: () {
           Navigator.of(context).push(
             MaterialPageRoute(
-              builder: (_) => const NotificationScreen(),
+              builder: (_) => const TournamentScreen(),
             ),
           );
         },
