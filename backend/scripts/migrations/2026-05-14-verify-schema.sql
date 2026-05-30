@@ -76,7 +76,7 @@ ORDER BY enumsortorder;
 --   - restaurants.rating → 2026-05-14-add-rating-column.sql
 --   - restaurants.image_url → 2026-05-14-fill-empty-image-urls.sql (ALTER 포함)
 --   - users.fcm_token → 2026-05-14-add-fcm-token.sql
---   - sessions.radius/budget/return_minutes/memo → ※ 마이그레이션 부재! 사장님 확인 필요
+--   - sessions.radius/budget/return_minutes/memo → 2026-05-14-ensure-sessions-columns.sql
 --   - pos_seats → 2026-05-14-add-pos-tables.sql
 --   - pos_reservations → 2026-05-14-add-pos-reservations.sql (이번 복원)
 --   - RPC 함수 4종 → 같은 이름의 SQL 파일
