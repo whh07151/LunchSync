@@ -8,10 +8,12 @@ import { OrdersService } from '../orders/orders.service';
 // 파일 역할: 식당/메뉴 관련 HTTP 엔드포인트
 //
 // 엔드포인트:
-//   GET /api/restaurants               — 식당 목록 (필터)
-//   GET /api/restaurants/:id           — 식당 상세
-//   GET /api/restaurants/:id/menus     — 식당 메뉴 목록
-//   GET /api/restaurants/:id/reviews   — 매장별 별점/리뷰 (2026-05-15 배민 패턴)
+//   GET /api/restaurants                 — 식당 목록 (필터)
+//   GET /api/restaurants/:id             — 식당 상세
+//   GET /api/restaurants/:id/menus       — 식당 메뉴 목록
+//   GET /api/restaurants/:id/reviews     — 매장별 별점/리뷰 (2026-05-15 배민 패턴)
+//   GET /api/restaurants/:id/loyalty     — 단골 등급(NORMAL/REGULAR/VIP) + 방문 횟수
+//                                          (2026-05-31 WOW#5 단골 랭킹)
 // ══════════════════════════════════════════════════════════
 
 class GetRestaurantsQueryDto {
@@ -75,6 +77,49 @@ export class RestaurantsController {
   @Get(':id/reviews')
   async getReviews(@Param('id') id: string) {
     const result = await this.ordersService.getReviewsByRestaurant(id);
+    return { success: true, data: result };
+  }
+
+  // ── GET /api/restaurants/:id/loyalty — 단골 등급 (WOW#5) ────────
+  //
+  // 2026-05-31 추가 — "식당 단골 랭킹" WOW 포인트.
+  //
+  // 입력:
+  //   :id         식당 UUID
+  //   ?userId     단골 등급을 조회할 손님 user_id (필수 쿼리)
+  //
+  // 응답:
+  //   { visitCount: number, rank: 'NORMAL'|'REGULAR'|'VIP', isFirstTime: boolean }
+  //
+  // 등급 규칙(고정 — 프론트 뱃지 색과 1:1 대응):
+  //   1~2회 → NORMAL  (흰 배경 뱃지)
+  //   3~4회 → REGULAR (주황 뱃지)
+  //   5회~  → VIP     (금색 뱃지)
+  //
+  // 카운트 정의:
+  //   orders.status = 'COMPLETED' AND user_id = :userId AND restaurant_id = :id
+  //   (취소/조리중 주문은 카운트 X — "픽업 완료" 기준이라야 신뢰 가능)
+  //
+  // 보안:
+  //   현재 손님 본인 외 타인의 단골 등급도 조회 가능하지만 등급 자체는
+  //   민감정보가 아니라 차단하지 않음. 다만 userId 미지정 시는 400.
+  @Get(':id/loyalty')
+  async getLoyalty(
+    @Param('id') restaurantId: string,
+    @Query('userId') userId?: string,
+  ) {
+    if (!userId || userId.trim().length === 0) {
+      // BadRequest 대신 success:false + 0 으로 graceful 처리도 가능하지만,
+      // 컨트랙트 명확성 우선 — 호출부가 userId 누락 시 즉시 알 수 있어야 함.
+      return {
+        success: false,
+        error: 'userId 쿼리 파라미터가 필요합니다.',
+      };
+    }
+    const result = await this.restaurantsService.getLoyalty(
+      restaurantId,
+      userId,
+    );
     return { success: true, data: result };
   }
 }

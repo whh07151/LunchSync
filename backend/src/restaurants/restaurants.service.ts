@@ -37,9 +37,13 @@ export class RestaurantsService {
     //   사장님 피드백 "네이버나 구글로 식당 평점 조사한 거 맞아?" 대응.
     //   CrawlService 가 네이버 reviewScore 를 수집해 restaurants.rating 에 저장
     //   하게 됐으므로 클라이언트로도 함께 내려준다. UI 에서 "⭐ 4.2" 표기.
+    // 2026-05-31 WOW#1 todays_note 컬럼 select 추가:
+    //   사장이 POS/사장앱에서 입력한 "오늘의 한 줄" 메시지.
+    //   응답 camelCase 키 todaysNote 로 변환되어 손님 추천 카드 노란 띠와
+    //   추천 점수 가중치(+5)에 사용된다. NULL 이면 UI 에 노출되지 않음.
     let qb = this.supabase.client
       .from('restaurants')
-      .select('id, name, category, price_range, address, lat, lng, image_url, rating, created_at');
+      .select('id, name, category, price_range, address, lat, lng, image_url, rating, todays_note, created_at');
 
     if (query.category) {
       qb = qb.eq('category', query.category);
@@ -95,6 +99,13 @@ export class RestaurantsService {
       // 네이버 플레이스 평점 (0.0~5.0). 미수집 식당은 null.
       // 클라이언트 RestaurantDto.rating 에 매핑되어 ⭐ 칩으로 표시됨.
       rating: r.rating != null ? Number(r.rating) : null,
+      // 2026-05-31 WOW#1: 사장님 "오늘의 한 줄".
+      //   null 이면 손님 카드에서 노란 띠 숨김. 비어있는 문자열도 동일 취급
+      //   되도록 trim 후 길이 0 인 경우 명시적으로 null 로 normalize.
+      todaysNote:
+        typeof r.todays_note === 'string' && r.todays_note.trim().length > 0
+          ? r.todays_note
+          : null,
       createdAt: r.created_at,
     }));
   }
@@ -102,9 +113,10 @@ export class RestaurantsService {
   // ── GET /restaurants/:id ──────────────────────────────
   async getRestaurantById(id: string) {
     // 2026-05-14 rating 컬럼 select 추가 — 상세 화면에서도 평점 표시.
+    // 2026-05-31 todays_note 컬럼 select 추가 — 상세 화면 상단 노란 띠 노출용.
     const { data, error } = await this.supabase.client
       .from('restaurants')
-      .select('id, name, category, price_range, address, lat, lng, image_url, rating, created_at')
+      .select('id, name, category, price_range, address, lat, lng, image_url, rating, todays_note, created_at')
       .eq('id', id)
       .single();
 
@@ -126,6 +138,13 @@ export class RestaurantsService {
       lng: data.lng,
       imageUrl: ensureRestaurantImageUrl(data.image_url, data.category, data.name),
       rating: data.rating != null ? Number(data.rating) : null,
+      // 2026-05-31 WOW#1: 사장님 "오늘의 한 줄".
+      //   목록 응답과 동일 정규화 규칙 적용 (빈 문자열 → null).
+      todaysNote:
+        typeof data.todays_note === 'string' &&
+        data.todays_note.trim().length > 0
+          ? data.todays_note
+          : null,
       createdAt: data.created_at,
     };
   }
@@ -167,6 +186,83 @@ export class RestaurantsService {
 
     return { categories, menus };
   }
+
+  // ══════════════════════════════════════════════════════════
+  // WOW#5 단골 랭킹 (2026-05-31 추가)
+  // ══════════════════════════════════════════════════════════
+  //
+  // 핵심: 손님이 한 식당에 몇 번 픽업 완료했는지 카운트 → 등급(NORMAL/REGULAR/VIP) 결정.
+  // 이 식당 상세 헤더 뱃지 + 픽업 완료 토스트 + 사장 측 VIP 알림에서 동시 사용.
+  //
+  // 카운트 기준 (성능):
+  //   - orders 테이블에서 head: true + count: 'exact' 옵션으로 전체 ROW 페치 없이
+  //     COUNT 만 받아옴. GROUP BY 가 필요한 게 아니라 단일 (user, restaurant) 카운트.
+  //   - 인덱스: orders(user_id, restaurant_id, status) 합성 인덱스가 권장되지만
+  //     기존 user_id/restaurant_id 개별 인덱스만으로도 일일 트래픽엔 충분.
+  async getLoyalty(
+    restaurantId: string,
+    userId: string,
+  ): Promise<{
+    visitCount: number;
+    rank: 'NORMAL' | 'REGULAR' | 'VIP';
+    isFirstTime: boolean;
+  }> {
+    // count: 'exact' + head: true → 결과 행은 안 받고 카운트만.
+    // 같은 식당에서 같은 손님의 COMPLETED 주문 개수 = 방문(픽업) 횟수.
+    const { count, error } = await this.supabase.client
+      .from('orders')
+      .select('id', { count: 'exact', head: true })
+      .eq('user_id', userId)
+      .eq('restaurant_id', restaurantId)
+      .eq('status', 'COMPLETED');
+
+    if (error) {
+      throw new Error(`단골 카운트 조회 실패: ${error.message}`);
+    }
+
+    const visitCount = count ?? 0;
+    return {
+      visitCount,
+      rank: resolveLoyaltyRank(visitCount),
+      // isFirstTime 의 정의: "지금 이 방문이 첫 픽업인가?" 가 아니라
+      // "이 식당과의 누적 방문이 1회인가" — 픽업 완료 직후 토스트의
+      // "이번이 첫 방문이에요" 카피용. visitCount === 1 이면 true.
+      isFirstTime: visitCount === 1,
+    };
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// 단골 등급 헬퍼 (다른 서비스에서도 재사용 가능하도록 export)
+// ══════════════════════════════════════════════════════════
+//
+// 규칙(고정 — 프론트 뱃지 색과 1:1 대응):
+//   0~2회 → NORMAL  (흰 배경 뱃지)
+//   3~4회 → REGULAR (주황 뱃지)
+//   5회~  → VIP     (금색 뱃지)
+//
+// pos.service.ts 의 알림 발송 로직(특정 회차 도달 시 ORDER_VIP 발송)에서도
+// 사용. 단일 진입점 보장 — 프론트와 백엔드가 같은 임계값을 공유.
+export function resolveLoyaltyRank(
+  visitCount: number,
+): 'NORMAL' | 'REGULAR' | 'VIP' {
+  if (visitCount >= 5) return 'VIP';
+  if (visitCount >= 3) return 'REGULAR';
+  return 'NORMAL';
+}
+
+// ══════════════════════════════════════════════════════════
+// 단골 알림 발송 정책 (2026-05-31 추가)
+// ══════════════════════════════════════════════════════════
+//
+// pos.service.ts updateOrderStatus 가 COMPLETED 분기에서 호출.
+// "매 5의 배수" 회차 도달 시 ORDER_VIP 알림(축하 톤).
+//   - 5회: VIP 승급 (최초 VIP 도달)
+//   - 10/15/20/...회: 누적 단골 축하 milestone
+// 1~4회는 클라이언트 토스트로만 처리(서버 알림 X — 노이즈 방지).
+export function shouldSendLoyaltyMilestone(visitCount: number): boolean {
+  if (visitCount < 5) return false;
+  return visitCount % 5 === 0;
 }
 
 // ── Haversine 거리 계산 (m) ─────────────────────────────

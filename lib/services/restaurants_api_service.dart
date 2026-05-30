@@ -8,10 +8,56 @@ import '../core/api/api_auth_hooks.dart';
 // 파일 역할: 식당/메뉴 관련 API 호출 서비스
 //
 // 담당 엔드포인트:
-//   GET /api/restaurants            — 식당 목록 (필터)
-//   GET /api/restaurants/:id        — 식당 상세
-//   GET /api/restaurants/:id/menus  — 메뉴 목록
+//   GET /api/restaurants               — 식당 목록 (필터)
+//   GET /api/restaurants/:id           — 식당 상세
+//   GET /api/restaurants/:id/menus     — 메뉴 목록
+//   GET /api/restaurants/:id/loyalty   — 단골 등급 (WOW#5, 2026-05-31)
 // ══════════════════════════════════════════════════════════
+
+/// 단골 등급 응답 모델 (WOW#5, 2026-05-31 추가)
+///
+/// [규칙 — 백엔드 restaurants.service.ts resolveLoyaltyRank 와 1:1]
+///   0~2회 → NORMAL  (흰 배경 뱃지)
+///   3~4회 → REGULAR (주황 뱃지)
+///   5회+  → VIP     (금색 뱃지)
+///
+/// [isFirstTime]
+///   visitCount == 1 일 때 true. 픽업 완료 직후 토스트 카피
+///   "이번이 첫 방문이에요" 용. 헤더 뱃지에서는 사용 안 함.
+class LoyaltyDto {
+  const LoyaltyDto({
+    required this.visitCount,
+    required this.rank,
+    required this.isFirstTime,
+  });
+
+  /// 누적 픽업 횟수 (orders.status='COMPLETED' 기준).
+  final int visitCount;
+
+  /// 'NORMAL' | 'REGULAR' | 'VIP' (백엔드 문자열 그대로).
+  final String rank;
+
+  final bool isFirstTime;
+
+  /// 픽업 완료 직후 토스트에서 쓸 친근 카피.
+  ///   - 1회: "이 식당의 첫 손님이 되셨어요"
+  ///   - 2~4회: "이 식당의 N번째 방문이에요"
+  ///   - 5회+: "VIP 단골이 되셨어요!"
+  String toastMessage() {
+    if (visitCount <= 0) return '';
+    if (visitCount == 1) return '🎉 이 식당의 첫 손님이 되셨어요';
+    if (rank == 'VIP') return '🏆 VIP 단골이 되셨어요! ($visitCount번째 방문)';
+    return '🎉 이 식당의 $visitCount번째 단골이 되셨어요';
+  }
+
+  factory LoyaltyDto.fromJson(Map<String, dynamic> json) {
+    return LoyaltyDto(
+      visitCount: (json['visitCount'] as num?)?.toInt() ?? 0,
+      rank: (json['rank'] as String?) ?? 'NORMAL',
+      isFirstTime: (json['isFirstTime'] as bool?) ?? false,
+    );
+  }
+}
 
 /// 식당 데이터 모델
 ///
@@ -33,6 +79,7 @@ class RestaurantDto {
     this.lng,
     this.imageUrl,
     this.rating,
+    this.todaysNote,
   });
 
   final String id;
@@ -58,7 +105,30 @@ class RestaurantDto {
   ///   평점 미수집 식당은 null 이므로 위젯에서 안전 분기 처리(없으면 칩 미표시).
   final double? rating;
 
+  /// 사장님 "오늘의 한 줄" 메시지 (200자 이하)
+  ///
+  /// [출처 및 흐름 — 2026-05-31 WOW#1]
+  ///   사장(LSPOS 대시보드/사장앱) → PATCH /pos/restaurants/:id/todays-note
+  ///   → restaurants.todays_note → RestaurantsService → 본 DTO.
+  ///
+  /// UI:
+  ///   · null 이면 노란 띠 미노출 (기존 카드 디자인 유지)
+  ///   · 값이 있으면 추천 카드/상세 헤더 상단에 #FFF3CD 배경 인용구.
+  ///
+  /// 백엔드 정책:
+  ///   · 빈 문자열은 백엔드에서 null 로 정규화됨 — 클라이언트는 그대로 신뢰.
+  ///   · 200자 초과는 백엔드 400 에러로 차단되어 손님 측엔 항상 200자 이하.
+  final String? todaysNote;
+
   factory RestaurantDto.fromJson(Map<String, dynamic> json) {
+    // 2026-05-31 WOW#1 todaysNote 정규화 헬퍼.
+    // 백엔드가 빈 문자열을 null 로 정규화하지만, 다른 어댑터(POSjihyo 등)에서
+    // 빈 문자열이 들어와도 trim 후 null 로 일관 처리한다.
+    String? parseTodaysNote(dynamic raw) {
+      if (raw is String && raw.trim().isNotEmpty) return raw;
+      return null;
+    }
+
     return RestaurantDto(
       id: json['id'] as String,
       name: json['name'] as String,
@@ -73,6 +143,7 @@ class RestaurantDto {
       // num 으로 받아 toDouble 변환. 백엔드가 명시적으로 Number() 변환 후 보내지만
       // 클라이언트도 방어적 매핑 유지(추후 컬럼 타입 변경에 대비).
       rating: (json['rating'] as num?)?.toDouble(),
+      todaysNote: parseTodaysNote(json['todaysNote']),
     );
   }
 }
@@ -174,6 +245,42 @@ class RestaurantsApiService {
       return null;
     } catch (e) {
       debugPrint('[RestaurantsApiService] getRestaurantById 에러: $e');
+      return null;
+    }
+  }
+
+  // ── GET /api/restaurants/:id/loyalty (WOW#5, 2026-05-31) ──
+  //
+  // 손님의 이 식당 누적 방문(픽업 완료) 횟수 + 등급 조회.
+  // 식당 상세 헤더 뱃지 / 픽업 완료 토스트에서 호출.
+  //
+  // 실패 시 null — UI 는 뱃지를 그리지 않고 graceful 하게 폴백.
+  Future<LoyaltyDto?> getLoyalty({
+    required String accessToken,
+    required String restaurantId,
+    required String userId,
+  }) async {
+    try {
+      final uri = Uri.parse(
+        '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/loyalty',
+      ).replace(queryParameters: {'userId': userId});
+
+      final response = await http
+          .get(uri, headers: _headers(accessToken))
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        // 백엔드가 success:false 로 떨어뜨릴 수도 있음(userId 누락 등) — 방어.
+        if (json['success'] == false) return null;
+        final data = json['data'] as Map<String, dynamic>?;
+        if (data == null) return null;
+        return LoyaltyDto.fromJson(data);
+      }
+      return null;
+    } catch (e) {
+      debugPrint('[RestaurantsApiService] getLoyalty 에러: $e');
       return null;
     }
   }

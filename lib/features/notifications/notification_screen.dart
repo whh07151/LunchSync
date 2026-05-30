@@ -22,8 +22,9 @@ import '../../services/notifications_api_service.dart';
 //
 // 알림 타입 (서버 type 값과 매핑):
 //   ORDER_RECEIVED / ORDER_PREPARING / ORDER_READY / ORDER_COMPLETED /
-//   ORDER_DONE / VOTE_RESULT
+//   ORDER_DONE / VOTE_RESULT / ORDER_VIP
 //   (2026-05-31: 옛 ORDER_ACCEPTED 는 backend 가 발급 안 함)
+//   (2026-05-31: ORDER_VIP — WOW#5 단골 마일스톤. 5/10/15회 등 5의 배수.)
 // ══════════════════════════════════════════════════════════
 
 class NotificationScreen extends ConsumerStatefulWidget {
@@ -292,12 +293,16 @@ class _NotificationScreenState extends ConsumerState<NotificationScreen> {
       case 'ORDER_PREPARING':
         return (Icons.check_circle_outline_rounded, const Color(0xFF2196F3));
       case 'ORDER_DONE':
+      case 'ORDER_COMPLETED':
         return (
           Icons.restaurant_rounded,
           Theme.of(context).colorScheme.primary
         );
       case 'VOTE_RESULT':
         return (Icons.emoji_events_rounded, const Color(0xFFFFC107));
+      // WOW#5 — 단골 마일스톤 (5/10/15회 등). 금색 톤으로 시각 차별화.
+      case 'ORDER_VIP':
+        return (Icons.workspace_premium_rounded, const Color(0xFFD4AF37));
       default:
         return (Icons.notifications_rounded, AppColors.textSecondary);
     }

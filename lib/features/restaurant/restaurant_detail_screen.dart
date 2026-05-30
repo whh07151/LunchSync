@@ -96,6 +96,12 @@ class _RestaurantDetailScreenState
   RestaurantReviewsResult? _reviewSummary;
   static const _reviewsApi = ReviewsApiService();
 
+  // 2026-05-31 단골 랭킹 (WOW#5):
+  //   GET /restaurants/:id/loyalty?userId=:userId 로 해당 손님의 이 식당
+  //   누적 픽업 횟수 + 등급 1회 조회. 헤더에 영구 뱃지로 표시
+  //   ("단골 #4" / "VIP 단골" 등). null = 미조회/실패 → 뱃지 미표시.
+  LoyaltyDto? _loyalty;
+
   @override
   void initState() {
     super.initState();
@@ -107,7 +113,24 @@ class _RestaurantDetailScreenState
       _loadActiveSession();
       _loadFavoriteStatus();
       _loadReviewSummary();
+      _loadLoyalty();
     });
+  }
+
+  // ── 단골 등급 1회 조회 (2026-05-31 WOW#5) ────────────────
+  // 실패해도 화면 흐름 영향 없음. userId 없으면 비로그인 — 뱃지 미표시.
+  Future<void> _loadLoyalty() async {
+    final user = ref.read(userProvider);
+    final token = user.accessToken;
+    final userId = user.userId;
+    if (token == null || userId == null || userId.isEmpty) return;
+    final result = await _restaurantsApi.getLoyalty(
+      accessToken: token,
+      restaurantId: widget.restaurantId,
+      userId: userId,
+    );
+    if (!mounted) return;
+    setState(() => _loyalty = result);
   }
 
   // ── 별점 요약 1회 조회 (2026-05-15 배민 패턴) ──────────
@@ -501,6 +524,11 @@ class _RestaurantDetailScreenState
       targetLng: r.lng,
     );
 
+    // 2026-05-31 WOW#1: 사장님 "오늘의 한 줄" — 헤더 최상단 노란 띠.
+    //   추천 카드 노란 띠와 같은 #FFF3CD 톤이지만 상세는 가로폭이 넉넉하므로
+    //   3줄까지 허용하고 폰트 크기를 키워 가독성 강화.
+    final todaysNote = r.todaysNote;
+
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(AppSpacing.md),
@@ -508,6 +536,56 @@ class _RestaurantDetailScreenState
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
+          // ── 사장님 한 줄 (있을 때만) ────────────────────
+          if (todaysNote != null) ...[
+            Container(
+              width: double.infinity,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.sm + 2,
+                vertical: AppSpacing.sm,
+              ),
+              decoration: BoxDecoration(
+                color: const Color(0xFFFFF3CD),
+                borderRadius: BorderRadius.circular(AppRadius.small),
+                border: Border.all(color: const Color(0xFFFFE082)),
+              ),
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  const Text(
+                    '👨‍🍳',
+                    style: TextStyle(fontSize: 18, height: 1.2),
+                  ),
+                  const SizedBox(width: 6),
+                  Expanded(
+                    child: RichText(
+                      text: TextSpan(
+                        style: AppTextStyles.bodyMedium.copyWith(
+                          color: AppColors.textPrimary,
+                          height: 1.4,
+                        ),
+                        children: [
+                          TextSpan(
+                            text: '사장님 한마디  ',
+                            style: AppTextStyles.bodyMedium.copyWith(
+                              color: AppColors.textPrimary,
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                          // 따옴표로 인용구 느낌 강조.
+                          TextSpan(text: '"$todaysNote"'),
+                        ],
+                      ),
+                      maxLines: 3,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: AppSpacing.md),
+          ],
+
           // ── 식당 대표 이미지 (와이드 배너) ───────────────
           // [사장님 피드백 대응 — 2026-05-13]
           //   기존엔 식당 상세에 사진이 한 장도 없어서 사장/손님 모두 어느
@@ -604,6 +682,79 @@ class _RestaurantDetailScreenState
             const SizedBox(height: 6),
             _buildCustomerReviewLine(),
           ],
+
+          // ── 단골 뱃지 (WOW#5, 2026-05-31) ─────────────────
+          //   - visitCount == 0 (한 번도 안 옴) → 뱃지 미표시
+          //   - 1~2회 NORMAL: 흰배경 + 회색 외곽선, "단골 #N"
+          //   - 3~4회 REGULAR: 주황 배경, "단골 #N"
+          //   - 5회+ VIP: 금색 그라데이션, "VIP 단골 (N회)"
+          if (_loyalty != null && _loyalty!.visitCount > 0) ...[
+            const SizedBox(height: 8),
+            _buildLoyaltyBadge(_loyalty!),
+          ],
+        ],
+      ),
+    );
+  }
+
+  // ── 단골 뱃지 위젯 (WOW#5) ──────────────────────────────
+  // 등급별 색 토큰만 변경 — AppRadius/AppSpacing/Text 토큰 그대로 사용.
+  // NORMAL(흰), REGULAR(주황), VIP(금색). 한 줄 칩 형태.
+  Widget _buildLoyaltyBadge(LoyaltyDto loyalty) {
+    final rank = loyalty.rank;
+    final n = loyalty.visitCount;
+
+    // 등급별 배경/외곽선/글자 색 (디자인 토큰 + 표준 색).
+    Color bg;
+    Color border;
+    Color textColor;
+    IconData icon;
+    String label;
+
+    switch (rank) {
+      case 'VIP':
+        bg = const Color(0xFFFFF7D6); // 옅은 금색 배경
+        border = const Color(0xFFD4AF37); // 금색 외곽
+        textColor = const Color(0xFF8A6D00); // 진한 골드 텍스트
+        icon = Icons.workspace_premium_rounded;
+        label = 'VIP 단골 · $n회 방문';
+        break;
+      case 'REGULAR':
+        bg = const Color(0xFFFFE6CC); // 옅은 주황
+        border = const Color(0xFFFF8A3D);
+        textColor = const Color(0xFFB95B00);
+        icon = Icons.local_fire_department_rounded;
+        label = '단골 #$n';
+        break;
+      case 'NORMAL':
+      default:
+        bg = Colors.white;
+        border = AppColors.divider;
+        textColor = AppColors.textSecondary;
+        icon = Icons.favorite_outline_rounded;
+        label = '단골 #$n';
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+        border: Border.all(color: border, width: 1),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 14, color: textColor),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: AppTextStyles.bodySmall.copyWith(
+              color: textColor,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
         ],
       ),
     );

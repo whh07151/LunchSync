@@ -9,6 +9,8 @@ import '../../providers/user_provider.dart';
 import '../../services/orders_api_service.dart';
 import '../../services/sessions_api_service.dart';
 import '../../services/reviews_api_service.dart';
+// 2026-05-31 WOW#5 단골 랭킹 — COMPLETED 직후 단골 토스트 표출용.
+import '../../services/restaurants_api_service.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-20 주문 추적 화면
@@ -65,6 +67,14 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
   bool _submittingReview = false;
 
   static const _reviewsApi = ReviewsApiService();
+
+  // ── 단골 토스트 1회성 가드 (WOW#5, 2026-05-31) ─────────
+  //
+  // 폴링이 3초마다 _load() 를 부르는데, 한 번 COMPLETED 가 되면
+  // 매 틱마다 토스트가 재발화하지 않도록 표출 후 true 로 잠근다.
+  // 화면을 재진입(initState)하면 다시 false 로 시작 — 의도된 동작.
+  bool _loyaltyToastShown = false;
+  static const _restaurantsApi = RestaurantsApiService();
 
   @override
   void initState() {
@@ -128,6 +138,62 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
     if (detail != null && _memberCount == null) {
       _loadMemberCount(token, detail.sessionId);
     }
+
+    // ── WOW#5 단골 토스트 (2026-05-31) ──────────────────
+    //
+    // COMPLETED 진입 직후 한 번만 "이 식당의 N번째 단골이 되셨어요" 토스트.
+    // restaurantId 가 있을 때만 의미 있음(없으면 어느 식당인지 모름).
+    // 폴링 재진입 시 _loyaltyToastShown 가드로 1회로 제한.
+    if (detail != null &&
+        detail.status == 'COMPLETED' &&
+        detail.restaurantId != null &&
+        detail.restaurantId!.isNotEmpty &&
+        !_loyaltyToastShown) {
+      _loyaltyToastShown = true; // 가드 먼저 — 조회 실패해도 재시도 안 함
+      _showLoyaltyToastForCompleted(token, detail);
+    }
+  }
+
+  // ── 단골 토스트 표출 (COMPLETED 직후 1회) ────────────────
+  //
+  // 백엔드 GET /restaurants/:id/loyalty?userId=:userId 호출.
+  // visitCount 가 1 이상이면 친근 카피로 SnackBar 표시.
+  // 실패/null = 토스트 미표시 (조용히 폴백 — 사용자 흐름 방해 X).
+  Future<void> _showLoyaltyToastForCompleted(
+    String token,
+    OrderDetailDto order,
+  ) async {
+    final userId = ref.read(userProvider).userId;
+    if (userId == null || userId.isEmpty) return;
+
+    final loyalty = await _restaurantsApi.getLoyalty(
+      accessToken: token,
+      restaurantId: order.restaurantId!,
+      userId: userId,
+    );
+
+    if (!mounted || loyalty == null || loyalty.visitCount <= 0) return;
+
+    final message = loyalty.toastMessage();
+    if (message.isEmpty) return;
+
+    // 등급에 따라 토스트 배경 톤만 살짝 차이 — 디자인 토큰은 그대로.
+    final amber = Colors.amber.shade700;
+    final isVip = loyalty.rank == 'VIP';
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        backgroundColor: isVip ? amber : null,
+        content: Text(
+          message,
+          style: TextStyle(
+            color: isVip ? Colors.white : null,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        duration: const Duration(seconds: 4),
+      ),
+    );
   }
 
   // ── 세션 멤버 수 조회 (더치페이 계산) ───────────────────
