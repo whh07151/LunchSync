@@ -91,9 +91,18 @@ class PaymentsApiService {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
-        return ConfirmPaymentResult.fromJson(
-          json['data'] as Map<String, dynamic>,
-        );
+        // 2026-05-30 P2 fix: 백엔드 응답 포맷 변경(top-level order) 또는
+        // PostgREST silent failure 로 'data' 키 누락 시 캐스팅 예외 → 앱
+        // 크래시. 결제 금액만 소비되고 결과 화면 진입 실패하는 회귀 차단.
+        final data = json['data'] as Map<String, dynamic>?;
+        if (data == null) {
+          debugPrint(
+            '[PaymentsApiService] confirmPayment 응답에 data 필드 누락: '
+            '${response.body}',
+          );
+          return null;
+        }
+        return ConfirmPaymentResult.fromJson(data);
       }
 
       debugPrint(
