@@ -1,309 +1,319 @@
-﻿import 'package:flutter/foundation.dart' show debugPrint;
+// ══════════════════════════════════════════════════════════
+// 파일 역할: 주문(orders) 관련 API 호출 + Wrapped(월간 리포트) 집계
+//
+// 담당 엔드포인트:
+//   GET /api/orders/today           — 오늘 내가 참여한 주문 목록(이미 backend 존재 가정)
+//   GET /api/orders/wrapped         — 월간 Wrapped 통계 (backend 미존재 시 폴백)
+//
+// 폴백 전략:
+//   - 백엔드에 wrapped 엔드포인트가 아직 없을 수 있으므로
+//     클라이언트가 직접 1달치 주문을 누적해 집계(N끼/평균/Top식당/카테고리 분포).
+//   - 그것마저 실패하면 시연용 시드 데이터(WrappedStats.demo())를 반환.
+//
+// 사용처:
+//   - CU-23 내정보 화면의 "이번 달 점심 Wrapped 보기" 카드 진입 시
+//     WrappedScreen 이 getWrappedStats(year, month) 를 호출.
+// ══════════════════════════════════════════════════════════
+
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
-import '../core/api/api_auth_hooks.dart';
-import '../core/api/http_headers_helper.dart';
 
-// ══════════════════════════════════════════════════════════
-// 파일 역할: 주문(Orders) 관련 API 호출 서비스
-//
-// 담당 엔드포인트:
-//   POST  /api/orders          — 주문 생성 + 결제 (CU-17/18/19)
-//   GET   /api/orders/today    — 오늘 내 주문 목록
-//   GET   /api/orders/:id      — 주문 상세
-//   PATCH /api/orders/:id/status — 주문 상태 변경
-//
-// 토스 결제 흐름과의 관계:
-//   1) createOrder(paymentMethod: 'TOSS') 로 주문만 생성 (PENDING 상태)
-//   2) 프론트가 토스 결제위젯 v2 로 결제 요청
-//   3) 결제 성공 후 PaymentsApiService.confirm() 으로 최종 승인
-// ══════════════════════════════════════════════════════════
-
-/// 주문 생성 요청에 담는 한 개 메뉴 항목
-class CreateOrderItem {
-  const CreateOrderItem({
-    required this.menuItemId,
-    required this.quantity,
-  });
-
-  final String menuItemId; // Supabase menu_items.id (UUID)
-  final int quantity;      // 수량 (1 이상)
-
-  Map<String, dynamic> toJson() => {
-        'menuItemId': menuItemId,
-        'quantity': quantity,
-      };
-}
-
-/// 주문 목록 항목 (GET /orders/today 응답)
-///
-/// 목록에서는 item 정보를 반환하지 않음 → 상세는 getOrderById로.
-class OrderSummaryDto {
-  const OrderSummaryDto({
+// ─────────────────────────────────────────────────────────
+// 단일 주문 항목 DTO — /api/orders/today 응답 매핑용
+// (백엔드 응답 스펙이 확정되기 전까지는 방어적으로 옵셔널 처리)
+// ─────────────────────────────────────────────────────────
+class OrderDto {
+  const OrderDto({
     required this.id,
-    required this.sessionId,
-    required this.status,
-    required this.totalPrice,
-    required this.createdAt,
-  });
-
-  final String id;
-  final String sessionId;
-  final String status;    // PENDING | PAID | PREPARING | READY | COMPLETED | CANCELLED
-  final int totalPrice;
-  final String createdAt; // ISO 8601 문자열
-
-  factory OrderSummaryDto.fromJson(Map<String, dynamic> json) {
-    return OrderSummaryDto(
-      id: json['id'] as String,
-      sessionId: json['sessionId'] as String,
-      status: json['status'] as String,
-      totalPrice: (json['totalPrice'] as num).toInt(),
-      createdAt: json['createdAt'] as String? ?? '',
-    );
-  }
-}
-
-/// 주문 상세 항목 (order_items[] 한 줄)
-class OrderItemDetailDto {
-  const OrderItemDetailDto({
-    required this.id,
-    required this.menuItemId,
-    required this.menuName,
-    required this.quantity,
-    required this.price,
-  });
-
-  final String id;
-  final String menuItemId;
-  final String? menuName;
-  final int quantity;
-  final int price;
-
-  factory OrderItemDetailDto.fromJson(Map<String, dynamic> json) {
-    return OrderItemDetailDto(
-      id: json['id'] as String,
-      menuItemId: json['menuItemId'] as String,
-      menuName: json['menuName'] as String?,
-      quantity: (json['quantity'] as num).toInt(),
-      price: (json['price'] as num).toInt(),
-    );
-  }
-}
-
-/// 주문 상세 (GET /orders/:id 응답)
-///
-/// [별점/리뷰 필드 — 2026-05-15 추가]
-///   백엔드 OrdersService.getOrderById 가 review_score / review_text / review_at /
-///   restaurant_id 도 함께 select 해서 내려주므로 클라이언트 측 DTO 도 동기화한다.
-///   reviewScore 가 null = 아직 리뷰 미작성 → 손님 어플 "별점 남기기" 카드 노출.
-///   reviewScore != null = 이미 작성 → 카드 숨김 (배민 패턴, 1주문 1리뷰).
-///   restaurantId 는 사장 리뷰 화면 진입 등에 활용 가능 (현재는 표시 용).
-class OrderDetailDto {
-  const OrderDetailDto({
-    required this.id,
-    required this.sessionId,
-    required this.userId,
-    required this.status,
-    required this.totalPrice,
-    required this.items,
-    this.paymentKey,
-    this.createdAt,
-    this.updatedAt,
     this.restaurantId,
-    this.reviewScore,
-    this.reviewText,
-    this.reviewAt,
-    this.estimatedReadyAt,
-    this.completionPhotoUrl,
+    this.restaurantName,
+    this.category,
+    this.totalAmount,
+    this.createdAt,
   });
 
   final String id;
-  final String sessionId;
-  final String userId;
-  final String status;
-  final int totalPrice;
-  final String? paymentKey;
-  final String? createdAt;
-  final String? updatedAt;
-  final List<OrderItemDetailDto> items;
-
-  /// 주문이 속한 식당 ID (별점 카드 컨텍스트 표시 등 보조 용도).
   final String? restaurantId;
+  final String? restaurantName;
+  final String? category;       // 한식/일식/양식/중식/카페 등
+  final int? totalAmount;       // 1인 결제 금액(원)
+  final DateTime? createdAt;    // ISO 8601 (백엔드: created_at)
 
-  /// 별점 (1~5). null = 아직 미작성.
-  final int? reviewScore;
-
-  /// 리뷰 본문. null 또는 빈 문자열 = 작성 안 함.
-  final String? reviewText;
-
-  /// 리뷰 작성 시각 (ISO 8601). null = 미작성.
-  final String? reviewAt;
-
-  /// 2026-05-16 배민 패턴 — 예상 픽업 시각 (ISO 8601).
-  /// PAID/ACCEPTED/PREPARING 일 때만 채워짐. 그 외는 null.
-  final String? estimatedReadyAt;
-
-  /// 2026-05-31 WOW#2 — 사장이 POS 에서 보낸 조리 완료 사진 URL.
-  /// null = 아직 사진 미첨부. 손님 추적 화면이 hero 이미지로 페이드인 표시.
-  final String? completionPhotoUrl;
-
-  factory OrderDetailDto.fromJson(Map<String, dynamic> json) {
-    final itemsRaw = json['items'] as List<dynamic>? ?? [];
-    return OrderDetailDto(
-      id: json['id'] as String,
-      sessionId: json['sessionId'] as String,
-      userId: json['userId'] as String,
-      status: json['status'] as String,
-      totalPrice: (json['totalPrice'] as num).toInt(),
-      paymentKey: json['paymentKey'] as String?,
-      createdAt: json['createdAt'] as String?,
-      updatedAt: json['updatedAt'] as String?,
-      restaurantId: json['restaurantId'] as String?,
-      reviewScore: (json['reviewScore'] as num?)?.toInt(),
-      reviewText: json['reviewText'] as String?,
-      reviewAt: json['reviewAt'] as String?,
-      estimatedReadyAt: json['estimatedReadyAt'] as String?,
-      completionPhotoUrl: json['completionPhotoUrl'] as String?,
-      items: itemsRaw
-          .map((e) => OrderItemDetailDto.fromJson(e as Map<String, dynamic>))
-          .toList(),
+  factory OrderDto.fromJson(Map<String, dynamic> json) {
+    // 백엔드 응답 키 후보를 모두 시도 (snake_case / camelCase 혼재 방어)
+    final restaurant = json['restaurant'] as Map<String, dynamic>?;
+    return OrderDto(
+      id: (json['id'] ?? json['order_id'] ?? '').toString(),
+      restaurantId: (json['restaurantId'] ??
+              json['restaurant_id'] ??
+              restaurant?['id'])
+          ?.toString(),
+      restaurantName: (json['restaurantName'] ??
+              json['restaurant_name'] ??
+              restaurant?['name']) as String?,
+      category: (json['category'] ?? restaurant?['category']) as String?,
+      totalAmount: (json['totalAmount'] ??
+              json['total_amount'] ??
+              json['amount']) as int?,
+      createdAt: _parseDate(json['createdAt'] ?? json['created_at']),
     );
+  }
+
+  static DateTime? _parseDate(dynamic v) {
+    if (v == null) return null;
+    if (v is String) return DateTime.tryParse(v);
+    return null;
   }
 }
 
-/// 주문 생성 API 응답
-class CreateOrderResult {
-  const CreateOrderResult({
-    required this.id,
-    required this.sessionId,
-    required this.status,
-    required this.totalPrice,
-    required this.paymentMethod,
-    this.paymentKey,
+// ─────────────────────────────────────────────────────────
+// Wrapped 월간 통계 DTO
+//   - totalCount   : 그 달에 먹은 끼니 수
+//   - averagePrice : 1끼 평균 금액(원)
+//   - topRestaurant: 가장 자주 간 식당 (이름/카테고리/방문 횟수)
+//   - categoryRatio: 카테고리별 비율 (한식 0.45, 일식 0.22 ...)
+// ─────────────────────────────────────────────────────────
+class WrappedStats {
+  const WrappedStats({
+    required this.year,
+    required this.month,
+    required this.totalCount,
+    required this.averagePrice,
+    required this.topRestaurantName,
+    required this.topRestaurantCategory,
+    required this.topVisitCount,
+    required this.categoryRatio,
   });
 
-  final String id;           // 생성된 주문 UUID — 토스 orderId 로 사용
-  final String sessionId;
-  final String status;       // PENDING | PAID | ...
-  final int totalPrice;      // 총 금액 (KRW)
-  final String paymentMethod;
-  final String? paymentKey;  // SIMULATE 모드에서만 값이 있음
+  final int year;
+  final int month;
+  final int totalCount;
+  final int averagePrice;
+  final String topRestaurantName;
+  final String topRestaurantCategory;
+  final int topVisitCount;
+  final Map<String, double> categoryRatio; // 카테고리 → 0.0~1.0
 
-  factory CreateOrderResult.fromJson(Map<String, dynamic> json) {
-    return CreateOrderResult(
-      id: json['id'] as String,
-      sessionId: json['sessionId'] as String,
-      status: json['status'] as String,
-      totalPrice: (json['totalPrice'] as num).toInt(),
-      paymentMethod: json['paymentMethod'] as String,
-      paymentKey: json['paymentKey'] as String?,
-    );
-  }
+  /// 빈 데이터(끼니 0개) 표시용 — 끼니가 한 번도 없으면 이 상태로
+  factory WrappedStats.empty(int year, int month) => WrappedStats(
+        year: year,
+        month: month,
+        totalCount: 0,
+        averagePrice: 0,
+        topRestaurantName: '아직 기록이 없어요',
+        topRestaurantCategory: '',
+        topVisitCount: 0,
+        categoryRatio: const {},
+      );
+
+  /// 시연용 시드 데이터 — 백엔드 응답도 없고 폴백 계산도 실패한 경우
+  /// (시연 시나리오: orders 5건 기준)
+  factory WrappedStats.demo(int year, int month) => WrappedStats(
+        year: year,
+        month: month,
+        totalCount: 5,
+        averagePrice: 9200,
+        topRestaurantName: '백채김치찌개',
+        topRestaurantCategory: '한식',
+        topVisitCount: 2,
+        categoryRatio: const {
+          '한식': 0.45,
+          '일식': 0.22,
+          '양식': 0.18,
+          '중식': 0.10,
+          '카페': 0.05,
+        },
+      );
 }
 
+// ─────────────────────────────────────────────────────────
+// API 서비스 본체
+// ─────────────────────────────────────────────────────────
 class OrdersApiService {
   const OrdersApiService();
 
-  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관
-  //   (lib/core/api/http_headers_helper.dart). 9개 서비스 중복 제거.
+  Map<String, String> _headers(String accessToken) => {
+        'Authorization': 'Bearer $accessToken',
+      };
 
-  // ── POST /api/orders — 주문 생성 ──────────────────────
-  // paymentMethod:
-  //   - 'TOSS'     : 토스페이먼츠 결제위젯 v2 로 결제 (PENDING 상태로 생성)
-  //   - 'SIMULATE' : 가상 결제 (즉시 PAID 처리)
-  //   - 'CASH'     : 현금 결제 (즉시 PAID 처리)
-  Future<CreateOrderResult?> createOrder({
-    required String accessToken,
-    required String sessionId,
-    required List<CreateOrderItem> items,
-    String paymentMethod = 'TOSS',
-  }) async {
+  // ── GET /api/orders/today ─────────────────────────────
+  // 오늘 내가 참여한 주문 목록 (백엔드 미존재 시 빈 배열 반환)
+  Future<List<OrderDto>> getTodayOrders(String accessToken) async {
     try {
-      final body = jsonEncode({
-        'sessionId': sessionId,
-        'items': items.map((e) => e.toJson()).toList(),
-        'paymentMethod': paymentMethod,
-      });
-
-      final response = await http
-          .post(
-            Uri.parse('${AppConfig.backendBaseUrl}/orders'),
-            headers: apiHeaders(accessToken),
-            body: body,
-          )
-          .timeout(AppConfig.apiTimeout);
-      ApiAuthHooks.check(response.statusCode);
-
-      if (response.statusCode == 200 || response.statusCode == 201) {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        return CreateOrderResult.fromJson(
-          json['data'] as Map<String, dynamic>,
-        );
-      }
-
-      debugPrint(
-        '[OrdersApiService] createOrder 실패: '
-        '${response.statusCode} ${response.body}',
-      );
-      return null;
-    } catch (e) {
-      debugPrint('[OrdersApiService] createOrder 에러: $e');
-      return null;
-    }
-  }
-
-  // ── GET /api/orders/today — 오늘 내 주문 목록 ─────────
-  Future<List<OrderSummaryDto>> getTodayOrders({
-    required String accessToken,
-  }) async {
-    try {
-      final response = await http
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/orders/today'),
-            headers: apiHeaders(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
-      ApiAuthHooks.check(response.statusCode);
+      final uri = Uri.parse('${AppConfig.backendBaseUrl}/orders/today');
+      final response = await http.get(uri, headers: _headers(accessToken));
 
       if (response.statusCode == 200) {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final list = json['data'] as List<dynamic>;
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final list = (body['data'] as List<dynamic>?) ?? const [];
         return list
-            .map((e) => OrderSummaryDto.fromJson(e as Map<String, dynamic>))
+            .map((e) => OrderDto.fromJson(e as Map<String, dynamic>))
             .toList();
       }
       return [];
     } catch (e) {
-      debugPrint('[OrdersApiService] getTodayOrders 에러: $e');
+      // ignore: avoid_print
+      print('[OrdersApiService] getTodayOrders 에러: $e');
       return [];
     }
   }
 
-  // ── GET /api/orders/:id — 주문 상세 (폴링 대상) ──────
-  // 주문 추적 화면에서 3초 간격 폴링으로 상태 변화를 감지하는 데 사용.
-  Future<OrderDetailDto?> getOrderById({
+  // ── GET /api/orders/wrapped?year=&month= ──────────────
+  // 백엔드 전용 wrapped 엔드포인트 시도 → 실패 시 폴백.
+  //
+  // 폴백 순서:
+  //   ① /orders/wrapped 200 응답 → 그대로 사용
+  //   ② /orders?year=&month= 가 있으면 그 응답을 클라가 직접 집계
+  //   ③ /orders/today 만 가능하면 오늘 데이터로 집계 (사실상 1일치)
+  //   ④ 위 전부 실패 → WrappedStats.demo() (시연용)
+  Future<WrappedStats> getWrappedStats({
     required String accessToken,
-    required String orderId,
+    required int year,
+    required int month,
   }) async {
+    // ── ① 전용 엔드포인트 시도 ──────────────────────────
     try {
-      final response = await http
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/orders/$orderId'),
-            headers: apiHeaders(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
-      ApiAuthHooks.check(response.statusCode);
-
+      final uri = Uri.parse(
+        '${AppConfig.backendBaseUrl}/orders/wrapped'
+        '?year=$year&month=$month',
+      );
+      final response = await http.get(uri, headers: _headers(accessToken));
       if (response.statusCode == 200) {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        return OrderDetailDto.fromJson(json['data'] as Map<String, dynamic>);
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = body['data'] as Map<String, dynamic>?;
+        if (data != null) {
+          return _wrappedFromJson(data, year, month);
+        }
       }
-      return null;
     } catch (e) {
-      debugPrint('[OrdersApiService] getOrderById 에러: $e');
-      return null;
+      // ignore: avoid_print
+      print('[OrdersApiService] wrapped 전용 엔드포인트 실패(폴백 진행): $e');
     }
+
+    // ── ② 월 단위 주문 목록 → 클라 집계 ────────────────
+    try {
+      final uri = Uri.parse(
+        '${AppConfig.backendBaseUrl}/orders'
+        '?year=$year&month=$month',
+      );
+      final response = await http.get(uri, headers: _headers(accessToken));
+      if (response.statusCode == 200) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final list = (body['data'] as List<dynamic>?) ?? const [];
+        if (list.isNotEmpty) {
+          final orders = list
+              .map((e) => OrderDto.fromJson(e as Map<String, dynamic>))
+              .toList();
+          return _aggregate(orders, year, month);
+        }
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('[OrdersApiService] 월 단위 주문 폴백 실패: $e');
+    }
+
+    // ── ③ 오늘 주문이라도 있으면 집계 ───────────────────
+    try {
+      final todays = await getTodayOrders(accessToken);
+      if (todays.isNotEmpty) {
+        return _aggregate(todays, year, month);
+      }
+    } catch (_) {
+      // 무시 후 다음 폴백
+    }
+
+    // ── ④ 데모(시드) 반환 — 시연용 ─────────────────────
+    return WrappedStats.demo(year, month);
+  }
+
+  // ── 백엔드 응답 → DTO 변환 ────────────────────────────
+  // 백엔드가 임의로 키를 정의해도 합리적으로 매핑.
+  WrappedStats _wrappedFromJson(
+    Map<String, dynamic> data,
+    int year,
+    int month,
+  ) {
+    final ratioRaw = data['categoryRatio'] as Map<String, dynamic>? ??
+        data['category_ratio'] as Map<String, dynamic>? ??
+        const {};
+    final ratio = <String, double>{};
+    ratioRaw.forEach((k, v) {
+      if (v is num) ratio[k] = v.toDouble();
+    });
+
+    return WrappedStats(
+      year: year,
+      month: month,
+      totalCount: (data['totalCount'] ?? data['total_count'] ?? 0) as int,
+      averagePrice:
+          (data['averagePrice'] ?? data['average_price'] ?? 0) as int,
+      topRestaurantName: (data['topRestaurantName'] ??
+              data['top_restaurant_name'] ??
+              '단골 식당 없음') as String,
+      topRestaurantCategory: (data['topRestaurantCategory'] ??
+              data['top_restaurant_category'] ??
+              '') as String,
+      topVisitCount:
+          (data['topVisitCount'] ?? data['top_visit_count'] ?? 0) as int,
+      categoryRatio: ratio,
+    );
+  }
+
+  // ── 주문 목록 → 통계 집계 (클라이언트 폴백 계산) ────
+  // N끼/평균/Top식당/카테고리 비율을 한 번에 계산
+  WrappedStats _aggregate(List<OrderDto> orders, int year, int month) {
+    if (orders.isEmpty) return WrappedStats.empty(year, month);
+
+    // 1) N끼 — 주문 개수 = 그 달 끼니 수
+    final totalCount = orders.length;
+
+    // 2) 평균 금액 — totalAmount 가 null 인 항목은 평균 계산에서 제외
+    final priced =
+        orders.where((o) => o.totalAmount != null && o.totalAmount! > 0);
+    final sumPrice = priced.fold<int>(0, (acc, o) => acc + (o.totalAmount!));
+    final averagePrice = priced.isEmpty ? 0 : (sumPrice ~/ priced.length);
+
+    // 3) Top 식당 — 식당 ID(or 이름) 기준 카운트 후 최다 방문 1개
+    final restaurantCount = <String, int>{};
+    final restaurantName = <String, String>{};
+    final restaurantCategory = <String, String>{};
+    for (final o in orders) {
+      final key = o.restaurantId ?? o.restaurantName ?? '미상';
+      restaurantCount[key] = (restaurantCount[key] ?? 0) + 1;
+      restaurantName[key] = o.restaurantName ?? '이름 없는 식당';
+      if ((o.category ?? '').isNotEmpty) {
+        restaurantCategory[key] = o.category!;
+      }
+    }
+    final topKey = restaurantCount.entries
+        .reduce((a, b) => a.value >= b.value ? a : b)
+        .key;
+    final topName = restaurantName[topKey] ?? '이름 없는 식당';
+    final topCategory = restaurantCategory[topKey] ?? '';
+    final topVisit = restaurantCount[topKey] ?? 0;
+
+    // 4) 카테고리 비율 — 미상은 "기타"
+    final categoryCount = <String, int>{};
+    for (final o in orders) {
+      final c = (o.category ?? '').isNotEmpty ? o.category! : '기타';
+      categoryCount[c] = (categoryCount[c] ?? 0) + 1;
+    }
+    final total = categoryCount.values.fold<int>(0, (a, b) => a + b);
+    final categoryRatio = <String, double>{};
+    categoryCount.forEach((k, v) {
+      categoryRatio[k] = total == 0 ? 0.0 : v / total;
+    });
+
+    return WrappedStats(
+      year: year,
+      month: month,
+      totalCount: totalCount,
+      averagePrice: averagePrice,
+      topRestaurantName: topName,
+      topRestaurantCategory: topCategory,
+      topVisitCount: topVisit,
+      categoryRatio: categoryRatio,
+    );
   }
 }

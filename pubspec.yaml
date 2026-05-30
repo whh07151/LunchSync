@@ -37,17 +37,11 @@ dependencies:
   flutter_riverpod: ^2.6.1
   kakao_flutter_sdk_user: ^1.9.7
   http: ^1.2.0
-  webview_flutter: ^4.13.1
-  # GPS 위치 조회 — Android/iOS/Web 모두 지원 (브라우저 geolocation API 자동 사용)
-  geolocator: ^13.0.2
-  # 외부 앱/URL 실행 — 네이버·카카오맵 길찾기로 넘길 때 사용
-  url_launcher: ^6.3.1
-  # Firebase Phone Auth — Web/Android 휴대폰 본인확인 (Spark 무료 플랜)
-  # firebase_auth / firebase_messaging / firebase_core 는 메이저 버전을 함께 맞춰야 함.
-  firebase_core: ^3.6.0
-  firebase_auth: ^5.3.1
-  # FCM 푸시 알림 — 주문 상태 변경/투표 결과 등을 단말에 전달
-  firebase_messaging: ^15.1.3
+
+  # ── WOW 4순위: 점심 Wrapped(월간 리포트) ──────────────
+  # share_plus: 마지막 슬라이드 "친구에게 자랑하기" 외부 공유용
+  # (현재 코드는 클립보드 폴백으로도 동작 — 미설치여도 빌드 OK)
+  share_plus: ^10.1.2
 
 dev_dependencies:
   flutter_test:
