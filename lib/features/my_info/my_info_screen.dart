@@ -5,6 +5,7 @@ import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/users_api_service.dart';
+import 'wrapped_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-23 내정보/설정 화면
@@ -411,6 +412,11 @@ class _MyInfoScreenState extends ConsumerState<MyInfoScreen> {
 
             const SizedBox(height: AppSpacing.md),
 
+            // ── 점심 Wrapped 진입 카드 (WOW 포인트 4순위) ─
+            _buildWrappedEntryCard(),
+
+            const SizedBox(height: AppSpacing.md),
+
             // ── 내 설정 섹션 (반경/예산/속도) ────────────
             _buildPreferencesSection(),
 
@@ -704,6 +710,96 @@ class _MyInfoScreenState extends ConsumerState<MyInfoScreen> {
                   size: 20, color: AppColors.textSecondary),
             ],
           ],
+        ),
+      ),
+    );
+  }
+
+  // ── 점심 Wrapped 진입 카드 ────────────────────────────────
+  // WOW 포인트 4순위: 한 달 점심을 인스타 스토리 톤으로 회고
+  // 탭하면 WrappedScreen (풀스크린 PageView 5장) 로 이동
+  Widget _buildWrappedEntryCard() {
+    final now = DateTime.now();
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.screenHorizontal,
+      ),
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        onTap: () {
+          // 풀스크린 다이얼로그 형태로 진입 (스토리 톤 강조)
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              fullscreenDialog: true,
+              builder: (_) => WrappedScreen(
+                year: now.year,
+                month: now.month,
+              ),
+            ),
+          );
+        },
+        child: Container(
+          padding: const EdgeInsets.all(AppSpacing.md),
+          decoration: BoxDecoration(
+            // 인스타 스토리 톤 그라디언트로 카드 자체도 화려하게
+            gradient: const LinearGradient(
+              colors: [Color(0xFFFF6B35), Color(0xFFE91E63), Color(0xFF9370DB)],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(AppRadius.card),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black.withAlpha(30),
+                blurRadius: 12,
+                offset: const Offset(0, 4),
+              ),
+            ],
+          ),
+          child: Row(
+            children: [
+              // ── 좌측 아이콘 ──
+              Container(
+                width: 48,
+                height: 48,
+                decoration: BoxDecoration(
+                  color: Colors.white.withAlpha(60),
+                  shape: BoxShape.circle,
+                ),
+                child: const Center(
+                  child: Text('🎁', style: TextStyle(fontSize: 26)),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.md),
+              // ── 텍스트 ──
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      '${now.month}월의 점심 Wrapped',
+                      style: AppTextStyles.bodyLarge.copyWith(
+                        color: Colors.white,
+                        fontWeight: FontWeight.w800,
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      '한 달간의 점심을 스토리로 돌아보기',
+                      style: AppTextStyles.bodySmall.copyWith(
+                        color: Colors.white.withAlpha(230),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              // ── 우측 화살표 ──
+              const Icon(
+                Icons.chevron_right_rounded,
+                color: Colors.white,
+              ),
+            ],
+          ),
         ),
       ),
     );

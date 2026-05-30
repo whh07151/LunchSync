@@ -38,6 +38,11 @@ dependencies:
   kakao_flutter_sdk_user: ^1.9.7
   http: ^1.2.0
 
+  # ── WOW 4순위: 점심 Wrapped(월간 리포트) ──────────────
+  # share_plus: 마지막 슬라이드 "친구에게 자랑하기" 외부 공유용
+  # (현재 코드는 클립보드 폴백으로도 동작 — 미설치여도 빌드 OK)
+  share_plus: ^10.1.2
+
 dev_dependencies:
   flutter_test:
     sdk: flutter
