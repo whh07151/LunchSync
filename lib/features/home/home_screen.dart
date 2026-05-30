@@ -1423,7 +1423,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // 단순 스피너보다 페이지 점프가 적어 UX 부드러움.
     if (_isRestaurantsLoading) {
       return SizedBox(
-        height: 176,
+        // 2026-05-30 회귀 fix: 카드 콘텐츠가 5px overflow 되어 노란 줄무늬
+        // 경고가 노출됨. 안전 마진 포함 184로 통일.
+        height: 184,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           physics: const NeverScrollableScrollPhysics(),
@@ -1548,7 +1550,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
 
     return SizedBox(
-      height: 176,
+      // 2026-05-30 회귀 fix: AI 추천 카드 콘텐츠 5px overflow.
+      // 스켈레톤과 동일하게 184 로 통일 (rating 칩 추가로 1줄 늘어난 영향).
+      height: 184,
       child: ListView.separated(
         // scrollDirection.horizontal: 가로 방향으로 스크롤
         scrollDirection: Axis.horizontal,
