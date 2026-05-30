@@ -1,7 +1,8 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/http_headers_helper.dart';
 import '../core/config/app_config.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -107,11 +108,8 @@ class FriendsApiService {
   const FriendsApiService();
 
   // ── 공용 헤더 빌더 ────────────────────────────────────────
-  // 모든 친구 API 가 동일한 헤더를 쓰므로 한 곳에 모아 중복 방지
-  Map<String, String> _headers(String accessToken) => {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      };
+  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관
+  //   (lib/core/api/http_headers_helper.dart). 9개 서비스 중복 제거.
 
   // ── POST /api/friends — 이메일로 친구 추가 ────────────────
   //
@@ -129,7 +127,7 @@ class FriendsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/friends'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({'email': email.trim()}),
           )
           .timeout(AppConfig.apiTimeout);
@@ -181,7 +179,7 @@ class FriendsApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/friends'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -219,7 +217,7 @@ class FriendsApiService {
       final response = await http
           .delete(
             Uri.parse('${AppConfig.backendBaseUrl}/friends/$friendUserId'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);

@@ -1,8 +1,9 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+﻿import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/http_headers_helper.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 토스페이먼츠 결제 승인 API 호출 서비스
@@ -58,10 +59,8 @@ class ConfirmPaymentResult {
 class PaymentsApiService {
   const PaymentsApiService();
 
-  Map<String, String> _headers(String accessToken) => {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      };
+  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관
+  //   (lib/core/api/http_headers_helper.dart). 9개 서비스 중복 제거.
 
   // ── POST /api/payments/confirm ────────────────────────
   // 결제 성공 화면(PaymentSuccessScreen)에서 호출.
@@ -79,7 +78,7 @@ class PaymentsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/payments/confirm'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({
               'paymentKey': paymentKey,
               'orderId': orderId,

@@ -1,8 +1,9 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+﻿import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/http_headers_helper.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 주문(Orders) 관련 API 호출 서비스
@@ -199,10 +200,8 @@ class CreateOrderResult {
 class OrdersApiService {
   const OrdersApiService();
 
-  Map<String, String> _headers(String accessToken) => {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      };
+  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관
+  //   (lib/core/api/http_headers_helper.dart). 9개 서비스 중복 제거.
 
   // ── POST /api/orders — 주문 생성 ──────────────────────
   // paymentMethod:
@@ -225,7 +224,7 @@ class OrdersApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/orders'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: body,
           )
           .timeout(AppConfig.apiTimeout);
@@ -257,7 +256,7 @@ class OrdersApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/orders/today'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -286,7 +285,7 @@ class OrdersApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/orders/$orderId'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);

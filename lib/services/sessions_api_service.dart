@@ -1,8 +1,9 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+﻿import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/http_headers_helper.dart';
 import '../models/session.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -22,10 +23,9 @@ import '../models/session.dart';
 class SessionsApiService {
   const SessionsApiService();
 
-  Map<String, String> _headers(String accessToken) => {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      };
+  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관.
+  //   기존 private `_headers()` 는 9개 서비스에 중복 정의되어 있었음.
+  //   `lib/core/api/http_headers_helper.dart` 한 곳에서 관리.
 
   // ── POST /api/sessions ────────────────────────────────
   // CU-09에서 입력한 세션 조건을 모두 전달.
@@ -55,7 +55,7 @@ class SessionsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode(body),
           )
           .timeout(AppConfig.apiTimeout);
@@ -80,7 +80,7 @@ class SessionsApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/today'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -108,7 +108,7 @@ class SessionsApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -154,7 +154,7 @@ class SessionsApiService {
       final response = await http
           .patch(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/status'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({'status': status}),
           )
           .timeout(AppConfig.apiTimeout);
@@ -232,7 +232,7 @@ class SessionsApiService {
       final response = await http
           .delete(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -298,7 +298,7 @@ class SessionsApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -326,7 +326,7 @@ class SessionsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({'userId': userId}),
           )
           .timeout(AppConfig.apiTimeout);
@@ -348,7 +348,7 @@ class SessionsApiService {
           .delete(
             Uri.parse(
                 '${AppConfig.backendBaseUrl}/sessions/$sessionId/members/$userId'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
