@@ -390,6 +390,77 @@ class SessionsApiService {
       return false;
     }
   }
+
+  // ── GET /api/sessions/:id/invite ──────────────────────
+  // WOW#8 친구 초대 시스템 (2026-05-31):
+  //   세션 로비의 "친구 초대" 버튼이 호출하는 통합 페이로드 엔드포인트.
+  //   기존 POST /invitations 와 다른 점:
+  //     - 호스트 아닌 일반 멤버도 호출 가능 (코드 자체가 권한 토큰)
+  //     - inviteCode + deepLink + shortLink + expiresAt 4종 한 번에 응답
+  //     - share_plus 의 Share.share() 가 그대로 사용할 수 있는 형태
+  //   실패 시 null 반환 — 호출부에서 토스트 띄우고 fallback (코드만 복사).
+  Future<InviteInfo?> getInviteInfo({
+    required String accessToken,
+    required String sessionId,
+  }) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/invite'),
+            headers: apiHeaders(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+
+      if (response.statusCode != 200) {
+        debugPrint(
+            '[SessionsApiService] getInviteInfo ${response.statusCode} body=${response.body}');
+        return null;
+      }
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = json['data'];
+      if (data is! Map<String, dynamic>) return null;
+      return InviteInfo.fromJson(data);
+    } catch (e) {
+      debugPrint('[SessionsApiService] getInviteInfo 예외: $e');
+      return null;
+    }
+  }
+}
+
+// ══════════════════════════════════════════════════════════
+// InviteInfo — WOW#8 친구 초대 응답 모델
+//
+// 백엔드 GET /api/sessions/:id/invite 응답을 그대로 매핑.
+// share_plus 의 Share.share() 가 받을 수 있도록 4개 필드를 1:1 보존.
+//   - inviteCode : 8자리 hex 코드 (UI 큰 글씨 표시 + Clipboard 복사)
+//   - deepLink   : `lunchsync://join?code=XXXXXXXX` (앱 설치자 자동 라우팅용)
+//   - shortLink  : `https://lunchsync.duckdns.org/j/XXXXXXXX` (웹 호환)
+//   - expiresAt  : ISO8601 만료 시각 (UI "24시간 유효" 문구의 동적 표현)
+//
+// 방어적 파싱: 한 필드가 비더라도 객체 생성에 실패하지 않도록 ?? 폴백 사용.
+// ══════════════════════════════════════════════════════════
+class InviteInfo {
+  const InviteInfo({
+    required this.inviteCode,
+    required this.deepLink,
+    required this.shortLink,
+    this.expiresAt,
+  });
+
+  final String inviteCode;
+  final String deepLink;
+  final String shortLink;
+  final String? expiresAt;
+
+  factory InviteInfo.fromJson(Map<String, dynamic> json) {
+    return InviteInfo(
+      inviteCode: (json['inviteCode'] as String?) ?? '',
+      deepLink: (json['deepLink'] as String?) ?? '',
+      shortLink: (json['shortLink'] as String?) ?? '',
+      expiresAt: json['expiresAt'] as String?,
+    );
+  }
 }
 
 

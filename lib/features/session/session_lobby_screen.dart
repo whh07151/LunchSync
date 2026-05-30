@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:share_plus/share_plus.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
@@ -424,7 +425,19 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppCustomBar(showBack: true),
+      appBar: AppCustomBar(
+        showBack: true,
+        // WOW#8: 호스트/멤버 구분 없이 누구나 친구를 더 부를 수 있도록
+        // 우측 상단에 person_add_alt_1 액션 버튼을 노출.
+        // (기존 호스트 전용 _buildInviteCodeCard 와 별개 동선 — 멤버도 접근 가능)
+        actions: [
+          IconButton(
+            tooltip: '친구 초대',
+            icon: const Icon(Icons.person_add_alt_1_rounded),
+            onPressed: () => _openFriendInviteSheet(),
+          ),
+        ],
+      ),
       body: SafeArea(
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
@@ -433,6 +446,236 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
                 : _buildContent(),
       ),
     );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // WOW#8: 친구 초대 BottomSheet
+  //
+  // 흐름:
+  //   1) GET /api/sessions/:id/invite 호출 → 8자리 코드 + 딥링크 + 짧은 링크
+  //   2) 큰 코드 박스(탭 시 클립보드 복사)
+  //   3) "카카오톡 공유" 버튼 — share_plus 의 OS 공유 시트 (카톡/문자/메신저)
+  //   4) "링크 복사" 버튼 — shortLink 만 Clipboard 로
+  //
+  // 메시지 문구는 미션 명세 그대로:
+  //   🍱 {세션이름} 점심 같이 가요!
+  //   참가 코드: ABCD12
+  //   앱에서 코드 입력하거나 링크: {shortLink}
+  //
+  // 실패 처리:
+  //   API 실패(null) 시 invitations API 의 기존 코드로 폴백하지 않고
+  //   에러 토스트만 띄움. (네트워크 문제일 가능성이 높아 재시도 유도가 자연스러움)
+  // ══════════════════════════════════════════════════════════
+  Future<void> _openFriendInviteSheet() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+
+    // 로딩 토스트 노출 — 응답까지 대개 200~600ms 가 걸려 즉각 피드백 필요.
+    final messenger = ScaffoldMessenger.of(context);
+
+    final invite = await SessionsApiService().getInviteInfo(
+      accessToken: token,
+      sessionId: widget.sessionId,
+    );
+
+    if (!mounted) return;
+
+    // 응답 실패 — 사용자에게 명확히 안내하고 종료. (재시도 버튼은 별도 티켓)
+    if (invite == null || invite.inviteCode.isEmpty) {
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('초대 링크를 만들지 못했어요. 잠시 후 다시 시도해주세요.'),
+          duration: Duration(seconds: 3),
+        ),
+      );
+      return;
+    }
+
+    final sessionName = _session?.name ?? '점심 세션';
+    // 미션 명세 그대로 보존 — 줄바꿈 \n 포함. 이모지는 친근감 + 시각 분리 효과.
+    final shareText =
+        '🍱 $sessionName 점심 같이 가요!\n'
+        '참가 코드: ${invite.inviteCode}\n'
+        '앱에서 코드 입력하거나 링크: ${invite.shortLink}';
+
+    if (!mounted) return;
+    final primary = Theme.of(context).colorScheme.primary;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      isScrollControlled: true, // 키보드/긴 콘텐츠 대비
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (sheetCtx) {
+        return SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(20, 16, 20, 24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                // ── 시트 손잡이 ────────────────────────────────
+                Container(
+                  height: 4,
+                  width: 40,
+                  margin: const EdgeInsets.only(bottom: 16),
+                  decoration: BoxDecoration(
+                    color: AppColors.divider,
+                    borderRadius: BorderRadius.circular(2),
+                  ),
+                ),
+
+                // ── 헤더 ──────────────────────────────────────
+                Row(
+                  children: [
+                    Icon(Icons.person_add_alt_1_rounded,
+                        color: primary, size: 22),
+                    const SizedBox(width: 8),
+                    Text('친구 초대', style: AppTextStyles.heading3),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Text(
+                  '한 명만 더 모으면 같이 가요!',
+                  style: AppTextStyles.bodySmall
+                      .copyWith(color: AppColors.textSecondary),
+                ),
+                const SizedBox(height: 16),
+
+                // ── 큰 코드 박스 — 탭 시 코드만 복사 ─────────────
+                InkWell(
+                  onTap: () async {
+                    await Clipboard.setData(
+                        ClipboardData(text: invite.inviteCode));
+                    if (!sheetCtx.mounted) return;
+                    ScaffoldMessenger.of(sheetCtx).showSnackBar(
+                      const SnackBar(
+                        content: Text('참가 코드가 복사됐어요!'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  borderRadius: BorderRadius.circular(AppRadius.card),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 16, vertical: 18),
+                    decoration: BoxDecoration(
+                      color: primary.withAlpha(15),
+                      borderRadius: BorderRadius.circular(AppRadius.card),
+                      border: Border.all(color: primary.withAlpha(60)),
+                    ),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: Text(
+                            invite.inviteCode,
+                            style: AppTextStyles.heading1.copyWith(
+                              letterSpacing: 4,
+                              color: primary,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                        ),
+                        Icon(Icons.copy_rounded,
+                            size: 18, color: primary.withAlpha(180)),
+                        const SizedBox(width: 4),
+                        Text('탭하여 복사',
+                            style: AppTextStyles.bodySmall.copyWith(
+                              color: primary.withAlpha(200),
+                              fontWeight: FontWeight.w600,
+                            )),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+
+                // ── 카카오톡 공유 (share_plus OS 시트) ──────────
+                // share_plus 10.1.x: 정적 Share.share() — OS 공유 시트 호출
+                // → 카카오톡/메시지/문자/Slack 등 사용자 선택 흐름.
+                // 실패하면 Clipboard 폴백 (UX 끊김 방지).
+                ElevatedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(sheetCtx).pop();
+                    try {
+                      await Share.share(shareText, subject: 'LunchSync 초대');
+                    } catch (e) {
+                      debugPrint('[Lobby] Share.share 실패: $e');
+                      await Clipboard.setData(
+                          ClipboardData(text: shareText));
+                      if (!mounted) return;
+                      messenger.showSnackBar(
+                        const SnackBar(
+                          content: Text('공유 시트가 열리지 않아 메시지를 복사했어요. 카톡에 붙여넣으세요!'),
+                          duration: Duration(seconds: 3),
+                        ),
+                      );
+                    }
+                  },
+                  icon: const Icon(Icons.chat_bubble_rounded, size: 18),
+                  label: const Text('카카오톡 공유'),
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: primary,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // ── 링크 복사 (shortLink 만) ─────────────────────
+                OutlinedButton.icon(
+                  onPressed: () async {
+                    Navigator.of(sheetCtx).pop();
+                    await Clipboard.setData(
+                        ClipboardData(text: invite.shortLink));
+                    if (!mounted) return;
+                    messenger.showSnackBar(
+                      const SnackBar(
+                        content: Text('초대 링크가 복사됐어요!'),
+                        duration: Duration(seconds: 2),
+                      ),
+                    );
+                  },
+                  icon: const Icon(Icons.link_rounded, size: 18),
+                  label: const Text('링크 복사'),
+                  style: OutlinedButton.styleFrom(
+                    minimumSize: const Size.fromHeight(48),
+                    side: BorderSide(color: AppColors.border),
+                  ),
+                ),
+                const SizedBox(height: 8),
+
+                // ── 만료 안내 ─────────────────────────────────
+                Center(
+                  child: Text(
+                    _formatExpiresAt(invite.expiresAt),
+                    style: AppTextStyles.bodySmall
+                        .copyWith(color: AppColors.textHint),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  // ── 만료 시각을 사람이 읽기 좋은 짧은 안내 문구로 변환 ─────────
+  // 응답이 빈 경우 "6시간 동안 유효해요" 기본값.
+  // (백엔드가 +6h 만료를 강제하므로 기본 문구가 거의 정확)
+  String _formatExpiresAt(String? iso) {
+    if (iso == null || iso.isEmpty) return '6시간 동안 유효해요';
+    final dt = DateTime.tryParse(iso)?.toLocal();
+    if (dt == null) return '6시간 동안 유효해요';
+    final diff = dt.difference(DateTime.now());
+    if (diff.isNegative) return '이미 만료된 코드예요 — 다시 발급해주세요';
+    if (diff.inHours >= 1) {
+      return '${diff.inHours}시간 ${diff.inMinutes % 60}분 후 만료';
+    }
+    return '${diff.inMinutes}분 후 만료';
   }
 
   // ── 에러 상태 ─────────────────────────────────────────

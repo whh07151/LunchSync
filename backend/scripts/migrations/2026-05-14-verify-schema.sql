@@ -39,12 +39,15 @@ WHERE table_schema = 'public'
 ORDER BY table_name, column_name;
 
 -- ── 2) 핵심 테이블 존재 확인 ──────────────────────────────
+-- 2026-05-31 WOW#9: tournament_results 추가.
+--   누락 시 POST /api/tournaments 가 PostgREST 단에서 silent 실패하여
+--   "주간 트렌딩 식당" 섹션이 영구히 0개 → 홈에서 섹션 자체가 안 보임.
 SELECT
   table_name,
   'OK' AS status
 FROM information_schema.tables
 WHERE table_schema = 'public'
-  AND table_name IN ('pos_seats', 'pos_reservations')
+  AND table_name IN ('pos_seats', 'pos_reservations', 'tournament_results')
 ORDER BY table_name;
 
 -- ── 3) 핵심 RPC 함수 존재 확인 ────────────────────────────
@@ -75,7 +78,7 @@ ORDER BY enumsortorder;
 --             restaurants.todays_note (2026-05-31 WOW#1) /
 --             users.fcm_token / sessions.radius / sessions.budget /
 --             sessions.return_minutes / sessions.memo
--- 2) 테이블 2개: pos_reservations / pos_seats
+-- 2) 테이블 3개: pos_reservations / pos_seats / tournament_results (2026-05-31 WOW#9)
 -- 3) 함수 4개: check_schema_resources / create_order_with_items /
 --             create_session_with_host_member / delete_session_cascade
 --
@@ -86,5 +89,6 @@ ORDER BY enumsortorder;
 --   - sessions.radius/budget/return_minutes/memo → 2026-05-14-ensure-sessions-columns.sql
 --   - pos_seats → 2026-05-14-add-pos-tables.sql
 --   - pos_reservations → 2026-05-14-add-pos-reservations.sql (이번 복원)
+--   - tournament_results → 2026-05-31-create-tournament-results.sql (WOW#9 신규)
 --   - RPC 함수 4종 → 같은 이름의 SQL 파일
 --     (check_schema_resources → 2026-05-14-schema-introspection-rpc.sql)

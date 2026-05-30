@@ -21,6 +21,7 @@ import { PosModule } from './pos/pos.module';
 import { CrawlModule } from './crawl/crawl.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FriendsModule } from './friends/friends.module';
+import { TournamentsModule } from './tournaments/tournaments.module';
 import { DevModule } from './dev/dev.module';
 
 // ══════════════════════════════════════════════════════════
@@ -120,6 +121,11 @@ import { DevModule } from './dev/dev.module';
 
     // CU-08 보강 — 친구 관계 (2026-05-14 사장님 시연 피드백 반영)
     FriendsModule,
+
+    // WOW#6/#9 — 토너먼트 결과 적재 + 주간 트렌딩 식당 (2026-05-31)
+    //   POST /api/tournaments         : 우승 결과 1건 저장
+    //   GET  /api/tournaments/trending: 최근 N일 우승 빈도 상위 식당
+    TournamentsModule,
 
     // dev 전용 — 자동 QA 우회 (DEV_PROMOTE_ENABLED=true 일 때만 동작)
     DevModule,

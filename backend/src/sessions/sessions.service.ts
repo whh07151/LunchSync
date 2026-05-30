@@ -514,4 +514,100 @@ export class SessionsService {
 
     return { success: true };
   }
+
+  // ── GET /sessions/:id/invite ───────────────────────────
+  // WOW#8 친구 초대 시스템 (2026-05-31):
+  //   세션 로비의 "친구 초대" 버튼이 호출하는 단일 엔드포인트.
+  //   기존 POST /invitations 흐름은 그대로 두고, 손님 페르소나용으로 한 번에
+  //   { inviteCode, deepLink, shortLink, expiresAt } 4종 페이로드를 반환한다.
+  //
+  // 동작 원리:
+  //   1) invitations 테이블에서 이 세션의 "아직 만료되지 않은" 코드 1건 조회
+  //      - 최신 생성순으로 정렬해 가장 신선한 코드를 우선 사용
+  //      - 동일 세션에 여러 코드가 있을 수 있어도 첫 유효 코드만 노출
+  //   2) 유효 코드가 없으면(없음 / 모두 만료) 8자리 hex 랜덤 코드 신규 INSERT
+  //      - 만료 시각: 세션이 expires_at 컬럼을 갖지 않으므로 지금 +6시간
+  //        (미션 요구 사항: "sessions.expires_at 또는 +6h")
+  //      - InvitationsService 의 24시간과 다른 이유:
+  //        WOW#8 은 "지금 점심 같이 가자" 일회용 흐름이라 짧게 유지
+  //   3) 응답에 deepLink / shortLink 동봉 — Flutter 가 share_plus 로 그대로 공유
+  //
+  // 보안:
+  //   호스트가 아닌 일반 멤버도 친구를 추가 초대할 수 있도록 호스트 검증은 생략.
+  //   (코드 자체가 권한 토큰 역할이므로 노출되어도 추가 멤버 합류만 가능)
+  //   세션 존재 여부만 확인하고 NotFound 시 명확한 한국어 메시지 반환.
+  //
+  // 환경 변수:
+  //   INVITE_SHORT_LINK_BASE — 운영 시 nginx 가 호스트하는 짧은 링크 도메인.
+  //   미설정이면 미션 기본값 `https://lunchsync.duckdns.org/j/` 사용.
+  //   딥링크 스킴은 `lunchsync://join?code=` 고정.
+  async getInviteInfo(sessionId: string) {
+    // 0단계: 세션 존재 확인 — 잘못된 ID 즉시 404
+    const { data: session, error: sessionError } = await this.supabase.client
+      .from('sessions')
+      .select('id')
+      .eq('id', sessionId)
+      .single();
+    if (sessionError || !session) {
+      throw new NotFoundException('세션을 찾을 수 없어요.');
+    }
+
+    // 1단계: 활성 초대 코드 재사용 시도 — 가장 최근 생성 + 미만료
+    const nowIso = new Date().toISOString();
+    const { data: existing } = await this.supabase.client
+      .from('invitations')
+      .select('invite_code, expires_at')
+      .eq('session_id', sessionId)
+      .gt('expires_at', nowIso)
+      .order('created_at', { ascending: false })
+      .limit(1);
+
+    let inviteCode: string;
+    let expiresAt: string;
+
+    if (existing && existing.length > 0) {
+      // 살아있는 코드 — 그대로 재사용 (동일 세션에 N개의 코드 난립 방지)
+      inviteCode = existing[0].invite_code as string;
+      expiresAt = existing[0].expires_at as string;
+    } else {
+      // 2단계: 새 코드 생성 — 8자리 hex, +6시간 만료
+      // randomBytes(4) → 8자리 hex. InvitationsService 와 동일 포맷 유지해
+      // 기존 POST /invitations/:code/accept 흐름과 호환된다.
+      const { randomBytes } = await import('crypto');
+      inviteCode = randomBytes(4).toString('hex');
+      expiresAt = new Date(Date.now() + 6 * 60 * 60 * 1000).toISOString();
+
+      const { error: insertError } = await this.supabase.client
+        .from('invitations')
+        .insert({
+          session_id: sessionId,
+          invite_code: inviteCode,
+          expires_at: expiresAt,
+        });
+      if (insertError) {
+        // INSERT 실패는 운영 추적 필요 — 로그 + 500
+        this.logger.error(
+          `초대 코드 생성 실패 session=${sessionId}: ${insertError.message}`,
+        );
+        throw new InternalServerErrorException(
+          '초대 링크를 만들지 못했어요. 잠시 후 다시 시도해주세요.',
+        );
+      }
+    }
+
+    // 3단계: deepLink / shortLink 합성 — Flutter 가 share_plus 로 그대로 공유
+    const shortLinkBase =
+      process.env.INVITE_SHORT_LINK_BASE ?? 'https://lunchsync.duckdns.org/j/';
+    // base 끝에 슬래시가 있든 없든 안전하게 코드를 붙이기 위한 정규화
+    const normalizedBase = shortLinkBase.endsWith('/')
+      ? shortLinkBase
+      : `${shortLinkBase}/`;
+
+    return {
+      inviteCode,
+      deepLink: `lunchsync://join?code=${inviteCode}`,
+      shortLink: `${normalizedBase}${inviteCode}`,
+      expiresAt,
+    };
+  }
 }

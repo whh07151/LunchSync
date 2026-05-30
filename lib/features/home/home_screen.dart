@@ -27,6 +27,9 @@ import '../../services/geolocation_service.dart';
 import '../../services/crawl_api_service.dart';
 import '../../services/notifications_api_service.dart';
 import '../../services/favorites_api_service.dart';
+// WOW#9 — 이번 주 토너먼트 인기 식당(최근 N일 우승 빈도 상위) 트렌딩 섹션.
+//   섹션은 데이터 0개일 때 자체 숨김 → 도메인 누락 시 UI 영향 없음.
+import '../../services/tournaments_api_service.dart';
 import '../../models/session.dart';
 import '../my_info/favorites_list_screen.dart';
 import '../tournament/tournament_screen.dart';
@@ -88,6 +91,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   List<FavoriteDto> _myFavorites = const [];
   bool _isFavoritesLoading = true;
 
+  // ── 이번 주 토너먼트 트렌딩 (WOW#9) ───────────────────
+  // 최근 7일 동안 사용자들이 토너먼트로 우승시킨 식당의 빈도 상위 5개.
+  // 데이터 0개면 섹션 자체를 숨김 → 초기 운영 시에도 빈 영역이 안 보이게.
+  // 진입 + 토너먼트 화면 pop 복귀 시 자동 갱신.
+  List<TrendingRestaurantDto> _trendingRestaurants = const [];
+  bool _isTrendingLoading = true;
+
   // ── 알림 미읽음 카운트 (배지 표시용) ────────────────────
   // 0 일 때는 배지 숨김, 1 이상이면 빨간 점.
   int _unreadNotifications = 0;
@@ -140,6 +150,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       _loadRecommendedRestaurants();
       _loadUnreadNotifications();
       _loadMyFavorites();
+      // WOW#9 — 이번 주 토너먼트 트렌딩 식당 미리 로드(0개면 섹션 숨김).
+      _loadTrendingRestaurants();
       // 진입 즉시 1회 자동 크롤링 + 이동 스트림 구독
       _startAutoCrawl();
 
@@ -393,6 +405,42 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     });
   }
 
+  // ── 트렌딩 식당(이번 주 토너먼트) 조회 (WOW#9) ──────────
+  // GET /api/tournaments/trending?limit=5&days=7
+  //   - 우승 빈도 0건 → 빈 리스트(섹션 숨김).
+  //   - 토큰 없으면 호출 자체 스킵 — 비로그인 가드.
+  //   - 실패해도 UX 차단 X — 서비스 자체가 빈 리스트로 폴백.
+  // 토너먼트 화면 pop 복귀 시 자동 갱신을 위해 _openTournament 헬퍼에서 재호출.
+  Future<void> _loadTrendingRestaurants() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) {
+      if (mounted) setState(() => _isTrendingLoading = false);
+      return;
+    }
+    final list = await const TournamentsApiService().getTrending(
+      accessToken: token,
+      // 5개 카드 가로 스크롤 권장 + 7일 윈도우("이번 주" 의미).
+      limit: 5,
+      days: 7,
+    );
+    if (!mounted) return;
+    setState(() {
+      _trendingRestaurants = list;
+      _isTrendingLoading = false;
+    });
+  }
+
+  // ── 토너먼트 화면 진입 + 복귀 시 트렌딩 갱신 ──────────
+  // 사용자가 직접 우승을 만든 직후에는 가장 신선한 트렌딩을 보고 싶어할 가능성이
+  // 높아 복귀 시점에 한 번 더 호출. 백엔드는 우승 INSERT 1건이 즉시 반영됨.
+  Future<void> _openTournament() async {
+    await Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const TournamentScreen()),
+    );
+    if (!mounted) return;
+    _loadTrendingRestaurants();
+  }
+
   // ── 즐겨찾기 목록 화면으로 이동 + 복귀 시 자동 갱신 ────
   // 사용자가 목록에서 항목을 탭해 식당 상세로 들어가 하트 해제 후
   // 두 번 pop 으로 홈에 돌아오면, 홈 위젯도 즉시 반영되어야 함.
@@ -588,6 +636,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           const SizedBox(height: AppSpacing.sm),
           _buildFavoritesList(),
 
+          // ── 이번 주 토너먼트 트렌딩 섹션 (WOW#9) ───────
+          // 데이터 0개면 _buildTrendingSection 이 SizedBox.shrink() 를
+          // 반환하므로 위/아래 간격까지 한 번에 사라진다(어색한 빈 공간 방지).
+          _buildTrendingSection(),
+
           const SizedBox(height: AppSpacing.lg),
 
           // ── AI 추천 식당 섹션 ────────────────────────────
@@ -703,15 +756,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       _QuickAction(
         // WOW#6 — 식당/메뉴 이상형월드컵 진입점 (2026-05-31).
         // 알림은 AppBar 우측 아이콘에 이미 있으므로 결정 도우미를 4번째 슬롯으로.
+        // WOW#9 — _openTournament 로 교체: pop 복귀 시 트렌딩 자동 갱신.
         icon: Icons.emoji_events_outlined,
         label: '토너먼트',
-        onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => const TournamentScreen(),
-            ),
-          );
-        },
+        onTap: _openTournament,
       ),
     ];
 
@@ -1005,6 +1053,201 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                     ),
                     overflow: TextOverflow.ellipsis,
                     maxLines: 1,
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  // ── 이번 주 토너먼트 트렌딩 섹션 (WOW#9) ────────────────
+  //
+  // 동작:
+  //   - 로딩 중 / 데이터 0개 → SizedBox.shrink() 로 섹션 자체 숨김.
+  //     (홈에 새 빈 영역이 영구히 보이는 것을 방지 — 도메인 데이터가
+  //      쌓이기 전까지는 사용자에게 없는 섹션처럼 보이는 게 자연스러움)
+  //   - 1개 이상 → 섹션 헤더 + 가로 스크롤 카드 5개.
+  //
+  // 카드 정책:
+  //   - _buildFavoriteCard 와 동일한 가로 카드 형태(이미지 64 + 본문).
+  //   - 우측 상단에 "🏆 N회" 칩으로 우승 횟수를 표시 → 트렌딩의 핵심 시그널.
+  //   - 탭 시 식당 상세로 이동.
+  Widget _buildTrendingSection() {
+    // 로딩 중에는 노출 자체를 보류 — 빈 placeholder 가 깜빡이며 사라지면
+    // 페이지 점프가 생겨 즐겨찾기/AI 추천 위치가 흔들리는 UX 가 발생.
+    // 첫 로드는 대부분 빠르므로 잠깐의 미노출이 시각적으로 더 깔끔.
+    if (_isTrendingLoading) return const SizedBox.shrink();
+    if (_trendingRestaurants.isEmpty) return const SizedBox.shrink();
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const SizedBox(height: AppSpacing.lg),
+
+        // ── 섹션 헤더 ─────────────────────────────────
+        // "이번 주 토너먼트 인기 식당" + 개수 칩.
+        // 즐겨찾기 헤더와 패턴 통일 → 시각 일관성.
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.screenHorizontal,
+          ),
+          child: Row(
+            children: [
+              const Text('🏆', style: TextStyle(fontSize: 18)),
+              const SizedBox(width: 4),
+              Text(
+                '이번 주 토너먼트 인기 식당',
+                style: AppTextStyles.heading3,
+              ),
+              const SizedBox(width: AppSpacing.sm),
+              // 개수 칩 — 즐겨찾기 헤더와 같은 톤(backgroundGrey + caption).
+              Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 8,
+                  vertical: 3,
+                ),
+                decoration: BoxDecoration(
+                  color: AppColors.backgroundGrey,
+                  borderRadius: BorderRadius.circular(999),
+                ),
+                child: Text(
+                  '${_trendingRestaurants.length}',
+                  style: AppTextStyles.caption.copyWith(
+                    color: AppColors.textSecondary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 2),
+
+        // ── 부제(기준 설명) ───────────────────────────
+        // "AI 추천 기준이 불명" 회귀 방지 — 트렌딩의 기준도 명확히 표기.
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.screenHorizontal,
+          ),
+          child: Text(
+            '최근 7일 동안 토너먼트에서 가장 많이 우승한 식당',
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+
+        // ── 가로 스크롤 카드 리스트 ───────────────────
+        SizedBox(
+          height: 110,
+          child: ListView.separated(
+            scrollDirection: Axis.horizontal,
+            physics: const BouncingScrollPhysics(),
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.screenHorizontal,
+            ),
+            itemCount: _trendingRestaurants.length,
+            separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm),
+            itemBuilder: (_, index) =>
+                _buildTrendingCard(_trendingRestaurants[index]),
+          ),
+        ),
+      ],
+    );
+  }
+
+  // ── 트렌딩 카드 한 장 (홈 가로 스크롤용) ────────────────
+  // - 좌측 이미지 64 + 우측 본문(이름, 카테고리, 우승 횟수 칩).
+  // - 탭 시 식당 상세로 이동.
+  // - 카드 폭은 즐겨찾기 카드와 동일(160) — 시각 통일.
+  Widget _buildTrendingCard(TrendingRestaurantDto item) {
+    final primary = Theme.of(context).colorScheme.primary;
+    return AppCard(
+      padding: const EdgeInsets.all(AppSpacing.sm),
+      onTap: () async {
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => RestaurantDetailScreen(
+              restaurantId: item.restaurantId,
+              initialName: item.name,
+            ),
+          ),
+        );
+        if (!mounted) return;
+        // 식당 상세에서 별점/즐겨찾기 변경이 있을 수 있으니 전반 갱신.
+        // 트렌딩 빈도 자체는 거의 안 바뀌지만 새로고침 비용은 무시 가능.
+        _loadTrendingRestaurants();
+      },
+      child: SizedBox(
+        width: 180,
+        child: Row(
+          children: [
+            ClipRRect(
+              borderRadius: BorderRadius.circular(AppRadius.small),
+              child: FoodImage(
+                // category 가 null 이어도 FoodImage 가 안전하게 폴백 처리.
+                imageUrl: item.imageUrl,
+                categoryLabel: item.category ?? '식당',
+                width: 48,
+                height: 48,
+                emojiSize: 22,
+              ),
+            ),
+            const SizedBox(width: AppSpacing.sm),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    item.name,
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w700,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
+                  ),
+                  const SizedBox(height: 2),
+                  // 우승 횟수 칩 — 트렌딩의 핵심 시그널.
+                  // 카테고리도 같이 보여주되, 횟수가 더 눈에 띄도록 칩으로.
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: primary.withAlpha(30),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                        child: Text(
+                          '🏆 ${item.winCount}회',
+                          style: AppTextStyles.caption.copyWith(
+                            color: primary,
+                            fontWeight: FontWeight.w800,
+                          ),
+                        ),
+                      ),
+                      if (item.category != null &&
+                          item.category!.isNotEmpty) ...[
+                        const SizedBox(width: 4),
+                        Flexible(
+                          child: Text(
+                            item.category!,
+                            style: AppTextStyles.caption.copyWith(
+                              color: AppColors.textSecondary,
+                            ),
+                            overflow: TextOverflow.ellipsis,
+                            maxLines: 1,
+                          ),
+                        ),
+                      ],
+                    ],
                   ),
                 ],
               ),

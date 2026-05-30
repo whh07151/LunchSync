@@ -46,6 +46,9 @@ import '../../models/menu_item.dart';
 import '../../providers/cart_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/restaurants_api_service.dart';
+// WOW#9 — 우승 직후 백그라운드로 결과 적재(트렌딩 집계 소스).
+//   실패해도 UX 차단 X — 서비스 자체가 false 만 돌려준다.
+import '../../services/tournaments_api_service.dart';
 import '../menu/menu_screen.dart';
 import '../restaurant/restaurant_detail_screen.dart';
 
@@ -122,6 +125,16 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
     with TickerProviderStateMixin {
   // ── API 클라이언트 ───────────────────────────────────────
   static const _restaurantsApi = RestaurantsApiService();
+  // WOW#9 트렌딩 적재용 — 우승 화면 진입 시 1회 백그라운드 POST.
+  static const _tournamentsApi = TournamentsApiService();
+
+  // ── WOW#9 트렌딩 분석용 보조 상태 ────────────────────────
+  // 시작 시각(_Stage.playing 진입 ms) 과 시작 후보 수를 기록 → 우승 시
+  // duration_ms / candidate_count 로 백엔드에 전달.
+  DateTime? _tournamentStartAt;
+  int _tournamentStartCandidateCount = 0;
+  // POST 중복 호출 방지 플래그(우승 진입은 단 1회여야 함 — _restart 시 false 복귀).
+  bool _resultReported = false;
 
   // ── 화면 단계 (state machine) ──────────────────────────
   _Stage _stage = _Stage.intro;
@@ -352,6 +365,12 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
       _losingSide = null;
       _fadeProgress = 0.0;
     });
+
+    // WOW#9 — 분석용 시작 시각/후보 수 기록(우승 시 백엔드 전송).
+    //   _restart 시에는 본 함수가 다시 호출되어 자동으로 초기화됨.
+    _tournamentStartAt = DateTime.now();
+    _tournamentStartCandidateCount = candidates.length;
+    _resultReported = false;
   }
 
   // ── 페어에서 한 쪽을 선택했을 때 호출 ────────────────
@@ -424,6 +443,9 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
         _losingSide = null;
         _fadeProgress = 0.0;
       });
+      // WOW#9 — 우승 결과 백그라운드 적재(트렌딩 집계용).
+      //   await 하지 않음 → 우승 화면 표시가 네트워크 응답에 의존하지 않게.
+      _reportResultInBackground(_winnersOfRound.first);
       return;
     }
 
@@ -453,6 +475,11 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
       _losingSide = null;
       _fadeProgress = 0.0;
     });
+    // WOW#9 — 분석 보조 상태도 리셋.
+    //   다음 토너먼트에서 다시 _startTournament 가 시작 시각을 새로 기록함.
+    _tournamentStartAt = null;
+    _tournamentStartCandidateCount = 0;
+    _resultReported = false;
     _showModeDialog();
   }
 
@@ -561,6 +588,86 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
         ),
       ),
     );
+  }
+
+  // ── WOW#9 — 우승 결과를 백엔드에 백그라운드 적재 ──────
+  //
+  // 호출 시점: _Stage.result 진입 직후 1회.
+  // 정책:
+  //   - await 하지 않음 → 우승 UI 표시가 네트워크 응답을 기다리지 않게.
+  //   - JWT 없거나 호출 실패해도 UX 영향 없음(서비스가 false 만 돌려줌).
+  //   - _resultReported 플래그로 중복 호출 차단 — _restart 시 false 복귀.
+  //
+  // 보내는 값:
+  //   - mode               : 식당 모드 / 메뉴 모드
+  //   - winnerRestaurantId : 식당 모드는 winner.id, 메뉴 모드는
+  //                          _selectedRestaurantForMenu.id (트렌딩 집계 핵심).
+  //   - winnerMenuId       : 메뉴 모드일 때 winner.id, 식당 모드는 null.
+  //   - candidateCount     : _tournamentStartCandidateCount.
+  //   - durationMs         : 시작 시각 ~ 지금 까지의 ms (0 이상으로 clamp).
+  void _reportResultInBackground(_TournamentCandidate winner) {
+    if (_resultReported) return;
+    _resultReported = true;
+
+    final token = ref.read(userProvider).accessToken;
+    if (token == null || token.isEmpty) {
+      debugPrint('[TournamentScreen] 토너먼트 결과 적재 스킵 — accessToken 없음');
+      return;
+    }
+
+    final modeNow = _mode;
+    if (modeNow == null) {
+      // 정상 흐름에서는 도달 불가 — 안전 가드.
+      debugPrint('[TournamentScreen] 토너먼트 결과 적재 스킵 — mode 미설정');
+      return;
+    }
+
+    // 식당 ID 결정: 모드별로 다르게 채움.
+    //   식당 모드 → winner.id
+    //   메뉴 모드 → 사용자가 선택한 식당의 id (트렌딩 집계 기준)
+    final String? winnerRestaurantId;
+    final String? winnerMenuId;
+    final TournamentApiMode apiMode;
+    if (modeNow == TournamentMode.restaurant) {
+      apiMode = TournamentApiMode.restaurant;
+      winnerRestaurantId = winner.id;
+      winnerMenuId = null;
+    } else {
+      apiMode = TournamentApiMode.menu;
+      winnerRestaurantId = _selectedRestaurantForMenu?.id;
+      winnerMenuId = winner.id;
+    }
+
+    // 소요 시간 — 음수/누락 방지.
+    int? durationMs;
+    final startAt = _tournamentStartAt;
+    if (startAt != null) {
+      final diff = DateTime.now().difference(startAt).inMilliseconds;
+      durationMs = diff < 0 ? 0 : diff;
+    }
+
+    // fire-and-forget — await 하지 않고 unawaited 가시화를 위해 then 으로 로그만.
+    _tournamentsApi
+        .postResult(
+          accessToken: token,
+          mode: apiMode,
+          winnerRestaurantId: winnerRestaurantId,
+          winnerMenuId: winnerMenuId,
+          candidateCount: _tournamentStartCandidateCount > 0
+              ? _tournamentStartCandidateCount
+              : null,
+          durationMs: durationMs,
+        )
+        .then((ok) {
+          if (!ok) {
+            debugPrint(
+              '[TournamentScreen] 우승 결과 적재 실패 — UX 영향 없음',
+            );
+          }
+        })
+        .catchError((Object e) {
+          debugPrint('[TournamentScreen] 우승 결과 적재 예외: $e');
+        });
   }
 
   // ── 공유하기 (share_plus) ────────────────────────────

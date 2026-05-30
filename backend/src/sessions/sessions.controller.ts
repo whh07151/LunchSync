@@ -48,6 +48,7 @@ type AuthedRequest = { user: AuthedRequestUser };
 //   POST   /api/sessions/:id/members  — 멤버 추가
 //   DELETE /api/sessions/:id/members/:userId — 멤버 제거
 //   GET    /api/sessions/:id/chemistry — WOW#3 점심 케미 매트릭스
+//   GET    /api/sessions/:id/invite    — WOW#8 친구 초대 통합 페이로드
 // ══════════════════════════════════════════════════════════
 
 class CreateSessionDto {
@@ -138,6 +139,34 @@ export class SessionsController {
   @Get(':id/chemistry')
   async getChemistry(@Param('id') id: string) {
     const result = await this.chemistryService.getChemistry(id);
+    return { success: true, data: result };
+  }
+
+  // ── GET /api/sessions/:id/invite ──────────────────────
+  // WOW 포인트 #8 — "친구 초대 시스템"
+  //
+  // 손님 페르소나가 세션 로비에서 친구 한 명을 카톡으로 초대하는 흐름.
+  // 응답 페이로드:
+  //   {
+  //     inviteCode: '8자리 hex',
+  //     deepLink:   'lunchsync://join?code=XXXXXXXX',
+  //     shortLink:  'https://lunchsync.duckdns.org/j/XXXXXXXX',
+  //     expiresAt:  ISO8601 (기본 +6h)
+  //   }
+  //
+  // Flutter 측은 이 응답을 받아 share_plus 의 Share.share() 로 OS 공유 시트를
+  // 호출, 카카오톡·문자·메신저 등에 한 줄 메시지를 전달한다.
+  //
+  // 권한 정책:
+  //   호스트 검증 없음 — 일반 멤버도 친구를 추가 초대할 수 있어야 자연스러움.
+  //   (코드 자체가 권한 토큰)
+  //
+  // SkipThrottle: 손님이 공유 시트를 열고 닫는 행동을 빠르게 반복할 수 있어
+  //   글로벌 throttler 한도(분당 100) 부담을 줄이기 위해 적용.
+  @SkipThrottle({ default: true })
+  @Get(':id/invite')
+  async getInviteInfo(@Param('id') id: string) {
+    const result = await this.sessionsService.getInviteInfo(id);
     return { success: true, data: result };
   }
 
