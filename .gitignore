@@ -12,6 +12,11 @@
 .swiftpm/
 migrate_working_dir/
 
+# 2026-05-31 — 자율 QA 동안 생기는 로컬 임시
+*.pid
+/screenshots/
+/demo_video/
+
 # IntelliJ related
 *.iml
 *.ipr
