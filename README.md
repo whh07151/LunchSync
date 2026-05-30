@@ -205,6 +205,28 @@ Flutter 측 키(카카오 앱 키, Toss 클라이언트 키)는 `lib/core/config
 
 ---
 
+## 개발 우회 (QA / 자동 테스트용)
+
+자동 QA 가 사장(OWNER) 모드를 검증하려면 본인 user 의 role/status/restaurant_id 를 매번 SQL 로 바꿔야 했음. 이를 라우트 한 번으로 대체:
+
+```
+POST /api/dev/promote-to-owner
+Authorization: Bearer <user JWT>
+Body: { "restaurantId"?: "<uuid>" }     # 미지정 시 본인의 마지막 PAID 주문 식당으로 자동 매핑
+      { "role": "CUSTOMER" }            # 원복용
+```
+
+활성 조건 (EC2):
+```bash
+ssh ubuntu@<EC2>
+echo 'DEV_PROMOTE_ENABLED=true' >> /home/ubuntu/LunchSync/backend/.env
+pm2 reload lunchsync-backend
+```
+
+보안 게이트: ① JwtAuthGuard 가 본인 JWT 만 수락 (다른 사용자 promote 불가) ② `DEV_PROMOTE_ENABLED='true'` 미설정 시 즉시 ForbiddenException ③ promote 발생마다 Logger.warn 기록. 캡스톤 마무리 후엔 환경변수 제거 권장.
+
+---
+
 ## 문서 인덱스
 
 - [`USER_GUIDE.md`](./USER_GUIDE.md) — 최종 사용자(손님 / 사장 / POS 운영자) 가이드 + FAQ
