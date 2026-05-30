@@ -21,6 +21,7 @@ import { PosModule } from './pos/pos.module';
 import { CrawlModule } from './crawl/crawl.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FriendsModule } from './friends/friends.module';
+import { DevModule } from './dev/dev.module';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: NestJS 루트 모듈
@@ -119,6 +120,9 @@ import { FriendsModule } from './friends/friends.module';
 
     // CU-08 보강 — 친구 관계 (2026-05-14 사장님 시연 피드백 반영)
     FriendsModule,
+
+    // dev 전용 — 자동 QA 우회 (DEV_PROMOTE_ENABLED=true 일 때만 동작)
+    DevModule,
   ],
   controllers: [AppController],
   providers: [
