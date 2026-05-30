@@ -1,8 +1,10 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+﻿import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/error_message_extractor.dart';
+import '../core/api/http_headers_helper.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 투표(CU-14/15) 관련 API 호출 서비스
@@ -139,10 +141,8 @@ class CastVoteResult {
 class VotesApiService {
   const VotesApiService();
 
-  Map<String, String> _headers(String accessToken) => {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      };
+  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관
+  //   (lib/core/api/http_headers_helper.dart). 9개 서비스 중복 제거.
 
   // ── POST /api/sessions/:id/votes ───────────────────────
   // body: { restaurantId } — 백엔드 CastVoteDto 와 일치.
@@ -163,7 +163,7 @@ class VotesApiService {
           .post(
             Uri.parse(
                 '${AppConfig.backendBaseUrl}/sessions/$sessionId/votes'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({'restaurantId': restaurantId}),
           )
           .timeout(AppConfig.apiTimeout);
@@ -191,15 +191,12 @@ class VotesApiService {
           message = '세션 또는 식당을 찾지 못했어요';
           break;
       }
-      try {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final raw = json['message'];
-        if (raw is String && raw.isNotEmpty) {
-          message = raw;
-        } else if (raw is List && raw.isNotEmpty) {
-          message = raw.first.toString();
-        }
-      } catch (_) {}
+      // 백엔드가 더 구체적인 message 를 내려주면 그걸로 덮어씀
+      // (공용 헬퍼가 String / List<String> / 빈 문자열을 일괄 처리)
+      final backendMsg = extractApiErrorMessage(response.body);
+      if (backendMsg != null) {
+        message = backendMsg;
+      }
 
       debugPrint(
         '[VotesApiService] castVote 실패: '
@@ -238,7 +235,7 @@ class VotesApiService {
           .get(
             Uri.parse(
                 '${AppConfig.backendBaseUrl}/sessions/$sessionId/votes'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -342,7 +339,7 @@ class VotesApiService {
           .post(
             Uri.parse(
                 '${AppConfig.backendBaseUrl}/sessions/$sessionId/decide'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: restaurantId != null
                 ? jsonEncode({'restaurantId': restaurantId})
                 : null,

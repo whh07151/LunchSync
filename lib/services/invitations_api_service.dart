@@ -1,8 +1,9 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+﻿import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/http_headers_helper.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 초대 링크 관련 API 호출 서비스
@@ -37,10 +38,8 @@ class InvitationInfo {
 class InvitationsApiService {
   const InvitationsApiService();
 
-  Map<String, String> _headers(String accessToken) => {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      };
+  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관
+  //   (lib/core/api/http_headers_helper.dart). 9개 서비스 중복 제거.
 
   // ── POST /api/invitations ─────────────────────────────
   Future<InvitationInfo?> createInvitation({
@@ -51,7 +50,7 @@ class InvitationsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/invitations'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({'sessionId': sessionId}),
           )
           .timeout(AppConfig.apiTimeout);
@@ -81,7 +80,7 @@ class InvitationsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/invitations/$code/accept'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);

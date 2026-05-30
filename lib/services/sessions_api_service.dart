@@ -1,8 +1,10 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+﻿import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/error_message_extractor.dart';
+import '../core/api/http_headers_helper.dart';
 import '../models/session.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -22,10 +24,9 @@ import '../models/session.dart';
 class SessionsApiService {
   const SessionsApiService();
 
-  Map<String, String> _headers(String accessToken) => {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      };
+  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관.
+  //   기존 private `_headers()` 는 9개 서비스에 중복 정의되어 있었음.
+  //   `lib/core/api/http_headers_helper.dart` 한 곳에서 관리.
 
   // ── POST /api/sessions ────────────────────────────────
   // CU-09에서 입력한 세션 조건을 모두 전달.
@@ -55,7 +56,7 @@ class SessionsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode(body),
           )
           .timeout(AppConfig.apiTimeout);
@@ -80,7 +81,7 @@ class SessionsApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/today'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -108,7 +109,7 @@ class SessionsApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -154,7 +155,7 @@ class SessionsApiService {
       final response = await http
           .patch(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/status'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({'status': status}),
           )
           .timeout(AppConfig.apiTimeout);
@@ -187,15 +188,11 @@ class SessionsApiService {
           message = '투표 시작이 안 됐어요. 잠시 후 다시 시도해봐요';
       }
       // 백엔드가 더 구체적인 message 를 내려주면 그걸 우선 사용
-      try {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final raw = json['message'];
-        if (raw is String && raw.isNotEmpty) {
-          message = raw;
-        } else if (raw is List && raw.isNotEmpty) {
-          message = raw.first.toString();
-        }
-      } catch (_) {}
+      // (공용 헬퍼가 String / List<String> / 빈 문자열을 일괄 처리)
+      final backendMsg = extractApiErrorMessage(response.body);
+      if (backendMsg != null) {
+        message = backendMsg;
+      }
 
       debugPrint(
         '[SessionsApiService] updateSessionStatus 실패: '
@@ -232,7 +229,7 @@ class SessionsApiService {
       final response = await http
           .delete(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -260,15 +257,11 @@ class SessionsApiService {
           message = '세션을 삭제하지 못했어요. 잠시 후 다시 시도해봐요';
       }
       // 백엔드 message 우선 사용
-      try {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final raw = json['message'];
-        if (raw is String && raw.isNotEmpty) {
-          message = raw;
-        } else if (raw is List && raw.isNotEmpty) {
-          message = raw.first.toString();
-        }
-      } catch (_) {}
+      // (공용 헬퍼가 String / List<String> / 빈 문자열을 일괄 처리)
+      final backendMsg = extractApiErrorMessage(response.body);
+      if (backendMsg != null) {
+        message = backendMsg;
+      }
 
       debugPrint(
         '[SessionsApiService] deleteSession 실패: '
@@ -298,7 +291,7 @@ class SessionsApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -326,7 +319,7 @@ class SessionsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({'userId': userId}),
           )
           .timeout(AppConfig.apiTimeout);
@@ -348,7 +341,7 @@ class SessionsApiService {
           .delete(
             Uri.parse(
                 '${AppConfig.backendBaseUrl}/sessions/$sessionId/members/$userId'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);

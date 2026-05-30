@@ -1,8 +1,9 @@
-import 'package:flutter/foundation.dart' show debugPrint;
+﻿import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/http_headers_helper.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 토스페이먼츠 결제 승인 API 호출 서비스
@@ -58,10 +59,8 @@ class ConfirmPaymentResult {
 class PaymentsApiService {
   const PaymentsApiService();
 
-  Map<String, String> _headers(String accessToken) => {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      };
+  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관
+  //   (lib/core/api/http_headers_helper.dart). 9개 서비스 중복 제거.
 
   // ── POST /api/payments/confirm ────────────────────────
   // 결제 성공 화면(PaymentSuccessScreen)에서 호출.
@@ -79,7 +78,7 @@ class PaymentsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/payments/confirm'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({
               'paymentKey': paymentKey,
               'orderId': orderId,
@@ -92,9 +91,18 @@ class PaymentsApiService {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
-        return ConfirmPaymentResult.fromJson(
-          json['data'] as Map<String, dynamic>,
-        );
+        // 2026-05-30 P2 fix: 백엔드 응답 포맷 변경(top-level order) 또는
+        // PostgREST silent failure 로 'data' 키 누락 시 캐스팅 예외 → 앱
+        // 크래시. 결제 금액만 소비되고 결과 화면 진입 실패하는 회귀 차단.
+        final data = json['data'] as Map<String, dynamic>?;
+        if (data == null) {
+          debugPrint(
+            '[PaymentsApiService] confirmPayment 응답에 data 필드 누락: '
+            '${response.body}',
+          );
+          return null;
+        }
+        return ConfirmPaymentResult.fromJson(data);
       }
 
       debugPrint(

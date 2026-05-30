@@ -23,7 +23,7 @@ import '../payment/order_review_screen.dart';
 //   - 2026-05-13 이전: 어느 식당에 들어가도 항상 시드 RESTAURANT_ID
 //     ('11111111-...') 의 하드코딩된 12개 mock 메뉴만 보였음.
 //     restaurant_detail_screen.dart 가 restaurantId 를 안 넘기고,
-//     이 화면이 _mockMenuItems 만 그려서 발생.
+//     이 화면이 하드코딩 메뉴 상수만 그려서 발생.
 //   - 2026-05-13 수정: restaurantId 인자 추가 + 실 API 연동 + 빈 상태 처리.
 //   - 2026-05-13 추가 수정(C1): "주문하기" 버튼이 시드 sessionId
 //     ('22222222-...') 를 하드코딩하던 문제 해결. 활성 세션(WAITING/
@@ -32,6 +32,10 @@ import '../payment/order_review_screen.dart';
 //     - 미전달 시 GET /api/sessions/today 로 활성 세션 자동 조회.
 //     - 활성 세션이 없으면 주문 버튼 비활성 + "먼저 점심 세션을
 //       만들어 봐요" 안내. 시드 fallback 절대 사용 금지.
+//   - 2026-05-30 인계 정리(docs/menu_separate.md): 다단 폴백
+//     (seed 필터링 / mock 12개) 흔적과 관련 import·상수·주석을 완전히
+//     제거하고, 데이터 소스를 단일 1단계(API)로 단순화. 빈 상태
+//     카피도 "메뉴 정보를 준비 중이에요" 로 통일.
 //
 // 와이어프레임 기준 구성 요소 (브레이크다운 v3 CU-16):
 //   - 상단 앱바: 식당 이름 + 뒤로가기
@@ -427,10 +431,11 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     final allItems = _menuItems ?? const <MenuItem>[];
     if (allItems.isEmpty) {
       // 식당 자체에 메뉴가 1개도 없는 경우 (등록 전 식당 등)
-      // 빈 상태 — 사장님 메뉴 등록 대기 안내, 친근한 톤
+      // 빈 상태 — 백엔드/사장님 메뉴 등록 대기 안내, 친근한 톤.
+      // 인계 지시서(docs/menu_separate.md)가 지정한 카피로 통일.
       return Center(
         child: Text(
-          '메뉴는 사장님이 곧 올려주실 거예요',
+          '메뉴 정보를 준비 중이에요',
           style: AppTextStyles.bodyMedium.copyWith(
             color: AppColors.textSecondary,
           ),

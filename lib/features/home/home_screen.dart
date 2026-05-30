@@ -1,4 +1,5 @@
 import 'dart:async';
+import '../owner/owner_home_screen.dart';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -206,6 +207,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     if (profile != null && mounted) {
       // mounted: 비동기 완료 전에 화면이 사라졌을 경우 setState 방지
       ref.read(userProvider.notifier).setFromProfile(profile);
+
+      // 2026-05-31 회귀 fix: 자동 로그인은 _autoLoginNextStep 을 initState
+      // 한 번만 계산하므로, DB 에서 role 이 OWNER 로 바뀐 뒤 앱을 백그라운드
+      // 에서 다시 켜도 CustomerHome 에 계속 머무는 버그. /api/users/me 응답
+      // 으로 role 가 OWNER + status APPROVED 면 OwnerHomeScreen 으로 강제
+      // 라우팅한다 (pushAndRemoveUntil 로 손님 스택 정리).
+      if (profile.role == 'OWNER' &&
+          (profile.status ?? 'APPROVED') == 'APPROVED') {
+        Navigator.of(context).pushAndRemoveUntil(
+          MaterialPageRoute(builder: (_) => const OwnerHomeScreen()),
+          (route) => false,
+        );
+      }
     }
   }
 
@@ -1423,7 +1437,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // 단순 스피너보다 페이지 점프가 적어 UX 부드러움.
     if (_isRestaurantsLoading) {
       return SizedBox(
-        height: 176,
+        // 2026-05-30 회귀 fix: 카드 콘텐츠가 5px overflow 되어 노란 줄무늬
+        // 경고가 노출됨. 안전 마진 포함 184로 통일.
+        height: 184,
         child: ListView.separated(
           scrollDirection: Axis.horizontal,
           physics: const NeverScrollableScrollPhysics(),
@@ -1548,7 +1564,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }
 
     return SizedBox(
-      height: 176,
+      // 2026-05-30 회귀 fix: AI 추천 카드 콘텐츠 5px overflow.
+      // 스켈레톤과 동일하게 184 로 통일 (rating 칩 추가로 1줄 늘어난 영향).
+      height: 184,
       child: ListView.separated(
         // scrollDirection.horizontal: 가로 방향으로 스크롤
         scrollDirection: Axis.horizontal,

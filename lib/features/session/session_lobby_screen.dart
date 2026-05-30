@@ -578,9 +578,15 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
               bottom: AppSpacing.md,
             ),
             child: AppPrimaryButton(
+              // 2026-05-30 P0 회귀 fix: ORDERED/DONE 상태에서도 라벨이
+              // "투표 시작하기" 로 떠 혼동. 메뉴 확정 이후엔 "결과 확인하기"
+              // 로 분기 (멤버가 뒤로가기로 로비 재진입 시 다음 액션 명확).
               label: _session?.status == 'VOTING'
                   ? '지금 투표하러 가기'
-                  : 'AI 추천 보고 투표 시작하기',
+                  : (_session?.status == 'ORDERED' ||
+                          _session?.status == 'DONE')
+                      ? '결과 확인하기'
+                      : 'AI 추천 보고 투표 시작하기',
               // tearoff 가 named optional 인자를 가져 VoidCallback 과 시그니처가
               // 달라서 분석 경고가 날 수 있어 명시적 람다로 감싼다.
               onPressed: () => _goToRecommendations(),

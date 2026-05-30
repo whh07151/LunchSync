@@ -204,13 +204,14 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
             ],
           ),
 
-          // ── ETA 카드 (PAID/ACCEPTED/PREPARING 시) ────────
+          // ── ETA 카드 (PAID/PREPARING 시) ────────
           // 2026-05-16 배민 패턴 — 예상 픽업 시각 표시.
           //   - 백엔드가 max(prep_time_minutes) + 기준시각 으로 계산
           //   - estimatedReadyAt 없으면 카드 숨김
+          //   - 2026-05-30 P1 fix: ACCEPTED 는 CLAUDE.md 의 현재 ENUM 사용값
+          //     아님 (옛 표기). READY 는 이미 준비 완료라 ETA 부적합.
           if (order.estimatedReadyAt != null &&
-              const {'PAID', 'ACCEPTED', 'PREPARING'}
-                  .contains(order.status)) ...[
+              const {'PAID', 'PREPARING'}.contains(order.status)) ...[
             const SizedBox(height: AppSpacing.md),
             _buildEtaCard(order.estimatedReadyAt!),
           ],

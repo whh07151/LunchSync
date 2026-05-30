@@ -88,9 +88,11 @@ export class AuthController {
   // ── POST /api/auth/kakao ──────────────────────────────
   // Flutter에서 카카오 SDK로 받은 access token을 전달하면
   // LunchSync JWT + isNewUser + 유저 기본 정보를 반환
-  // 부르트포스 차단 (2026-05-12): 카카오/이메일 로그인은 분당 5회로 강한 제한.
-  // 정상 사용자는 1~2회면 끝나고, 봇이 자동 시도 시 6번째부터 429 응답.
-  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
+  // 부르트포스 차단: 이 라우트에만 default throttler 를 분당 30회로 강화.
+  // (전역 default 1000/분 → 이 라우트만 30/분. 자동로그인·토큰갱신 재시도
+  //  여유 확보 + 봇 자동시도 방어. 2026-05-17: 명명 throttler 전역적용
+  //  회귀 수정으로 'auth' 명명 대신 default 오버라이드 사용.)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('kakao')
   async kakaoLogin(@Body() dto: KakaoLoginDto) {
     const result = await this.authService.kakaoLogin(dto.kakaoAccessToken);
@@ -102,9 +104,10 @@ export class AuthController {
   //   CUSTOMER → 즉시 활성화 (status=APPROVED), nextStep=PROFILE_SETUP
   //   OWNER    → 승인 대기 (status=PENDING),  nextStep=OWNER_PENDING
   //
-  // 폭주 차단 (2026-05-12): 한 IP 당 시간당 10회로 제한.
+  // 폭주 차단: 이 라우트에만 default throttler 를 시간당 30회로 강화.
   // 봇이 무한 가입해 Supabase 무료 티어 행 quota 소진하는 공격 차단.
-  @Throttle({ signup: { limit: 10, ttl: 3_600_000 } })
+  // (2026-05-17: 명명 throttler 전역적용 회귀 수정 — default 오버라이드)
+  @Throttle({ default: { limit: 30, ttl: 3_600_000 } })
   @Post('signup/email')
   async emailSignup(@Body() dto: EmailSignupDto) {
     const result = await this.authService.emailSignup({
@@ -121,9 +124,10 @@ export class AuthController {
   // ── POST /api/auth/login/email ─────────────────────────
   // 이메일+비밀번호 로그인. 응답은 카카오 로그인과 동일 구조.
   //
-  // 부르트포스 차단 (2026-05-12): 한 IP 당 분당 5회 제한.
+  // 부르트포스 차단: 이 라우트에만 default throttler 를 분당 30회로 강화.
   // bcrypt 10라운드(~100ms) + rate limit → 강한 비번 사실상 영원, 약한 비번도 시도 횟수 제한.
-  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
+  // (2026-05-17: 명명 throttler 전역적용 회귀 수정 — default 오버라이드)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('login/email')
   async emailLogin(@Body() dto: EmailLoginDto) {
     const result = await this.authService.emailLogin(dto.email, dto.password);

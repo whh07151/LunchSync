@@ -29,6 +29,9 @@ WHERE table_schema = 'public'
        (table_name = 'restaurants' AND column_name IN ('rating', 'image_url'))
     OR (table_name = 'users'       AND column_name IN ('fcm_token'))
     OR (table_name = 'sessions'    AND column_name IN ('radius', 'budget', 'return_minutes', 'memo'))
+    -- 2026-05-31 회귀 감사 4회차: 별점/리뷰 컬럼이 silent 누락되는 경우
+    -- 주문 상세 화면의 별점 카드가 항상 null 로 반환되어 추적 어려움.
+    OR (table_name = 'orders'      AND column_name IN ('review_score', 'review_text', 'review_at'))
   )
 ORDER BY table_name, column_name;
 
@@ -76,7 +79,7 @@ ORDER BY enumsortorder;
 --   - restaurants.rating → 2026-05-14-add-rating-column.sql
 --   - restaurants.image_url → 2026-05-14-fill-empty-image-urls.sql (ALTER 포함)
 --   - users.fcm_token → 2026-05-14-add-fcm-token.sql
---   - sessions.radius/budget/return_minutes/memo → ※ 마이그레이션 부재! 사장님 확인 필요
+--   - sessions.radius/budget/return_minutes/memo → 2026-05-14-ensure-sessions-columns.sql
 --   - pos_seats → 2026-05-14-add-pos-tables.sql
 --   - pos_reservations → 2026-05-14-add-pos-reservations.sql (이번 복원)
 --   - RPC 함수 4종 → 같은 이름의 SQL 파일

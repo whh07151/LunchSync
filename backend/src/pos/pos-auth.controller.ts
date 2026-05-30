@@ -38,7 +38,10 @@ export class PosAuthController {
   //
   // 부르트포스 차단 (2026-05-12): IP 당 분당 5회 제한.
   // 시드 매장 UUID 패턴(11111111-...) 노출 시에도 자동 시도 차단.
-  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
+  // 2026-05-30 회귀 수정: 'auth' 명명 throttler 가 전역적용 회귀를 일으켜
+  // 전 API 가 429 로 막힘. default 오버라이드로 같은 분당 30회 한도 유지.
+  // (다연님 23ef22c 패치 백포팅 — 결제/주문/폴링 정상화 핵심)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('login/:restaurantId')
   async login(
     @Param('restaurantId') restaurantId: string,
@@ -55,7 +58,10 @@ export class PosAuthController {
   // ── 사장 계정(이메일+비번)으로 LSPOS 로그인 ───────────
   // 식당 고유번호 없이 사장이 자신의 계정으로 바로 로그인.
   // 응답: { userToken, restaurant? } — 식당 미등록 시 restaurant=null
-  @Throttle({ auth: { limit: 5, ttl: 60_000 } })
+  // 2026-05-30 회귀 수정: 'auth' 명명 throttler 가 전역적용 회귀를 일으켜
+  // 전 API 가 429 로 막힘. default 오버라이드로 같은 분당 30회 한도 유지.
+  // (다연님 23ef22c 패치 백포팅 — 결제/주문/폴링 정상화 핵심)
+  @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('login-owner')
   async loginOwner(@Body() dto: PosOwnerLoginDto) {
     const result = await this.posAuthService.loginOwner(dto.email, dto.password);

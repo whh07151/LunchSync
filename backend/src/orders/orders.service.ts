@@ -255,10 +255,14 @@ export class OrdersService {
 
     // 2026-05-16 배민 패턴 — 예상 픽업 시각 계산
     // 한 주문 중 가장 오래 걸리는 메뉴 기준 = max(prep_time_minutes)
-    // 기준 시각: ACCEPTED/PREPARING 이면 updated_at(수락 시각 근사), 그 외에는 created_at
+    // 기준 시각: PREPARING 이면 updated_at(조리 시작 시각), 그 외에는 created_at
     // estimated_ready_at 은 null 가능 (READY/COMPLETED/CANCELLED 등에는 굳이 표시 X)
+    //
+    // 2026-05-31 회귀 fix: CLAUDE.md 의 현재 사용 ENUM
+    // (PENDING/PAID/PREPARING/READY/COMPLETED/CANCELLED) 와 정합. 옛 표기
+    // ACCEPTED 는 백엔드가 더 이상 발급하지 않으므로 분기에서 제거.
     let estimatedReadyAt: string | null = null;
-    const activeStatuses = ['ACCEPTED', 'PAID', 'PREPARING'];
+    const activeStatuses = ['PAID', 'PREPARING'];
     if (activeStatuses.includes(order.status) && items && items.length > 0) {
       let maxPrep = 0;
       for (const it of items as any[]) {

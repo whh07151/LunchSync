@@ -4,6 +4,7 @@ import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
 import '../../providers/cart_provider.dart';
+import '../../providers/user_provider.dart';
 import '../../services/payments_api_service.dart';
 import '../home/home_screen.dart';
 import 'payment_web_bridge.dart';
@@ -72,9 +73,20 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
 
   // ── 백엔드 /api/payments/confirm 호출 ─────────────────
   Future<void> _confirmPayment() async {
-    // sessionStorage 에서 JWT 복원
-    // 정상 흐름: OrderReviewScreen 이 리다이렉트 직전에 저장해둔 값
-    final savedJwt = PaymentWebBridge.getSessionItem('ls_jwt');
+    // 2026-05-31 모바일 결제 100% 실패 회귀 fix:
+    //   웹 흐름: 결제 후 페이지 전체가 리로드되어 Riverpod 상태가 날아감 →
+    //            OrderReviewScreen 이 직전에 저장한 sessionStorage('ls_jwt')
+    //            에서 복원해야 했음.
+    //   모바일 흐름: PaymentWebViewScreen 이 successUrl 을 가로채 Navigator
+    //            push 만 함. Riverpod 상태 살아있고 sessionStorage 자체가
+    //            존재하지 않음 → getSessionItem 이 항상 null → "로그인
+    //            만료" 메시지가 잘못 노출되고 confirm 호출 자체가 안 됨.
+    //   해결: sessionStorage(웹) → userProvider(모바일/웹 공통) 순서로 fallback.
+    final sessionJwt = PaymentWebBridge.getSessionItem('ls_jwt');
+    final providerJwt = ref.read(userProvider).accessToken;
+    final savedJwt = (sessionJwt != null && sessionJwt.isNotEmpty)
+        ? sessionJwt
+        : providerJwt;
     if (savedJwt == null || savedJwt.isEmpty) {
       // mounted 가드 (2026-05-12 박검토B 긴급): 결제 후 사용자가 뒤로가기로
       // 화면을 빠져나간 경우 setState 호출이 크래시를 일으킬 수 있음.

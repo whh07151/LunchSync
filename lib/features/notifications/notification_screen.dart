@@ -20,8 +20,10 @@ import '../../services/notifications_api_service.dart';
 //   PATCH /api/notifications/:id/read     — 단건 읽음
 //   PATCH /api/notifications/read-all     — 전체 읽음
 //
-// 알림 타입 4종 (서버 type 값과 매핑):
-//   ORDER_RECEIVED / ORDER_ACCEPTED / ORDER_DONE / VOTE_RESULT
+// 알림 타입 (서버 type 값과 매핑):
+//   ORDER_RECEIVED / ORDER_PREPARING / ORDER_READY / ORDER_COMPLETED /
+//   ORDER_DONE / VOTE_RESULT
+//   (2026-05-31: 옛 ORDER_ACCEPTED 는 backend 가 발급 안 함)
 // ══════════════════════════════════════════════════════════
 
 class NotificationScreen extends ConsumerStatefulWidget {
@@ -287,7 +289,7 @@ class _NotificationScreenState extends ConsumerState<NotificationScreen> {
     switch (type) {
       case 'ORDER_RECEIVED':
         return (Icons.receipt_long_rounded, const Color(0xFF4CAF50));
-      case 'ORDER_ACCEPTED':
+      case 'ORDER_PREPARING':
         return (Icons.check_circle_outline_rounded, const Color(0xFF2196F3));
       case 'ORDER_DONE':
         return (

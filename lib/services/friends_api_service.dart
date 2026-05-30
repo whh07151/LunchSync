@@ -1,7 +1,9 @@
-import 'dart:convert';
+﻿import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/error_message_extractor.dart';
+import '../core/api/http_headers_helper.dart';
 import '../core/config/app_config.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -107,11 +109,8 @@ class FriendsApiService {
   const FriendsApiService();
 
   // ── 공용 헤더 빌더 ────────────────────────────────────────
-  // 모든 친구 API 가 동일한 헤더를 쓰므로 한 곳에 모아 중복 방지
-  Map<String, String> _headers(String accessToken) => {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer $accessToken',
-      };
+  // 2026-05-30 헤더 빌더 통합: 공통 헬퍼 apiHeaders() 로 이관
+  //   (lib/core/api/http_headers_helper.dart). 9개 서비스 중복 제거.
 
   // ── POST /api/friends — 이메일로 친구 추가 ────────────────
   //
@@ -129,7 +128,7 @@ class FriendsApiService {
       final response = await http
           .post(
             Uri.parse('${AppConfig.backendBaseUrl}/friends'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
             body: jsonEncode({'email': email.trim()}),
           )
           .timeout(AppConfig.apiTimeout);
@@ -145,7 +144,7 @@ class FriendsApiService {
 
       // 잘못된 요청 (자기 자신 추가, 이메일 형식 오류 등)
       if (response.statusCode == 400) {
-        final message = _extractMessage(response.body) ??
+        final message = extractApiErrorMessage(response.body) ??
             '이메일을 다시 확인해주세요.';
         return AddFriendResult.invalid(message);
       }
@@ -181,7 +180,7 @@ class FriendsApiService {
       final response = await http
           .get(
             Uri.parse('${AppConfig.backendBaseUrl}/friends'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -219,7 +218,7 @@ class FriendsApiService {
       final response = await http
           .delete(
             Uri.parse('${AppConfig.backendBaseUrl}/friends/$friendUserId'),
-            headers: _headers(accessToken),
+            headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
       ApiAuthHooks.check(response.statusCode);
@@ -237,20 +236,6 @@ class FriendsApiService {
     }
   }
 
-  // ── 응답 body 에서 NestJS 표준 메시지 필드 추출 헬퍼 ──────
-  // NestJS 예외는 { "message": "...", "error": "...", "statusCode": ... } 형태로 옵니다.
-  // 메시지가 문자열 배열일 수도 있어서(class-validator) 둘 다 처리.
-  String? _extractMessage(String body) {
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map<String, dynamic>) {
-        final msg = decoded['message'];
-        if (msg is String) return msg;
-        if (msg is List && msg.isNotEmpty) return msg.first.toString();
-      }
-    } catch (_) {
-      // 파싱 실패는 무시 (기본 안내 문구로 fallback)
-    }
-    return null;
-  }
+  // _extractMessage 는 core/api/error_message_extractor.dart 의
+  // extractApiErrorMessage 로 통합됨 (auth/votes/sessions 와 공용).
 }
