@@ -43,6 +43,13 @@ export interface OrderStats {
   completed: number;
   cancelled: number;
   totalRevenue: number;
+  // 2026-05-31 회귀 fix: backend pos.service.getPaymentStats 가 결제수단별
+  // 매출(2026-05-13 backend 협의 #9b)을 분리해 내려주는데 LSPOS 타입이 받지
+  // 않아 dashboard "오늘 매출/카드 결제" 가 0원으로 표시되는 회귀.
+  tossRevenue?: number;
+  cardRevenue?: number;
+  cashRevenue?: number;
+  simulateRevenue?: number;
 }
 
 export interface AuthUser {

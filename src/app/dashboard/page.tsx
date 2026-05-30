@@ -20,7 +20,30 @@ export default function DashboardPage() {
   const orders = useOrders(auth.restaurantId, undefined, auth.ready);
   const stats = useOrderStats(auth.restaurantId, auth.ready);
   const { stats: seatStats } = useSeats(auth.restaurantId);
-  const { todayStats, sales } = useSales(auth.restaurantId);
+  // 2026-05-31 회귀 fix: useSales 가 매출을 localStorage 누적 방식으로
+  // 관리해서 손님 결제(PAID) 가 "오늘 매출/카드 결제" 카드에 0원으로
+  // 표시됨. backend pos.service.getPaymentStats 가 totalRevenue +
+  // 결제수단별 매출을 정상 제공하므로 그 값으로 dashboard 카드 재구성.
+  // 좌석 결제 기반의 sales 배열은 인기 메뉴(아래) 용으로 그대로 유지.
+  const { todayStats: seatTodayStats, sales } = useSales(auth.restaurantId);
+  const todayStats = useMemo(() => {
+    const s = stats.data;
+    if (!s) return seatTodayStats;
+    const paidCount = s.paid + s.preparing + s.ready + s.completed;
+    return {
+      total: s.totalRevenue,
+      count: paidCount,
+      // 토스 결제(앱 손님) + 카드 결제(좌석) 를 "카드 결제" 카드에 합쳐 노출.
+      card: {
+        total: (s.tossRevenue ?? 0) + (s.cardRevenue ?? 0),
+        count: paidCount,
+      },
+      cash: {
+        total: s.cashRevenue ?? 0,
+        count: 0,
+      },
+    };
+  }, [stats.data, seatTodayStats]);
   const { stats: reservationStats } = useReservations(auth.restaurantId);
 
   const orderList = orders.data ?? [];

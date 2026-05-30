@@ -14,6 +14,10 @@ const ZERO: OrderStats = {
   completed: 0,
   cancelled: 0,
   totalRevenue: 0,
+  tossRevenue: 0,
+  cardRevenue: 0,
+  cashRevenue: 0,
+  simulateRevenue: 0,
 };
 
 export function useOrderStats(restaurantId: string | null, enabled = true) {
