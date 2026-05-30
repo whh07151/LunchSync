@@ -29,6 +29,9 @@ WHERE table_schema = 'public'
        (table_name = 'restaurants' AND column_name IN ('rating', 'image_url'))
     OR (table_name = 'users'       AND column_name IN ('fcm_token'))
     OR (table_name = 'sessions'    AND column_name IN ('radius', 'budget', 'return_minutes', 'memo'))
+    -- 2026-05-31 회귀 감사 4회차: 별점/리뷰 컬럼이 silent 누락되는 경우
+    -- 주문 상세 화면의 별점 카드가 항상 null 로 반환되어 추적 어려움.
+    OR (table_name = 'orders'      AND column_name IN ('review_score', 'review_text', 'review_at'))
   )
 ORDER BY table_name, column_name;
 
