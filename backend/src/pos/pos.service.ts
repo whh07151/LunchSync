@@ -234,8 +234,9 @@ export class PosService {
     // 알림 송신 — best-effort (실패해도 응답 정상)
     // 상태별 친근 메시지 매핑 (배민 패턴 톤)
     if (prevOrder?.user_id && prevOrder.status !== status) {
+      // 2026-05-31 회귀 fix: ACCEPTED 는 사장이 직접 전환하는 단계가 아니라
+      // 백엔드/POS 어느 라우트에서도 발급되지 않음. 죽은 분기 제거.
       const titleMap: Record<string, { title: string; msg: string }> = {
-        ACCEPTED: { title: '주문이 수락됐어요', msg: '사장님이 주문을 확인했어요. 곧 조리를 시작합니다' },
         PREPARING: { title: '조리가 시작됐어요', msg: '사장님이 메뉴를 만들고 있어요' },
         READY: { title: '픽업 준비 완료', msg: '메뉴가 준비됐어요. 식당으로 가주세요' },
         COMPLETED: { title: '주문 완료', msg: '맛있게 드셨나요? 리뷰를 남겨봐요' },
@@ -290,8 +291,9 @@ export class PosService {
 
     // 2) 거절 가능 상태 검증
     //   - CANCELLED / COMPLETED / DONE / PREPARING / READY 모두 거절 불가
-    //   - PAID / ACCEPTED / PENDING 만 거절 가능 (조리 시작 전)
-    const cancelableStatuses = new Set(['PAID', 'ACCEPTED', 'PENDING']);
+    //   - PAID / PENDING 만 거절 가능 (조리 시작 전)
+    //   - 2026-05-31: 옛 ACCEPTED 표기는 발급 자체가 안 되므로 제거.
+    const cancelableStatuses = new Set(['PAID', 'PENDING']);
     if (!cancelableStatuses.has(order.status)) {
       throw new InternalServerErrorException(
         `이미 ${order.status} 상태인 주문은 취소할 수 없습니다. ` +
