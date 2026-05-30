@@ -32,6 +32,11 @@ export interface Order {
     price?: number;
   }>;
   restaurantId?: string;
+  // 2026-05-31 WOW#2: 사장이 업로드한 조리 완료 사진 public URL.
+  //   null/undefined = 아직 사진 미첨부. 백엔드 GET /orders/:id 또는
+  //   POS 목록 응답에 포함 (가능한 경우). POS 가 동일 카드에서 "전송 완료"
+  //   배지를 띄울 때 활용.
+  completionPhotoUrl?: string | null;
 }
 
 export interface OrderStats {

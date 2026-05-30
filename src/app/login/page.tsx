@@ -22,18 +22,21 @@ export default function LoginPage() {
   const { login } = useAuth();
   const [restaurantId, setRestaurantId] = useState("");
   const [name, setName] = useState("");
+  // PIN 입력 (2026-05-12 박검토 후 추가) — 백엔드 POS_PIN 환경변수 설정 시 필수.
+  // 빈 값이어도 미설정 환경에서는 발급 성공 (하위 호환).
+  const [pin, setPin] = useState("");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   // POS 로그인 공통 처리 — 백엔드(POST /pos/login/:restaurantId) 호출 후 토큰 저장.
   // 백엔드가 꺼져있거나 식당이 등록되지 않은 경우엔 토큰 없이 localStorage 만 채우는
   // 폴백으로 동작하여 UI 미리보기는 가능 (기존 동작 보존).
-  const performLogin = async (id: string, terminalName: string) => {
+  const performLogin = async (id: string, terminalName: string, pinValue?: string) => {
     setBusy(true);
     setError(null);
     try {
       try {
-        const result = await loginPOS(id, terminalName || undefined);
+        const result = await loginPOS(id, terminalName || undefined, pinValue || undefined);
         login({
           restaurantId: result.restaurantId,
           accessToken: result.accessToken,
@@ -46,11 +49,24 @@ export default function LoginPage() {
         router.replace("/dashboard");
         return;
       } catch (apiErr) {
-        // 404(식당 미등록) 또는 네트워크 오류 → UI 미리보기 폴백
-        // 그 외 4xx/5xx 는 사용자에게 메시지 노출
-        if (apiErr instanceof ApiError && apiErr.status !== 404 && apiErr.code !== "NETWORK_ERROR") {
-          setError(apiErr.message);
-          return;
+        // 에러 분류 (2026-05-12 박검토C 긴급 수정):
+        //   - 404 (식당 미등록): UI 미리보기 폴백 허용 — 데모 단말 흐름과 호환
+        //   - NETWORK_ERROR (백엔드 다운): 폴백 허용 — 오프라인 모드
+        //   - 401/403/400/422 (입력 오류 군): 폴백 금지, 명시적 에러 노출.
+        //     예전 버전은 401 도 폴백으로 흘러 토큰 없이 "성공"한 척 → 이후 모든
+        //     POS API 가 401 로 깨짐. 사용자가 잘못된 ID 입력한 것을 즉시 알려야 함.
+        //   - 5xx: 폴백 금지, 명시적 에러 (서버 장애)
+        if (apiErr instanceof ApiError) {
+          const isFallbackAllowed =
+            apiErr.status === 404 || apiErr.code === "NETWORK_ERROR";
+          if (!isFallbackAllowed) {
+            setError(
+              apiErr.status === 401 || apiErr.status === 403
+                ? '식당 고유번호가 잘못되었거나 권한이 없어요. 다시 확인해 주세요.'
+                : apiErr.message,
+            );
+            return;
+          }
         }
         // 폴백: 토큰 없이 진입 (백엔드 합의 전 흐름과 동일)
         login({
@@ -71,7 +87,7 @@ export default function LoginPage() {
   };
 
   const enterDemo = () => {
-    void performLogin(DEMO.restaurantId, DEMO.name);
+    void performLogin(DEMO.restaurantId, DEMO.name, pin.trim());
   };
 
   const submit = (e: FormEvent) => {
@@ -86,7 +102,7 @@ export default function LoginPage() {
       setError("고유번호 형식이 올바르지 않습니다.");
       return;
     }
-    void performLogin(id, name.trim());
+    void performLogin(id, name.trim(), pin.trim());
   };
 
   return (
@@ -134,6 +150,13 @@ export default function LoginPage() {
             onChange={setName}
             placeholder="예: 1번 카운터"
             hint="여러 POS를 쓸 때 단말 구분용. 화면 우측 상단에 표시됩니다"
+          />
+          <Field
+            label="PIN (운영 환경)"
+            value={pin}
+            onChange={setPin}
+            placeholder="****"
+            hint="관리자에게 받은 4자리 PIN. 개발 환경에서는 비워두세요"
           />
 
           {error && (

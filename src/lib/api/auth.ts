@@ -33,13 +33,20 @@ export interface PosLoginResult {
 /// POST /pos/login/:restaurantId — POS 단말 로그인.
 /// 식당 고유번호가 백엔드 restaurants 테이블에 등록되어 있어야 발급 성공.
 /// 성공 시 client.ts 가 이후 모든 요청에 Bearer 헤더 자동 주입.
+///
+/// PIN (2026-05-12 추가): 백엔드 POS_PIN 환경변수가 설정된 경우 필수.
+/// 미설정 환경에서는 빈 값이어도 발급 성공 (하위 호환).
 export async function loginPOS(
   restaurantId: string,
-  terminalName?: string
+  terminalName?: string,
+  pin?: string,
 ): Promise<PosLoginResult> {
+  const body: Record<string, string> = {};
+  if (terminalName) body.terminalName = terminalName;
+  if (pin) body.pin = pin;
   return apiRequest<PosLoginResult>(`/pos/login/${restaurantId}`, {
     method: "POST",
     auth: false,
-    body: terminalName ? { terminalName } : {},
+    body,
   });
 }

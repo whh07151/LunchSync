@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useMemo } from "react";
 import AppShell from "@/components/AppShell";
+import TodaysNoteCard from "@/components/TodaysNoteCard";
 import { useAuth } from "@/lib/hooks/useAuth";
 import { useOrders } from "@/lib/hooks/useOrders";
 import { useOrderStats } from "@/lib/hooks/useStats";
@@ -110,6 +111,16 @@ export default function DashboardPage() {
           <h1 className="text-h1 text-ink-900">대시보드</h1>
           <p className="text-sm text-ink-500 mt-1">오늘 운영 현황을 한눈에</p>
         </div>
+
+        {/*
+          2026-05-31 WOW#1 "사장님 오늘의 한 줄" 카드.
+          상단 영업 토글(AppShell) 바로 아래에 큰 영역으로 노출 — 시연 때
+          사장님이 한눈에 발견하도록 핵심 카드 그리드보다 위에 배치한다.
+        */}
+        <TodaysNoteCard
+          restaurantId={auth.restaurantId}
+          ready={auth.ready}
+        />
 
         {/* 핵심 카드 그리드 */}
         <section className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">

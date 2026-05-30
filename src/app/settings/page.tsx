@@ -20,12 +20,18 @@ export default function SettingsPage() {
   const [newName, setNewName] = useState(auth.user?.name ?? "");
   const [savedMessage, setSavedMessage] = useState<string | null>(null);
 
+  // saveTerminal — 단말 정보 저장 (2026-05-12 박검토C 긴급 수정).
+  //   기존 버그: auth.login({restaurantId, user}) 만 호출 → useAuth.login 안에서
+  //   setAccessToken(params.accessToken ?? null) 가 실행되어 **현재 로그인 토큰 증발**
+  //   → 이후 모든 /pos/* API 가 401 로 깨짐.
+  //   수정: accessToken: auth.accessToken 명시 전달로 기존 POS 토큰 보존.
   const saveTerminal = () => {
     const id = newRestaurantId.trim();
     const name = newName.trim() || "POS 단말";
     if (!id) return;
     auth.login({
       restaurantId: id,
+      accessToken: auth.accessToken, // 기존 POS JWT 유지 — 토큰 증발 방지
       user: {
         id: auth.user?.id ?? "pos-terminal",
         name,

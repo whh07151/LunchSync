@@ -1,9 +1,38 @@
 # LSPOS Vercel 배포 가이드
 
+## ⚠️ 중요 — repo 구조 미리 이해
+
+LunchSync 는 **git worktree 구조**입니다:
+- `main` / `feat/hyunho` 브랜치 → Flutter + 백엔드 (`android/`, `backend/`, `lib/` 등)
+- `LSPOS` 브랜치 → Next.js POS 웹앱 (`src/`, `package.json`, `vercel.json` 등)
+
+같은 GitHub repo 지만 **브랜치마다 파일 트리가 완전히 다릅니다**.
+Vercel 기본값은 default branch(main) 라 LSPOS 코드를 못 찾으므로,
+**Production Branch 를 `LSPOS` 로 변경**하는 단계가 핵심입니다.
+
 ## 사전 준비
-- GitHub 계정 (whh07151)에 이미 LunchSync repo + LSPOS 브랜치 push 완료 ✓
+- GitHub 계정 (whh07151)에 LunchSync repo + LSPOS 브랜치 push 완료 ✓
 - LSPOS Next.js 14 + TypeScript + Tailwind 빌드 완료 (`npx next build` exit 0)
 - 백엔드 AWS 배포가 끝나 있어야 함 (또는 임시로 localhost 로 시작 가능)
+
+---
+
+## 빠른 배포 (CLI, 1분) — 가장 쉬움
+
+```bash
+cd D:\LunchSyncFr\LunchSync-LSPOS
+npx vercel login          # GitHub OAuth (1회만)
+npx vercel --prod         # 바로 프로덕션 배포
+```
+
+현재 디렉토리(LSPOS worktree) 가 LSPOS 브랜치의 파일 그대로라 브랜치 신경 X.
+첫 실행 시 프로젝트명/scope 등을 물어보고 끝나면 URL 출력.
+
+이후 자동 배포를 원하면 → **Vercel UI 에서 GitHub 연결 후 Production Branch = LSPOS** 추가 설정.
+
+---
+
+## UI 배포 (자동 CI/CD 원할 때)
 
 ## 1단계: Vercel 계정 + 프로젝트 import (2분)
 
