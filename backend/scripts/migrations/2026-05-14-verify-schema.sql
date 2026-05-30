@@ -26,7 +26,10 @@ SELECT
 FROM information_schema.columns
 WHERE table_schema = 'public'
   AND (
-       (table_name = 'restaurants' AND column_name IN ('rating', 'image_url'))
+       -- 2026-05-31 WOW#1: 사장님 "오늘의 한 줄" 컬럼 검증 추가.
+       --   todays_note 가 누락되면 손님 추천 카드의 노란 띠/점수 가중치가
+       --   silent 하게 사라져 사장이 입력해도 "내 가게가 안 보이는" 회귀.
+       (table_name = 'restaurants' AND column_name IN ('rating', 'image_url', 'todays_note'))
     OR (table_name = 'users'       AND column_name IN ('fcm_token'))
     OR (table_name = 'sessions'    AND column_name IN ('radius', 'budget', 'return_minutes', 'memo'))
     -- 2026-05-31 회귀 감사 4회차: 별점/리뷰 컬럼이 silent 누락되는 경우
@@ -68,7 +71,8 @@ WHERE enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')
 ORDER BY enumsortorder;
 
 -- ── 4) 기대값 ────────────────────────────────────────────
--- 1) 컬럼 7개: restaurants.image_url / restaurants.rating /
+-- 1) 컬럼 8개: restaurants.image_url / restaurants.rating /
+--             restaurants.todays_note (2026-05-31 WOW#1) /
 --             users.fcm_token / sessions.radius / sessions.budget /
 --             sessions.return_minutes / sessions.memo
 -- 2) 테이블 2개: pos_reservations / pos_seats

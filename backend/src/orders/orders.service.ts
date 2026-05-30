@@ -190,6 +190,9 @@ export class OrdersService {
       review_score?: number | null;
       review_text?: string | null;
       review_at?: string | null;
+      // 2026-05-31 WOW2: 사장 라이브 카메라 사진 URL (Storage public URL).
+      //   null = 아직 사진 첨부 안 됨. 손님 추적 화면이 hero 이미지로 표시.
+      completion_photo_url?: string | null;
     };
     // 2026-05-15 회귀 fix (폰 라이브 검증 — 주문 상세 404):
     //   별점 commit d07d3ca 가 select 에 review_* 컬럼을 넣었는데,
@@ -210,6 +213,23 @@ export class OrdersService {
       throw new NotFoundException('주문을 찾을 수 없습니다.');
     }
     const order = orderRaw as unknown as OrderRow;
+
+    // 2026-05-31 WOW2: completion_photo_url 별도 안전 조회 — review_* 와 동일
+    // 회복탄력 패턴. 마이그레이션 미적용 환경에서도 silent fail 안 하도록 분리.
+    try {
+      const { data: photoRaw } = await this.supabase.client
+        .from('orders')
+        .select('completion_photo_url')
+        .eq('id', orderId)
+        .single();
+      if (photoRaw) {
+        order.completion_photo_url =
+          (photoRaw as { completion_photo_url?: string | null })
+            .completion_photo_url ?? null;
+      }
+    } catch {
+      order.completion_photo_url = null;
+    }
 
     // review_* 별도 안전 조회 — 컬럼 미존재(마이그레이션 전)면 조용히 null
     try {
@@ -295,6 +315,10 @@ export class OrdersService {
       reviewScore: (order as { review_score?: number | null }).review_score ?? null,
       reviewText: (order as { review_text?: string | null }).review_text ?? null,
       reviewAt: (order as { review_at?: string | null }).review_at ?? null,
+      // 2026-05-31 WOW2 — 사장 라이브 카메라 사진 URL (null = 미첨부)
+      completionPhotoUrl:
+        (order as { completion_photo_url?: string | null })
+          .completion_photo_url ?? null,
       // 2026-05-16 배민 패턴 — 예상 픽업 시각 (ISO8601, null 가능)
       estimatedReadyAt,
       items: (items ?? []).map((i: any) => ({

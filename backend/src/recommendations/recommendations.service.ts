@@ -23,8 +23,9 @@ import { normalizePriceRangeToWon } from '../restaurants/price-range-normalizer'
 //   최근 7일 방문: -30점
 //   알레르기 충돌: -50점
 //   비선호 음식   : -25점
+//   사장님 한줄  : +5점 (2026-05-31 WOW#1, v3 flag 무관)
 //
-//   → 이론 최대 ~120점, 이론 최소 ~0점.
+//   → 이론 최대 ~125점, 이론 최소 ~0점.
 //   → 동일 카테고리 식당이라도 거리·가격대 차이로 최소 5점 이상 분산.
 //
 // 🆕 2026-05-14 reason 라벨링 정합화
@@ -74,6 +75,10 @@ interface Restaurant {
   // 평점 데이터가 없을 수 있음(시드/Gemini 폴백 식당) → null 허용.
   // flag OFF 시에는 select 결과를 사용하지 않으므로 회귀 영향 0.
   rating?: number | null;
+  // 2026-05-31 WOW#1 사장님 "오늘의 한 줄" 가중치 (+5점).
+  // v3 flag 와 무관하게 항상 동작 — 데모 시연 1순위 기능.
+  // 값이 null/빈문자열 → 가산 0, 정상값(1자 이상) → +5점 + "사장님 추천" reason.
+  todays_note?: string | null;
 }
 
 export interface RecommendationResult {
@@ -150,9 +155,12 @@ export class RecommendationsService {
     //     · select 결과에 rating 이 추가돼도 v2 로직은 해당 필드를 참조하지 않으므로
     //       flag OFF 시 점수 산출에 전혀 영향이 없다.
     //     · 데이터가 null 인 식당은 v3 B-2 시간대 가산 대상에서 자동 제외.
+    // 2026-05-31 WOW#1: todays_note 컬럼 select 추가.
+    //   사장님 "오늘의 한 줄" 가산 분기(+5)에서 사용.
+    //   회귀 안전: 컬럼이 null 인 식당은 가산 0 으로 자동 처리되어 기존 점수 변화 없음.
     const { data: allRestaurants } = await this.supabase.client
       .from('restaurants')
-      .select('id, name, category, price_range, address, lat, lng, rating')
+      .select('id, name, category, price_range, address, lat, lng, rating, todays_note')
       .returns<Restaurant[]>();
 
     if (!allRestaurants || allRestaurants.length === 0) return [];
@@ -378,6 +386,31 @@ export class RecommendationsService {
       if (recentRestaurantIds.has(r.id)) {
         score -= 30;
         reasons.push('최근 7일 내 방문');
+      }
+
+      // ══════════════════════════════════════════════════════════
+      // 🆕 2026-05-31 (G+1) "사장님 오늘의 한 줄" 가중치 (WOW#1)
+      //
+      // 가중치 정책:
+      //   · 사장이 POS/사장앱에서 당일 한 줄을 입력해놓은 식당은 +5점.
+      //   · v3 Feature Flag 와 무관하게 항상 동작 — 데모 시연 1순위 기능.
+      //   · 점수 변화가 5점으로 충분히 크지 않다고 느끼면 추후 +8~+10 로 상향.
+      //
+      // 회귀 안전성:
+      //   · todays_note 가 null/빈 문자열 → 가산 0 → 기존 점수 그대로.
+      //   · 새 컬럼 (2026-05-31-add-restaurants-todays-note.sql) 미적용 환경에서도
+      //     PostgREST select 가 undefined 를 반환하므로 가산 자체가 발생하지 않음.
+      //
+      // 사용자 가시성:
+      //   · reasons 에 "사장님 추천" 라벨이 추가 → 손님 카드 reasons 칩에 즉시 노출.
+      //   · todaysNote 본문 자체는 Restaurants API 응답으로 별도 전달되어 노란 띠로 표시.
+      // ══════════════════════════════════════════════════════════
+      const todaysNoteRaw = (r as { todays_note?: string | null }).todays_note;
+      const hasTodaysNote =
+        typeof todaysNoteRaw === 'string' && todaysNoteRaw.trim().length > 0;
+      if (hasTodaysNote) {
+        score += 5;
+        reasons.push('사장님 추천');
       }
 
       // ══════════════════════════════════════════════════════════

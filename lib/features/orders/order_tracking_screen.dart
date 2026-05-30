@@ -246,6 +246,16 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
           _buildStatusHeader(order),
           const SizedBox(height: AppSpacing.md),
 
+          // ── 2026-05-31 WOW#2: 사장 라이브 카메라 1장 ────
+          //   completionPhotoUrl 이 있으면 상단 hero 카드로 페이드인.
+          //   "사장님이 보낸 음식 사진" 캡션 + aspect 4:3(약 320x240) + 둥근 모서리.
+          //   AnimatedOpacity 300ms — 폴링 응답이 처음 도착할 때 부드럽게 등장.
+          if (order.completionPhotoUrl != null &&
+              order.completionPhotoUrl!.isNotEmpty) ...[
+            _buildOwnerPhotoCard(order.completionPhotoUrl!),
+            const SizedBox(height: AppSpacing.md),
+          ],
+
           // ── 진행 스텝 바 (CANCELLED 아닐 때만) ──────────
           if (order.status != 'CANCELLED') _buildStepBar(order.status),
           if (order.status != 'CANCELLED')
@@ -603,6 +613,122 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // 사장 라이브 카메라 1장 (WOW#2 — 2026-05-31)
+  // ══════════════════════════════════════════════════════════
+
+  /// 사장이 POS 에서 보낸 음식 사진을 hero 카드로 표시.
+  ///
+  /// - aspect 4:3 (디자인 가이드 320x240 비율, 화면 가로 가득 채움)
+  /// - 둥근 모서리 (AppRadius.card) + 살짝 그림자
+  /// - AnimatedOpacity 300ms 페이드인 (첫 폴링 응답 도착 시 부드럽게)
+  /// - 캡션 "사장님이 보낸 음식 사진" + 카메라 아이콘
+  /// - 네트워크 로딩 실패 시 회색 placeholder 로 graceful 처리
+  Widget _buildOwnerPhotoCard(String url) {
+    final amber = Colors.amber.shade700;
+    return TweenAnimationBuilder<double>(
+      tween: Tween(begin: 0.0, end: 1.0),
+      duration: const Duration(milliseconds: 300),
+      curve: Curves.easeOut,
+      builder: (context, opacity, child) {
+        return AnimatedOpacity(
+          opacity: opacity,
+          duration: const Duration(milliseconds: 300),
+          child: child,
+        );
+      },
+      child: Container(
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          border: Border.all(color: amber.withAlpha(80)),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withAlpha(20),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // 캡션 헤더
+            Padding(
+              padding: const EdgeInsets.fromLTRB(
+                AppSpacing.md,
+                AppSpacing.sm,
+                AppSpacing.md,
+                4,
+              ),
+              child: Row(
+                children: [
+                  Icon(Icons.camera_alt_rounded, size: 16, color: amber),
+                  const SizedBox(width: 6),
+                  Text(
+                    '사장님이 보낸 음식 사진',
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      color: amber,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            // 이미지 — Hero 위젯으로 감싸 추후 풀스크린 전환 확장 가능.
+            // aspect 4:3 고정 → 가로 풀폭 + 세로 자동.
+            AspectRatio(
+              aspectRatio: 4 / 3,
+              child: Hero(
+                tag: 'order-photo-${widget.orderId}',
+                child: Image.network(
+                  url,
+                  fit: BoxFit.cover,
+                  // 로딩 중에는 회색 placeholder.
+                  loadingBuilder: (ctx, child, progress) {
+                    if (progress == null) return child;
+                    return Container(
+                      color: AppColors.backgroundGrey,
+                      child: const Center(
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      ),
+                    );
+                  },
+                  // 오류 시 작은 안내 — 흰 화면 대신 의미 있는 폴백.
+                  errorBuilder: (ctx, err, stack) {
+                    return Container(
+                      color: AppColors.backgroundGrey,
+                      child: Center(
+                        child: Column(
+                          mainAxisAlignment: MainAxisAlignment.center,
+                          children: [
+                            Icon(
+                              Icons.broken_image_outlined,
+                              size: 32,
+                              color: AppColors.textHint,
+                            ),
+                            const SizedBox(height: 4),
+                            Text(
+                              '사진을 불러오지 못했어요',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.textHint,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
     );
   }

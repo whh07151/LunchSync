@@ -116,6 +116,7 @@ class OrderDetailDto {
     this.reviewText,
     this.reviewAt,
     this.estimatedReadyAt,
+    this.completionPhotoUrl,
   });
 
   final String id;
@@ -144,6 +145,10 @@ class OrderDetailDto {
   /// PAID/ACCEPTED/PREPARING 일 때만 채워짐. 그 외는 null.
   final String? estimatedReadyAt;
 
+  /// 2026-05-31 WOW#2 — 사장이 POS 에서 보낸 조리 완료 사진 URL.
+  /// null = 아직 사진 미첨부. 손님 추적 화면이 hero 이미지로 페이드인 표시.
+  final String? completionPhotoUrl;
+
   factory OrderDetailDto.fromJson(Map<String, dynamic> json) {
     final itemsRaw = json['items'] as List<dynamic>? ?? [];
     return OrderDetailDto(
@@ -160,6 +165,7 @@ class OrderDetailDto {
       reviewText: json['reviewText'] as String?,
       reviewAt: json['reviewAt'] as String?,
       estimatedReadyAt: json['estimatedReadyAt'] as String?,
+      completionPhotoUrl: json['completionPhotoUrl'] as String?,
       items: itemsRaw
           .map((e) => OrderItemDetailDto.fromJson(e as Map<String, dynamic>))
           .toList(),

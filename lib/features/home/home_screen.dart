@@ -1608,6 +1608,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       targetLng: restaurant.lng,
     );
 
+    // 2026-05-31 WOW#1: 사장님 "오늘의 한 줄" 노란 띠.
+    //   todaysNote 가 있을 때만 카드 상단(이미지 위)에 표시.
+    //   배경 #FFF3CD + 👨‍🍳 이모지 + 메시지 한 줄(ellipsis).
+    //   카드 폭이 150px 이라 길이가 길면 자동으로 잘림 — 손님은 상세 진입 후 전체 확인.
+    final todaysNote = restaurant.todaysNote;
+
     return AppCard(
       // 식당 카드 탭 → CU-13 식당 상세 화면으로 이동
       onTap: () {
@@ -1626,6 +1632,48 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+
+            // ── 사장님 한 줄 (있을 때만) ────────────────────
+            if (todaysNote != null) ...[
+              Container(
+                width: double.infinity,
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 6,
+                  vertical: 4,
+                ),
+                decoration: BoxDecoration(
+                  // 디자인 명세: #FFF3CD 배경 + 살짝 어두운 노란 테두리.
+                  color: const Color(0xFFFFF3CD),
+                  borderRadius: BorderRadius.circular(AppRadius.small),
+                  border: Border.all(color: const Color(0xFFFFE082)),
+                ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.center,
+                  children: [
+                    // 👨‍🍳 이모지 — 의미를 시각적으로 즉시 전달.
+                    const Text(
+                      '👨‍🍳',
+                      style: TextStyle(fontSize: 11, height: 1.1),
+                    ),
+                    const SizedBox(width: 3),
+                    // 인용구 — 가로 카드 폭 좁아 1줄로만 노출, 넘치면 ellipsis.
+                    Expanded(
+                      child: Text(
+                        todaysNote,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: AppTextStyles.caption.copyWith(
+                          color: AppColors.textPrimary,
+                          fontWeight: FontWeight.w600,
+                          height: 1.2,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 4),
+            ],
 
             // ── 식당 이미지 영역 (placeholder) ─────────────
             Container(
