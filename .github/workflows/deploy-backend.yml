@@ -74,7 +74,10 @@ jobs:
             echo "----- NPM INSTALL -----"
             npm install 2>&1 | tail -20
             echo "----- BUILD (nest build, output captured) -----"
-            rm -rf dist
+            # 2026-05-30 EC2 dist/ 가 root/pm2 등 다른 유저 소유로 남는 경우
+            # ubuntu 가 rm 못 함 → 배포 실패. sudo 로 강제 삭제 (EC2 ubuntu
+            # 는 NOPASSWD sudo 가 표준).
+            sudo rm -rf dist
             npm run build > /tmp/build.log 2>&1
             BUILD_EXIT=$?
             echo "build exit code: $BUILD_EXIT"
