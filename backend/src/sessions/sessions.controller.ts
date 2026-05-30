@@ -28,6 +28,7 @@ import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import { SessionsService } from './sessions.service';
+import { ChemistryService } from './chemistry.service';
 
 // 2026-05-13 타입 추출 (코드 리뷰 M2):
 //   pos.controller 패턴 따라 인라인 5회 반복 → 단일 AuthedRequest 로 통일.
@@ -46,6 +47,7 @@ type AuthedRequest = { user: AuthedRequestUser };
 //   GET    /api/sessions/:id/members  — 세션 멤버 목록
 //   POST   /api/sessions/:id/members  — 멤버 추가
 //   DELETE /api/sessions/:id/members/:userId — 멤버 제거
+//   GET    /api/sessions/:id/chemistry — WOW#3 점심 케미 매트릭스
 // ══════════════════════════════════════════════════════════
 
 class CreateSessionDto {
@@ -113,7 +115,31 @@ class AddMemberDto {
 @Controller('sessions')
 @UseGuards(JwtAuthGuard)
 export class SessionsController {
-  constructor(private readonly sessionsService: SessionsService) {}
+  constructor(
+    private readonly sessionsService: SessionsService,
+    private readonly chemistryService: ChemistryService,
+  ) {}
+
+  // ── GET /api/sessions/:id/chemistry ───────────────────
+  // WOW 포인트 #3 — "점심 케미 매트릭스"
+  //
+  // 세션 멤버 전원의 최근 30일 카테고리 빈도 + 투표 결과 식당 카테고리를 합산해
+  // Gemini AI 가 한 줄 요약 라벨 + 0~100 점수를 생성한다.
+  //
+  // 응답 정책:
+  //   - 정상 응답: { success: true, data: { score, label, tone, topCategories } }
+  //   - Gemini 실패 / 데이터 없음 / 멤버 0명: { success: true, data: null }
+  //     → Flutter 측이 null 이면 카드 자체를 미노출 (화면 깨짐 0).
+  //
+  // SkipThrottle 적용 — 추천 리스트가 진입 직후 1회 호출(이후 30분 캐시) 하므로
+  // 폴링은 아니지만, 멤버 N명이 동시 진입할 때 글로벌 throttler 부담을 덜기 위해
+  // 안전망으로 함께 둔다.
+  @SkipThrottle({ default: true })
+  @Get(':id/chemistry')
+  async getChemistry(@Param('id') id: string) {
+    const result = await this.chemistryService.getChemistry(id);
+    return { success: true, data: result };
+  }
 
   // ── POST /api/sessions ────────────────────────────────
   @Post()

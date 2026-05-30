@@ -16,6 +16,7 @@ import '../map/recommendation_map_screen.dart';
 import '../restaurant/restaurant_detail_screen.dart';
 import '../restaurant/restaurant_comparison_screen.dart';
 import 'vote_progress_screen.dart';
+import 'widgets/chemistry_card.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-11 AI 추천 리스트 화면 (= 투표 화면)
@@ -88,6 +89,16 @@ class _RecommendationListScreenState
   double? _userLat;
   double? _userLng;
 
+  // ── WOW #3 점심 케미 매트릭스 ──────────────────────────
+  // 진입 시 1회 호출(_loadChemistry). 백엔드 30분 캐시 덕에 같은 세션 재진입
+  // 시에도 같은 응답 재사용 → Gemini 호출 횟수 절감.
+  //   _chemistry        : null = 미수신(로딩 중) 또는 미노출 결정.
+  //   _chemistryLoading : true 동안 스켈레톤 표시.
+  //   _chemistryFailed  : 호출 실패 한 번이라도 발생 시 true — 카드 자체 미노출.
+  ChemistryResult? _chemistry;
+  bool _chemistryLoading = false;
+  bool _chemistryFailed = false;
+
   @override
   void initState() {
     super.initState();
@@ -96,6 +107,7 @@ class _RecommendationListScreenState
       _loadRecommendations();
       _loadUserLocation();
       _loadSessionStatus();
+      _loadChemistry(); // WOW #3 — Gemini 케미 매트릭스 1회 조회.
     });
   }
 
@@ -122,6 +134,27 @@ class _RecommendationListScreenState
     setState(() {
       _sessionStatus = session.status;
       _isHost = isHost;
+    });
+  }
+
+  // ── WOW #3 점심 케미 매트릭스 1회 조회 ─────────────────
+  // 화면 진입 직후 호출. 백엔드는 30분 캐시 → 같은 세션 재진입도 부담 작음.
+  // 실패 / 데이터 없음 / Gemini 키 없음 → null 반환 → 카드 자체 미노출.
+  // 추천 리스트 렌더링과 완전 독립이라 실패해도 다른 영역에 영향 0.
+  Future<void> _loadChemistry() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+
+    setState(() => _chemistryLoading = true);
+    final result = await const SessionsApiService().getChemistry(
+      accessToken: token,
+      sessionId: widget.sessionId,
+    );
+    if (!mounted) return;
+    setState(() {
+      _chemistry = result;
+      _chemistryLoading = false;
+      _chemistryFailed = result == null;
     });
   }
 
@@ -472,6 +505,11 @@ class _RecommendationListScreenState
         // 시연 피드백("어디서 투표하나요?") 해결 핵심 영역.
         _buildHeaderBanner(),
 
+        // ── WOW #3 점심 케미 카드 ───────────────────────
+        // 로딩 중 → 스켈레톤 / 실패(null) → 위젯 자체 미노출 (장애 차단).
+        // 화면 다른 영역에 영향을 주지 않도록 _buildChemistrySection 으로 캡슐화.
+        _buildChemistrySection(),
+
         // ── 세션 이름 헤더 ───────────────────────────────
         Padding(
           padding: const EdgeInsets.fromLTRB(
@@ -651,6 +689,21 @@ class _RecommendationListScreenState
         ),
       ],
     );
+  }
+
+  // ── WOW #3 점심 케미 섹션 ─────────────────────────────
+  // 로딩 / 결과 / 실패 3가지를 한 곳에서 분기.
+  //   - 로딩      : 스켈레톤 표시 (시연에서 빈 화면 인상 차단)
+  //   - 결과 있음 : ChemistryCard 표시
+  //   - 실패 / 데이터 없음 : SizedBox.shrink — 화면 영향 0 (장애 차단 정책)
+  Widget _buildChemistrySection() {
+    if (_chemistryLoading) {
+      return const ChemistryCardSkeleton();
+    }
+    if (_chemistryFailed || _chemistry == null) {
+      return const SizedBox.shrink();
+    }
+    return ChemistryCard(result: _chemistry!);
   }
 
   // ── 상단 안내 배너 ───────────────────────────────────

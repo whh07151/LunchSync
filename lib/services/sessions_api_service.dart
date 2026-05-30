@@ -19,6 +19,7 @@ import '../models/session.dart';
 //   GET    /api/sessions/:id/members  — 멤버 목록
 //   POST   /api/sessions/:id/members  — 멤버 추가
 //   DELETE /api/sessions/:id/members/:userId — 멤버 제거
+//   GET    /api/sessions/:id/chemistry — WOW#3 점심 케미 매트릭스
 // ══════════════════════════════════════════════════════════
 
 class SessionsApiService {
@@ -330,6 +331,45 @@ class SessionsApiService {
     }
   }
 
+  // ── GET /api/sessions/:id/chemistry ───────────────────
+  // WOW 포인트 #3 점심 케미 매트릭스 — 그룹 점수/한 줄 라벨/톤/카테고리 칩.
+  //
+  // 백엔드 응답:
+  //   - 정상: { success: true, data: { score, label, tone, topCategories[] } }
+  //   - 데이터 없음 / Gemini 실패: { success: true, data: null }
+  //     → 호출측은 null 이면 케미 카드 자체를 미노출 (장애 차단 정책).
+  //
+  // 본 메서드는 어떤 종류의 예외에도 null 을 반환 → 추천 화면 렌더링을
+  // 절대 막지 않는다. (Gemini 비용/장애에 화면 깨지지 않게)
+  Future<ChemistryResult?> getChemistry({
+    required String accessToken,
+    required String sessionId,
+  }) async {
+    try {
+      final response = await http
+          .get(
+            Uri.parse(
+                '${AppConfig.backendBaseUrl}/sessions/$sessionId/chemistry'),
+            headers: apiHeaders(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+
+      if (response.statusCode != 200) {
+        debugPrint(
+            '[SessionsApiService] getChemistry ${response.statusCode} body=${response.body}');
+        return null;
+      }
+      final json = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = json['data'];
+      if (data is! Map<String, dynamic>) return null; // null 이면 카드 미노출.
+      return ChemistryResult.fromJson(data);
+    } catch (e) {
+      debugPrint('[SessionsApiService] getChemistry 예외: $e');
+      return null;
+    }
+  }
+
   // ── DELETE /api/sessions/:id/members/:userId ──────────
   Future<bool> removeMember({
     required String accessToken,
@@ -397,4 +437,52 @@ class SessionDeleteResult {
   final bool isSuccess;
   final int statusCode; // 0 = 네트워크/예외, 그 외 = HTTP 상태코드
   final String? message; // UI 토스트에 그대로 표시할 한국어 메시지
+}
+
+
+// ══════════════════════════════════════════════════════════
+// ChemistryResult — WOW 포인트 #3 점심 케미 매트릭스 응답
+//
+// 백엔드 ChemistryService 응답을 그대로 매핑. tone 은 카드 색상 분기에 사용:
+//   warm    : 빨강 계열(한식/매콤)
+//   cool    : 파랑 계열(일식/샐러드)
+//   neutral : 회색 계열(기타/데이터 부족)
+// score, label 은 카드 본문에 그대로 노출.
+// topCategories 는 카드 하단 칩 3개로 표시 (없으면 칩 영역 미노출).
+// ══════════════════════════════════════════════════════════
+class ChemistryResult {
+  const ChemistryResult({
+    required this.score,
+    required this.label,
+    required this.tone,
+    required this.topCategories,
+  });
+
+  final int score;              // 0~100
+  final String label;           // "매콤+가성비형" 같은 한 줄 라벨
+  final String tone;            // warm | cool | neutral
+  final List<String> topCategories; // 상위 3개 카테고리
+
+  factory ChemistryResult.fromJson(Map<String, dynamic> json) {
+    // 방어적 파싱 — 백엔드가 한 필드 누락해도 카드가 깨지지 않게 기본값 채움.
+    final rawScore = json['score'];
+    final score = (rawScore is num) ? rawScore.round().clamp(0, 100) : 50;
+    final rawCats = json['topCategories'];
+    final cats = (rawCats is List)
+        ? rawCats
+            .whereType<String>()
+            .map((s) => s.trim())
+            .where((s) => s.isNotEmpty)
+            .take(3)
+            .toList(growable: false)
+        : const <String>[];
+    return ChemistryResult(
+      score: score,
+      label: (json['label'] as String?)?.trim().isNotEmpty == true
+          ? (json['label'] as String).trim()
+          : '점심 케미',
+      tone: (json['tone'] as String?)?.trim().toLowerCase() ?? 'neutral',
+      topCategories: cats,
+    );
+  }
 }
