@@ -35,6 +35,13 @@ class FcmService {
   //
   // 반환: 발급된 FCM 토큰 (실패/권한거부 시 null)
   Future<String?> registerToken({required String accessToken}) async {
+    // 웹은 캡스톤 범위에서 Firebase 미설정 (docs/LUNCHSYNC_AUTH_DECISION.md:
+    // Firebase 는 테스트/비활성). web 푸시용 service worker 가 없어
+    // 등록 시도 시 MIME 오류가 콘솔에 찍히므로 웹에서는 조용히 건너뛴다.
+    // 네이티브 모바일 빌드는 정상 동작 (kIsWeb == false).
+    if (kIsWeb) {
+      return null;
+    }
     try {
       final messaging = FirebaseMessaging.instance;
 
