@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/error_message_extractor.dart';
 import '../core/api/http_headers_helper.dart';
 import '../models/session.dart';
 
@@ -187,15 +188,11 @@ class SessionsApiService {
           message = '투표 시작이 안 됐어요. 잠시 후 다시 시도해봐요';
       }
       // 백엔드가 더 구체적인 message 를 내려주면 그걸 우선 사용
-      try {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final raw = json['message'];
-        if (raw is String && raw.isNotEmpty) {
-          message = raw;
-        } else if (raw is List && raw.isNotEmpty) {
-          message = raw.first.toString();
-        }
-      } catch (_) {}
+      // (공용 헬퍼가 String / List<String> / 빈 문자열을 일괄 처리)
+      final backendMsg = extractApiErrorMessage(response.body);
+      if (backendMsg != null) {
+        message = backendMsg;
+      }
 
       debugPrint(
         '[SessionsApiService] updateSessionStatus 실패: '
@@ -260,15 +257,11 @@ class SessionsApiService {
           message = '세션을 삭제하지 못했어요. 잠시 후 다시 시도해봐요';
       }
       // 백엔드 message 우선 사용
-      try {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final raw = json['message'];
-        if (raw is String && raw.isNotEmpty) {
-          message = raw;
-        } else if (raw is List && raw.isNotEmpty) {
-          message = raw.first.toString();
-        }
-      } catch (_) {}
+      // (공용 헬퍼가 String / List<String> / 빈 문자열을 일괄 처리)
+      final backendMsg = extractApiErrorMessage(response.body);
+      if (backendMsg != null) {
+        message = backendMsg;
+      }
 
       debugPrint(
         '[SessionsApiService] deleteSession 실패: '

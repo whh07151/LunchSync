@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import '../core/api/error_message_extractor.dart';
 import '../core/config/app_config.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -144,16 +145,9 @@ class AuthApiService {
       }
 
       // 에러 메시지 추출 (NestJS ValidationPipe / Exception 응답 구조)
-      String message = '회원가입에 실패했습니다.';
-      try {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final raw = json['message'];
-        if (raw is String) {
-          message = raw;
-        } else if (raw is List && raw.isNotEmpty) {
-          message = raw.first.toString();
-        }
-      } catch (_) {}
+      // 공용 헬퍼가 message 가 String / List<String> 양쪽을 모두 처리.
+      final message =
+          extractApiErrorMessage(response.body) ?? '회원가입에 실패했습니다.';
 
       return AuthSignupResult.failure(message);
     } catch (e) {
@@ -191,16 +185,9 @@ class AuthApiService {
         return AuthSignupResult.success(AuthResponse.fromJson(data));
       }
 
-      String message = '휴대폰 인증에 실패했어요.';
-      try {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final raw = json['message'];
-        if (raw is String) {
-          message = raw;
-        } else if (raw is List && raw.isNotEmpty) {
-          message = raw.first.toString();
-        }
-      } catch (_) {}
+      // NestJS 에러 메시지 추출 (단일 String 또는 ValidationPipe 의 List<String>)
+      final message =
+          extractApiErrorMessage(response.body) ?? '휴대폰 인증에 실패했어요.';
 
       return AuthSignupResult.failure(message);
     } catch (e) {
@@ -233,16 +220,9 @@ class AuthApiService {
         return AuthSignupResult.success(AuthResponse.fromJson(data));
       }
 
-      String message = '로그인에 실패했습니다.';
-      try {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final raw = json['message'];
-        if (raw is String) {
-          message = raw;
-        } else if (raw is List && raw.isNotEmpty) {
-          message = raw.first.toString();
-        }
-      } catch (_) {}
+      // NestJS 에러 메시지 추출 (단일 String 또는 ValidationPipe 의 List<String>)
+      final message =
+          extractApiErrorMessage(response.body) ?? '로그인에 실패했습니다.';
 
       return AuthSignupResult.failure(message);
     } catch (e) {

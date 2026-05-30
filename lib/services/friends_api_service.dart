@@ -2,6 +2,7 @@
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/error_message_extractor.dart';
 import '../core/api/http_headers_helper.dart';
 import '../core/config/app_config.dart';
 
@@ -143,7 +144,7 @@ class FriendsApiService {
 
       // 잘못된 요청 (자기 자신 추가, 이메일 형식 오류 등)
       if (response.statusCode == 400) {
-        final message = _extractMessage(response.body) ??
+        final message = extractApiErrorMessage(response.body) ??
             '이메일을 다시 확인해주세요.';
         return AddFriendResult.invalid(message);
       }
@@ -235,20 +236,6 @@ class FriendsApiService {
     }
   }
 
-  // ── 응답 body 에서 NestJS 표준 메시지 필드 추출 헬퍼 ──────
-  // NestJS 예외는 { "message": "...", "error": "...", "statusCode": ... } 형태로 옵니다.
-  // 메시지가 문자열 배열일 수도 있어서(class-validator) 둘 다 처리.
-  String? _extractMessage(String body) {
-    try {
-      final decoded = jsonDecode(body);
-      if (decoded is Map<String, dynamic>) {
-        final msg = decoded['message'];
-        if (msg is String) return msg;
-        if (msg is List && msg.isNotEmpty) return msg.first.toString();
-      }
-    } catch (_) {
-      // 파싱 실패는 무시 (기본 안내 문구로 fallback)
-    }
-    return null;
-  }
+  // _extractMessage 는 core/api/error_message_extractor.dart 의
+  // extractApiErrorMessage 로 통합됨 (auth/votes/sessions 와 공용).
 }
