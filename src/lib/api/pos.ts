@@ -73,6 +73,55 @@ export async function getOrderById(orderId: string): Promise<Order> {
 }
 
 // ══════════════════════════════════════════════════════════
+// POS-13 (2026-05-31) — Toss POS 시뮬 결제.
+//
+// 사장님이 매장 손님(워크인) 결제를 POS 단말에서 직접 받는 흐름.
+//   - 손님앱 결제(=토스 결제위젯 v2) 와 별개 경로
+//   - 본 단계는 시뮬: 실제 토스 POS API 미연동. status PENDING → PAID
+//     + payment_method = 'POS_TOSS' | 'POS_CASH' 만 갱신.
+//
+// body:
+//   { method: 'CARD' | 'CASH', receivedAmount?: number }
+//   · CARD — POS 단말 토스 카드 결제 시뮬
+//   · CASH — 사장이 현장에서 받은 금액 (receivedAmount 로 거스름돈 표시)
+//
+// 응답:
+//   { orderId, status: 'PAID', paymentMethod: 'POS_TOSS' | 'POS_CASH', approvedAt }
+//
+// 멱등성:
+//   이미 PAID/PREPARING/READY/COMPLETED 인 주문은 새 업데이트 없이 현재 상태 반환.
+//   같은 결제 버튼 두 번 클릭 / 네트워크 재시도 시 부작용 차단.
+// ══════════════════════════════════════════════════════════
+export interface TossPosChargeResult {
+  orderId: string;
+  status: OrderStatus;
+  paymentMethod: string; // 'POS_TOSS' | 'POS_CASH'
+  approvedAt: string;
+}
+
+export async function chargeViaPosToss(
+  orderId: string,
+  method: "CARD" | "CASH",
+  receivedAmount?: number,
+): Promise<TossPosChargeResult> {
+  // receivedAmount 가 0/undefined 면 body 에서 제외 — 카드 결제 케이스에서
+  // 불필요한 필드 전송 방지.
+  const body: { method: "CARD" | "CASH"; receivedAmount?: number } = {
+    method,
+  };
+  if (typeof receivedAmount === "number" && receivedAmount > 0) {
+    body.receivedAmount = receivedAmount;
+  }
+  return apiRequest<TossPosChargeResult>(
+    `/pos/orders/${orderId}/toss-pos-charge`,
+    {
+      method: "POST",
+      body,
+    },
+  );
+}
+
+// ══════════════════════════════════════════════════════════
 // 2026-05-31 WOW#2: 사장 라이브 카메라 1장
 //
 // 흐름:

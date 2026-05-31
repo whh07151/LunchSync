@@ -6,6 +6,7 @@ import AppShell from "@/components/AppShell";
 import CancelModal from "@/components/CancelModal";
 import {
   cancelOrder,
+  chargeViaPosToss,
   getOrderById,
   refundOrderSim,
   updateOrderStatus,
@@ -48,6 +49,18 @@ export default function OrderDetailPage({ params }: Props) {
   const [toast, setToast] = useState<
     { tone: "success" | "error"; text: string } | null
   >(null);
+
+  // POS-13: Toss POS 시뮬 결제 모달 상태.
+  //   payOpen        — 결제수단 선택 모달 열림 여부
+  //   payMethod      — 'CARD' (POS 토스 카드) | 'CASH' (현금)
+  //   receivedText   — 현금 결제 시 사장이 받은 금액(원). 거스름돈 계산용.
+  //                    문자열로 들고 있다가 제출 직전 number 로 변환 — 입력 중
+  //                    "5000" 의 0/공백 상태를 자연스럽게 유지하기 위함.
+  //   payBusy        — 백엔드 호출 진행 중 여부 (버튼 disable + 라벨 변경)
+  const [payOpen, setPayOpen] = useState(false);
+  const [payMethod, setPayMethod] = useState<"CARD" | "CASH">("CARD");
+  const [receivedText, setReceivedText] = useState("");
+  const [payBusy, setPayBusy] = useState(false);
 
   const load = useCallback(async () => {
     setError(null);
@@ -128,6 +141,58 @@ export default function OrderDetailPage({ params }: Props) {
     const t = setTimeout(() => setToast(null), 3000);
     return () => clearTimeout(t);
   }, [toast]);
+
+  // POS-13: 결제 모달 열기 — 매번 입력값 초기화.
+  //   결제 모달이 다시 열렸을 때 이전 입력값이 남아 있으면 오작동(엉뚱한
+  //   거스름돈) 가능성. 매번 깨끗한 상태로 시작한다.
+  const openPayModal = () => {
+    setPayMethod("CARD");
+    setReceivedText("");
+    setPayOpen(true);
+  };
+
+  // POS-13: 결제 확정 — 백엔드 chargeViaPosToss 호출.
+  //   - CASH 인데 받은 금액 < 총액 → 클라이언트에서 가드 (UX 친화 에러)
+  //   - 성공: 토스트 + load() 재조회로 상태가 PAID 칩으로 갱신
+  //   - 실패: 토스트 에러, 모달은 그대로 두어 재시도 가능
+  const onConfirmPay = async () => {
+    if (!order) return;
+    const received =
+      payMethod === "CASH" ? Number(receivedText.replace(/[^0-9]/g, "")) : 0;
+    if (
+      payMethod === "CASH" &&
+      (Number.isNaN(received) || received < order.totalPrice)
+    ) {
+      setToast({ tone: "error", text: "받은 금액이 부족합니다" });
+      return;
+    }
+    setPayBusy(true);
+    setError(null);
+    try {
+      await chargeViaPosToss(
+        order.id,
+        payMethod,
+        payMethod === "CASH" ? received : undefined,
+      );
+      setPayOpen(false);
+      setToast({ tone: "success", text: "결제 완료" });
+      await load();
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : "결제 실패";
+      setToast({ tone: "error", text: msg });
+      setError(msg);
+    } finally {
+      setPayBusy(false);
+    }
+  };
+
+  // POS-13: 거스름돈 계산 — 현금 결제 시 받은 금액에서 총액 차감.
+  //   "5,000" 같은 콤마 입력도 허용 (숫자 외 문자 strip 후 변환).
+  //   음수면 "부족" 으로 표시되도록 컴포넌트에서 분기.
+  const receivedNumber = receivedText
+    ? Number(receivedText.replace(/[^0-9]/g, ""))
+    : 0;
+  const change = order ? receivedNumber - order.totalPrice : 0;
 
   const tone = order ? STATUS_TONE[order.status] : null;
   const next = order ? nextStatus(order.status) : null;
@@ -225,6 +290,23 @@ export default function OrderDetailPage({ params }: Props) {
             </section>
 
             <div className="mt-6 flex gap-2 flex-wrap">
+              {/*
+                POS-13 Toss POS 시뮬 결제 버튼.
+                  - PENDING(결제 대기) 상태에서만 노출 — 매장 워크인 손님이
+                    아직 결제 전인 주문만 대상.
+                  - 빨강 강조 — 결제 행위가 가장 두드러진 액션이 되도록.
+                  - 클릭 시 결제수단 선택 모달 오픈.
+              */}
+              {order.status === "PENDING" && (
+                <button
+                  type="button"
+                  onClick={openPayModal}
+                  disabled={busy || payBusy}
+                  className="flex-1 h-12 rounded-button bg-state-error text-white font-semibold hover:opacity-90 active:scale-[0.99] transition disabled:opacity-50"
+                >
+                  Toss POS로 결제
+                </button>
+              )}
               {next && (
                 <button
                   type="button"
@@ -327,6 +409,144 @@ export default function OrderDetailPage({ params }: Props) {
         onConfirm={onConfirmCancel}
         busy={cancelBusy}
       />
+
+      {/*
+        POS-13 결제수단 선택 모달.
+          - 카드/현금 라디오 — 단순 UI 로 시연 임팩트 우선.
+          - CASH 선택 시 받은 금액 입력 + 거스름돈 자동 표시 (실시간 계산).
+          - 확인 → onConfirmPay() → 백엔드 호출 → 상태 PAID 칩 갱신.
+          - 별도 컴포넌트로 분리하지 않은 이유: 본 페이지 외 사용처가 없고
+            결제 상태(payMethod/receivedText) 가 페이지 로컬에 묶여 있어
+            props 드릴이 오히려 복잡해짐.
+      */}
+      {payOpen && order && (
+        <div
+          className="fixed inset-0 z-50 bg-black/40 flex items-end sm:items-center justify-center p-4"
+          role="dialog"
+          aria-modal="true"
+          onClick={() => !payBusy && setPayOpen(false)}
+        >
+          <div
+            className="bg-white rounded-card shadow-elevated max-w-md w-full p-6 space-y-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <header className="flex items-baseline justify-between">
+              <h2 className="text-lg font-bold text-ink-900">결제 처리</h2>
+              <span className="text-xs text-ink-500">
+                #{shortOrderNumber(order.id)}
+              </span>
+            </header>
+
+            <div className="bg-gray-50 rounded-input p-3 flex items-baseline justify-between">
+              <span className="text-sm text-ink-500">총 결제 금액</span>
+              <span className="text-h2 font-bold text-ink-900">
+                {formatPrice(order.totalPrice)}
+              </span>
+            </div>
+
+            <div className="space-y-2">
+              <p className="text-sm font-semibold text-ink-700">결제수단</p>
+              <div className="grid grid-cols-2 gap-2">
+                {/*
+                  각 라디오를 큼직한 카드 형태로 변환. 시연 시 사장님이
+                  손가락으로 명확히 선택할 수 있도록 hit area 확보.
+                */}
+                <label
+                  className={
+                    "h-14 rounded-button border-2 flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold " +
+                    (payMethod === "CARD"
+                      ? "border-primary bg-primary-surface text-primary-dark"
+                      : "border-line-border bg-white text-ink-700")
+                  }
+                >
+                  <input
+                    type="radio"
+                    name="payMethod"
+                    value="CARD"
+                    checked={payMethod === "CARD"}
+                    onChange={() => setPayMethod("CARD")}
+                    className="sr-only"
+                  />
+                  카드
+                </label>
+                <label
+                  className={
+                    "h-14 rounded-button border-2 flex items-center justify-center gap-2 cursor-pointer text-sm font-semibold " +
+                    (payMethod === "CASH"
+                      ? "border-primary bg-primary-surface text-primary-dark"
+                      : "border-line-border bg-white text-ink-700")
+                  }
+                >
+                  <input
+                    type="radio"
+                    name="payMethod"
+                    value="CASH"
+                    checked={payMethod === "CASH"}
+                    onChange={() => setPayMethod("CASH")}
+                    className="sr-only"
+                  />
+                  현금
+                </label>
+              </div>
+            </div>
+
+            {/*
+              CASH 선택 시에만 받은 금액 입력 노출.
+              거스름돈 = 받은 금액 - 총액. 음수면 빨강으로 "부족" 표시.
+            */}
+            {payMethod === "CASH" && (
+              <div className="space-y-2">
+                <label className="text-sm font-semibold text-ink-700">
+                  받은 금액
+                </label>
+                <input
+                  type="text"
+                  inputMode="numeric"
+                  value={receivedText}
+                  onChange={(e) => setReceivedText(e.target.value)}
+                  placeholder="0"
+                  className="w-full h-12 px-3 rounded-input border border-line-border text-right text-base tabular-nums focus:outline-none focus:border-primary"
+                />
+                <div className="bg-yellow-50 rounded-input p-3 flex items-baseline justify-between">
+                  <span className="text-sm text-ink-500">거스름돈</span>
+                  <span
+                    className={
+                      "text-base font-bold tabular-nums " +
+                      (change < 0 ? "text-state-error" : "text-ink-900")
+                    }
+                  >
+                    {change < 0
+                      ? `부족 ${formatPrice(Math.abs(change))}`
+                      : formatPrice(change)}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            <div className="flex gap-2 pt-2">
+              <button
+                type="button"
+                onClick={() => setPayOpen(false)}
+                disabled={payBusy}
+                className="flex-1 h-12 rounded-button border border-line-border bg-white text-ink-700 font-medium hover:bg-gray-50 disabled:opacity-50"
+              >
+                취소
+              </button>
+              <button
+                type="button"
+                onClick={onConfirmPay}
+                disabled={
+                  payBusy ||
+                  (payMethod === "CASH" && change < 0)
+                }
+                className="flex-1 h-12 rounded-button bg-primary text-white font-semibold hover:bg-primary-dark active:scale-[0.99] disabled:opacity-50"
+              >
+                {payBusy ? "처리 중…" : "결제 확인"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }
