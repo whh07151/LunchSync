@@ -22,7 +22,7 @@
 --
 -- 안전성:
 --   - 완전 동일(식당+이름+가격)한 행만 대상 → 의미 있는 서로 다른 메뉴는 보존.
---   - created_at 이 가장 빠른 행(동률이면 id 작은 행)을 유지 → 원본 메뉴 보존.
+--   - ctid(물리 행 식별자)가 가장 앞선 행 1개를 유지 → 중복 중 하나만 남김.
 --   - 멱등: 여러 번 실행해도 추가 변화 없음(이미 1개면 삭제 대상 없음).
 --   - 트랜잭션 단위로 안전하게 실행 가능.
 --
@@ -41,18 +41,21 @@
 -- ORDER BY dup_count DESC
 -- LIMIT 20;
 
--- ── 정리: 완전중복 행 삭제 (가장 오래된 1행만 유지) ──────────
+-- ── 정리: 완전중복 행 삭제 (그룹당 1행만 유지) ──────────────
+-- 2026-05-31 정정: menu_items 에는 created_at 컬럼이 없음(라이브 확인).
+--   PostgreSQL 내장 시스템 컬럼 ctid(물리 행 식별자, 모든 테이블에 항상 존재)로
+--   정렬해 그룹당 첫 행만 남긴다. 단일 트랜잭션 내 DELETE 라 ctid 안정적.
 WITH ranked AS (
   SELECT
-    id,
+    ctid,
     ROW_NUMBER() OVER (
       PARTITION BY restaurant_id, name, price
-      ORDER BY created_at ASC, id ASC
+      ORDER BY ctid
     ) AS rn
   FROM menu_items
 )
 DELETE FROM menu_items
-WHERE id IN (SELECT id FROM ranked WHERE rn > 1);
+WHERE ctid IN (SELECT ctid FROM ranked WHERE rn > 1);
 
 -- ── 사후 검증: 남은 완전중복 0건이어야 정상 ──────────────────
 -- SELECT COUNT(*) AS remaining_dup_groups FROM (
