@@ -55,6 +55,25 @@ export class OrdersService {
     // orders.restaurant_id 컬럼에 들어갈 단일 값
     const restaurantId = menuItems[0].restaurant_id as string;
 
+    // 2026-05-31 자기매장 주문 차단 — 사장이 본인 가게에 주문하는 비정상 흐름 차단.
+    //   배경: hyunho 같은 시연 계정이 role 토글로 사장↔손님을 오갈 때, 본인이
+    //         운영하는 가게에 주문이 들어가면 사장 화면에서 자기 주문을 받는
+    //         이상한 흐름이 됨. 일반 사장 계정도 OWNER+APPROVED 라면 자기 가게
+    //         주문은 금지하는 게 비즈니스 룰.
+    const { data: orderingUser } = await this.supabase.client
+      .from('users')
+      .select('role, restaurant_id')
+      .eq('id', userId)
+      .maybeSingle();
+    if (
+      orderingUser?.role === 'OWNER' &&
+      orderingUser?.restaurant_id === restaurantId
+    ) {
+      throw new BadRequestException(
+        '본인이 운영하는 매장에는 주문할 수 없어요. 손님 계정으로 로그인하거나 다른 매장을 선택해주세요.',
+      );
+    }
+
     // 2. 총 금액 계산
     const menuMap = new Map(menuItems.map((m) => [m.id, m]));
     let totalPrice = 0;
