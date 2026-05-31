@@ -58,6 +58,10 @@ export default function DashboardPage() {
       READY: 0,
       COMPLETED: 0,
       CANCELLED: 0,
+      // POS-09: 환불 시뮬 상태도 카운트에 포함. dashboard 카드 그리드에서는
+      // 아직 "환불" 카드를 별도로 두지 않지만, OrderStatus 가 확장되어
+      // Record 키가 누락되면 타입 에러가 나므로 0 으로 초기화.
+      REFUNDED: 0,
     };
     for (const o of orderList) acc[o.status] += 1;
     return acc;

@@ -6,7 +6,13 @@ export type OrderStatus =
   | "PREPARING"
   | "READY"
   | "COMPLETED"
-  | "CANCELLED";
+  | "CANCELLED"
+  // POS-09 (2026-05-31) — 환불 시뮬레이션.
+  //   PAID/COMPLETED 주문에 대해 사장이 "환불 처리" 버튼을 누르면 백엔드
+  //   (OW-10 추가 중인 POST /pos/orders/:id/refund-sim) 가 status 를
+  //   REFUNDED 로 전환한다. 실제 Toss 환불 API 는 미연결 — 캡스톤 시연 단계
+  //   에서는 상태값만 기록해 사장이 "이 주문은 환불됐다"는 사실을 식별.
+  | "REFUNDED";
 // ACCEPTED, DONE 은 DB ENUM에 잔재로 남아있는 미사용 값. POS는 사용하지 않음.
 
 export type UserRole = "CUSTOMER" | "OWNER" | "POS";

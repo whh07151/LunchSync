@@ -42,6 +42,31 @@ export async function cancelOrder(
   });
 }
 
+// POS-09 (2026-05-31) — 환불 시뮬레이션.
+//   OW-10 이 백엔드에 POST /pos/orders/:id/refund-sim 라우트를 추가 중.
+//   라우트 명세는 cancelOrder 와 동일한 응답 형태로 합의됨:
+//     body : { reason: string }
+//     resp : { success: true, orderId, status: 'REFUNDED', updatedAt }
+//   여기서는 cancel 과 동일한 형태로 받아 dashboard/orders 페이지가 새로
+//   고침 후 REFUNDED 칩으로 표시할 수 있도록 한다.
+//
+// 실제 Toss 결제 환불은 미연결 — 백엔드가 DB status 만 REFUNDED 로 갱신.
+// 캡스톤 시연 시나리오에서 사장이 "환불 처리"를 누른 사실을 기록하는 용도.
+export async function refundOrderSim(
+  orderId: string,
+  reason: string,
+): Promise<{
+  success: boolean;
+  orderId: string;
+  status: OrderStatus;
+  updatedAt: string;
+}> {
+  return apiRequest(`/pos/orders/${orderId}/refund-sim`, {
+    method: "POST",
+    body: { reason },
+  });
+}
+
 // 단일 주문 상세 — POS-13 화면용. 백엔드는 GET /orders/:id (DTO §10).
 export async function getOrderById(orderId: string): Promise<Order> {
   return apiRequest<Order>(`/orders/${orderId}`);

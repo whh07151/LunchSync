@@ -56,6 +56,11 @@ export default function OrdersPage() {
       READY: [],
       COMPLETED: [],
       CANCELLED: [],
+      // POS-09: 환불 시뮬 상태도 별도 버킷에 분리. 현재 페이지의 칸반은
+      // PAID/PREPARING/READY 만 표시하지만, OrderStatus 가 확장되었으므로
+      // Record 키를 모두 채워 타입 검사를 만족시킨다. COMPLETED/CANCELLED
+      // 처럼 별도 필터 화면이 필요해지면 후속 티켓에서 리스트 뷰를 추가.
+      REFUNDED: [],
     };
     for (const o of list) buckets[o.status]?.push(o);
     return buckets;
