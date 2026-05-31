@@ -123,7 +123,10 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
     );
     if (!mounted) return;
     setState(() {
-      _order = detail;
+      // 폴링 중 일시 조회 실패(null)면 기존 화면을 유지해 "주문 정보를 찾을 수
+      // 없어요" 깜빡임을 막는다. 최초 로드(_order==null)에서는 null 을 그대로
+      // 반영해 미발견 안내를 보여준다. (네트워크 깜빡임 ≠ 진짜 주문 없음)
+      if (detail != null || _order == null) _order = detail;
       _isLoading = false;
     });
 

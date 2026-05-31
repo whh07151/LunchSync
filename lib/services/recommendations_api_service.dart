@@ -1,8 +1,8 @@
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
-import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/api_retry.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: AI 추천(CORE-07/08) API 호출 서비스
@@ -99,14 +99,13 @@ class RecommendationsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse(
-                '${AppConfig.backendBaseUrl}/sessions/$sessionId/recommendations'),
-            headers: _headers(accessToken),
-          )
-          // 추천은 LLM 호출 가능성 있어 길게 (15s)
-          .timeout(const Duration(seconds: 15));
+      final response = await ApiRetry.get(
+        Uri.parse(
+            '${AppConfig.backendBaseUrl}/sessions/$sessionId/recommendations'),
+        headers: _headers(accessToken),
+        // 추천은 LLM 호출 가능성 있어 길게 (15s)
+        timeout: const Duration(seconds: 15),
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {

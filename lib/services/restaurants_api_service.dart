@@ -1,8 +1,8 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
-import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/api_retry.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당/메뉴 관련 API 호출 서비스
@@ -186,11 +186,20 @@ class RestaurantsApiService {
       };
 
   // ── GET /api/restaurants ──────────────────────────────
+  //
+  // [throwOnError — 2026-05-31 한성대 시연 대비]
+  //   false(기본): 네트워크 오류 시 빈 배열([]) 반환 — 기존 호출자 호환.
+  //   true        : 재시도까지 다 실패하면 ApiNetworkException 을 그대로
+  //                 throw. 호출 측(토너먼트 등)이 "후보 0개"와 "통신 오류"를
+  //                 구분해 다른 안내를 띄울 수 있게 한다.
+  //   ※ 어느 경우든 ApiRetry.get 이 내부에서 2~3회 자동 재시도하므로
+  //     공용 와이파이/핫스팟이 잠깐 깜빡여도 대부분 자동 복구된다.
   Future<List<RestaurantDto>> getRestaurants({
     required String accessToken,
     String? category,
     int? maxPrice,
     int? limit,
+    bool throwOnError = false,
   }) async {
     try {
       final params = <String, String>{};
@@ -201,9 +210,11 @@ class RestaurantsApiService {
       final uri = Uri.parse('${AppConfig.backendBaseUrl}/restaurants')
           .replace(queryParameters: params.isNotEmpty ? params : null);
 
-      final response = await http
-          .get(uri, headers: _headers(accessToken))
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        uri,
+        headers: _headers(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
@@ -216,6 +227,8 @@ class RestaurantsApiService {
       return [];
     } catch (e) {
       debugPrint('[RestaurantsApiService] getRestaurants 에러: $e');
+      // 네트워크 오류를 호출 측에 알려야 하는 경우(토너먼트 등)는 재던짐.
+      if (throwOnError && e is ApiNetworkException) rethrow;
       return [];
     }
   }
@@ -228,12 +241,11 @@ class RestaurantsApiService {
     required String restaurantId,
   }) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/restaurants/$restaurantId'),
-            headers: _headers(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/restaurants/$restaurantId'),
+        headers: _headers(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
@@ -265,9 +277,11 @@ class RestaurantsApiService {
         '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/loyalty',
       ).replace(queryParameters: {'userId': userId});
 
-      final response = await http
-          .get(uri, headers: _headers(accessToken))
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        uri,
+        headers: _headers(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
@@ -291,15 +305,15 @@ class RestaurantsApiService {
   Future<List<MenuItemDto>> getMenus({
     required String accessToken,
     required String restaurantId,
+    bool throwOnError = false,
   }) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse(
-                '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/menus'),
-            headers: _headers(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse(
+            '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/menus'),
+        headers: _headers(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
@@ -313,6 +327,8 @@ class RestaurantsApiService {
       return [];
     } catch (e) {
       debugPrint('[RestaurantsApiService] getMenus 에러: $e');
+      // 네트워크 오류를 호출 측에 알려야 하는 경우(메뉴 토너먼트 등)는 재던짐.
+      if (throwOnError && e is ApiNetworkException) rethrow;
       return [];
     }
   }

@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/api_retry.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 사장님 화면(OWNER 모드)에서 호출하는 POS API 클라이언트
@@ -168,12 +169,11 @@ class PosApiService {
         '${AppConfig.backendBaseUrl}/pos/restaurants/$restaurantId/orders'
         '${status != null ? '?status=$status' : ''}',
       );
-      final response = await http
-          .get(
-            uri,
-            headers: {'Authorization': 'Bearer $accessToken'},
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        uri,
+        headers: {'Authorization': 'Bearer $accessToken'},
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode != 200) return const [];
@@ -208,14 +208,13 @@ class PosApiService {
     required String restaurantId,
   }) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse(
-              '${AppConfig.backendBaseUrl}/pos/restaurants/$restaurantId/stats',
-            ),
-            headers: {'Authorization': 'Bearer $accessToken'},
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse(
+          '${AppConfig.backendBaseUrl}/pos/restaurants/$restaurantId/stats',
+        ),
+        headers: {'Authorization': 'Bearer $accessToken'},
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode != 200) return PosStats.empty;
@@ -279,9 +278,11 @@ class PosApiService {
         '${AppConfig.backendBaseUrl}/pos/restaurants/$restaurantId/payment-history',
       ).replace(queryParameters: qp.isEmpty ? null : qp);
 
-      final response = await http
-          .get(uri, headers: {'Authorization': 'Bearer $accessToken'})
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        uri,
+        headers: {'Authorization': 'Bearer $accessToken'},
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode != 200) return const [];

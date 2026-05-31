@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/api_retry.dart';
 import '../core/api/error_message_extractor.dart';
 import '../core/api/http_headers_helper.dart';
 import '../models/session.dart';
@@ -79,12 +80,11 @@ class SessionsApiService {
     required String accessToken,
   }) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/sessions/today'),
-            headers: apiHeaders(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/sessions/today'),
+        headers: apiHeaders(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
@@ -107,12 +107,11 @@ class SessionsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
-            headers: apiHeaders(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId'),
+        headers: apiHeaders(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
@@ -289,12 +288,11 @@ class SessionsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
-            headers: apiHeaders(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
+        headers: apiHeaders(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {
@@ -346,13 +344,12 @@ class SessionsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse(
-                '${AppConfig.backendBaseUrl}/sessions/$sessionId/chemistry'),
-            headers: apiHeaders(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse(
+            '${AppConfig.backendBaseUrl}/sessions/$sessionId/chemistry'),
+        headers: apiHeaders(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode != 200) {
@@ -404,12 +401,11 @@ class SessionsApiService {
     required String sessionId,
   }) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/invite'),
-            headers: apiHeaders(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/invite'),
+        headers: apiHeaders(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode != 200) {

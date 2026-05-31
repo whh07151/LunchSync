@@ -40,6 +40,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../../core/api/api_retry.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/food_image.dart';
 import '../../models/menu_item.dart';
@@ -235,10 +236,21 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
 
     // limit=30 — 충분히 넉넉히 받아서 클라이언트 측에서 셔플.
     // 백엔드가 위치 기반 쿼리를 지원하지 않으므로 전체에서 랜덤 픽으로 폴백.
-    final list = await _restaurantsApi.getRestaurants(
-      accessToken: token,
-      limit: 30,
-    );
+    //
+    // throwOnError:true — 통신 끊김(공용 와이파이 깜빡임)을 "후보 0개"로
+    // 오인하지 않도록, 네트워크 오류는 ApiNetworkException 으로 받아 별도 안내.
+    final List<RestaurantDto> list;
+    try {
+      list = await _restaurantsApi.getRestaurants(
+        accessToken: token,
+        limit: 30,
+        throwOnError: true,
+      );
+    } on ApiNetworkException {
+      if (!mounted) return;
+      _setError('📡 연결이 불안정해요. 잠시 후 다시 시도해주세요');
+      return;
+    }
 
     if (!mounted) return;
 
@@ -279,10 +291,18 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
       return;
     }
 
-    final list = await _restaurantsApi.getRestaurants(
-      accessToken: token,
-      limit: 20,
-    );
+    final List<RestaurantDto> list;
+    try {
+      list = await _restaurantsApi.getRestaurants(
+        accessToken: token,
+        limit: 20,
+        throwOnError: true,
+      );
+    } on ApiNetworkException {
+      if (!mounted) return;
+      _setError('📡 연결이 불안정해요. 잠시 후 다시 시도해주세요');
+      return;
+    }
 
     if (!mounted) return;
 
@@ -310,10 +330,18 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
       _stage = _Stage.loading;
     });
 
-    final menus = await _restaurantsApi.getMenus(
-      accessToken: token,
-      restaurantId: restaurant.id,
-    );
+    final List<MenuItemDto> menus;
+    try {
+      menus = await _restaurantsApi.getMenus(
+        accessToken: token,
+        restaurantId: restaurant.id,
+        throwOnError: true,
+      );
+    } on ApiNetworkException {
+      if (!mounted) return;
+      _setError('📡 연결이 불안정해요. 잠시 후 다시 시도해주세요');
+      return;
+    }
 
     if (!mounted) return;
 

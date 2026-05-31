@@ -2,6 +2,7 @@
 import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/api_retry.dart';
 import '../core/api/error_message_extractor.dart';
 import '../core/api/http_headers_helper.dart';
 import '../core/config/app_config.dart';
@@ -177,12 +178,11 @@ class FriendsApiService {
   //   - 실패: 빈 리스트 (호출자가 로딩 종료만 처리하면 됨)
   Future<List<FriendDto>> listFriends({required String accessToken}) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/friends'),
-            headers: apiHeaders(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/friends'),
+        headers: apiHeaders(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {

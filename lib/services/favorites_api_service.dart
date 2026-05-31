@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
+import '../core/api/api_retry.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 즐겨찾기 API 호출 서비스 (배민 패턴 — 2026-05-15 발전)
@@ -130,12 +131,11 @@ class FavoritesApiService {
   // ── GET /favorites — 목록 (식당 정보 join) ─────────────
   Future<List<FavoriteDto>> list({required String accessToken}) async {
     try {
-      final response = await http
-          .get(
-            Uri.parse('${AppConfig.backendBaseUrl}/users/me/favorites'),
-            headers: _headers(accessToken),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/users/me/favorites'),
+        headers: _headers(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
       ApiAuthHooks.check(response.statusCode);
 
       if (response.statusCode == 200) {

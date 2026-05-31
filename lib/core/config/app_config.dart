@@ -10,9 +10,6 @@
 class AppConfig {
   AppConfig._(); // 인스턴스 생성 방지 (모든 값을 static으로만 사용)
 
-  // ignore: do_not_use_environment
-  static const bool _isWeb = bool.fromEnvironment('dart.library.html', defaultValue: false);
-
   /// 카카오 Native 앱 키 (Android/iOS)
   /// https://developers.kakao.com → 내 애플리케이션 → 앱 키 → Native 앱 키
   static const String kakaoNativeAppKey = '1a8f618f7a89644f824c091c4c9c085a';
@@ -27,7 +24,7 @@ class AppConfig {
   ///
   /// 로컬 개발 시 dart-define 으로 오버라이드:
   ///   에뮬레이터: --dart-define=BACKEND_HOST=10.0.2.2
-  ///   실기기:     --dart-define=BACKEND_HOST=<PC의 로컬 IP>
+  ///   실기기:     --dart-define=BACKEND_HOST=(PC의 로컬 IP)
   ///   완전 URL:   --dart-define=BACKEND_URL=http://localhost:3000/api
 
   // ── 백엔드 URL 빌드 환경별 분기 ──────────────────────────

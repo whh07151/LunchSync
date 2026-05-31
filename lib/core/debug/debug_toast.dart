@@ -31,6 +31,15 @@ class DebugToast {
   // (이 클래스는 DebugToast.show()처럼 직접 호출해서 씀)
   DebugToast._();
 
+  // ── 시연 대비 전역 스위치 (2026-05-31) ────────────────────
+  // 시연을 debug 빌드(`flutter run`)로 진행하면 kDebugMode=true 라서
+  // 모든 화면 진입 시 "CU-XX" 디버그 토스트가 노출돼 시연 임팩트를 해친다.
+  // 이 스위치를 false 로 두면 debug 빌드에서도 토스트가 뜨지 않는다.
+  // (개발 중 화면 ID 확인이 다시 필요하면 true 로만 바꾸면 됨 — 호출부 수정 불필요)
+  // const 가 아니라 static final 로 둬 컴파일타임 dead-code 경고를 피하면서
+  // prefer_final_fields lint 도 만족한다. (개발 중 재활성화는 false→true 로 수정)
+  static final bool _enabled = false;
+
   /// 화면 ID를 하단에 잠깐 표시하는 토스트를 띄움
   ///
   /// [context] : 현재 화면의 BuildContext
@@ -40,8 +49,9 @@ class DebugToast {
   ///   반드시 addPostFrameCallback 안에서 호출해야 함.
   ///   (첫 프레임이 그려진 직후 = 화면이 화면에 나타난 직후에 실행됨)
   static void show(BuildContext context, String screenId) {
-    // 릴리즈 빌드에서는 아무것도 하지 않음
-    if (!kDebugMode) return;
+    // 릴리즈 빌드에서는 아무것도 하지 않음.
+    // 추가로 _enabled=false 면 debug 빌드(시연)에서도 토스트를 띄우지 않는다.
+    if (!_enabled || !kDebugMode) return;
 
     // addPostFrameCallback: 현재 프레임 렌더링이 완전히 끝난 뒤 실행
     // initState 시점에는 Scaffold가 아직 트리에 없을 수 있어 직접 호출 불가
