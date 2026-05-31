@@ -50,7 +50,8 @@ CREATE TABLE IF NOT EXISTS tournament_results (
   user_id UUID REFERENCES users(id),
   mode TEXT NOT NULL CHECK (mode IN ('restaurant', 'menu')),
   winner_restaurant_id UUID REFERENCES restaurants(id),
-  winner_menu_id UUID REFERENCES menus(id),
+  -- 2026-05-31 fix: menus 가 아니라 menu_items 가 실제 테이블명 (CORE-09 동일 이슈)
+  winner_menu_id UUID REFERENCES menu_items(id),
   candidate_count INT,
   duration_ms INT,
   created_at TIMESTAMPTZ DEFAULT NOW()
