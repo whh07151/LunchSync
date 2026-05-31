@@ -46,6 +46,9 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
   // ── 서비스 인스턴스 ──────────────────────────────────────
   static const _kakaoAuthService = KakaoAuthService();
   static const _authApiService = AuthApiService();
+  // 2026-05-31 시연용 시드 로그인 — 폰 2대로 손님앱/사장앱 분리 시연 시 활용.
+  // 백엔드가 DEV_PROMOTE_ENABLED 가드로 운영 환경 차단하므로 화면에 그대로 노출 OK.
+  static const _seedLoginService = DevSeedLoginService();
 
   // ── 입력 컨트롤러 ────────────────────────────────────────
   // dispose에서 해제해야 메모리 누수 없음
@@ -193,6 +196,14 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       backgroundColor: AppColors.background,
       // 키보드 올라올 때 화면이 자동으로 줄어들어 입력창이 가려지지 않게
       resizeToAvoidBottomInset: true,
+      // 시연용 시드 로그인 — DEV_PROMOTE_ENABLED 가드가 백엔드에 있어
+      // 운영 EC2 에서는 자동으로 403. 시연 시에만 의미 있음.
+      floatingActionButton: FloatingActionButton.small(
+        onPressed: _openSeedLoginDialog,
+        backgroundColor: Colors.deepPurple,
+        tooltip: '시연용 시드 로그인',
+        child: const Icon(Icons.science_outlined, color: Colors.white),
+      ),
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(
@@ -217,6 +228,70 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
         ),
       ),
     );
+  }
+
+  // ── 시연용 시드 로그인 다이얼로그 ────────────────────────
+  // 4개 시드 사용자 중 선택 → POST /api/dev/login-as-seed → userProvider.setUser
+  // → main.dart _RootNavigator 가 role 보고 자동으로 손님/사장 홈 진입.
+  Future<void> _openSeedLoginDialog() async {
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      builder: (ctx) {
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 16),
+                child: Text(
+                  '시연용 시드 로그인',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.storefront, color: Colors.orange),
+                title: const Text('우현호 (사장 · 오로라)'),
+                subtitle: const Text('hyunho_owner'),
+                onTap: () => Navigator.pop(ctx, 'hyunho_owner'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_outline, color: Colors.blue),
+                title: const Text('이용재 (손님)'),
+                subtitle: const Text('yongjae_customer'),
+                onTap: () => Navigator.pop(ctx, 'yongjae_customer'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_outline, color: Colors.blue),
+                title: const Text('김민준 (손님)'),
+                subtitle: const Text('minjun_customer'),
+                onTap: () => Navigator.pop(ctx, 'minjun_customer'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_outline, color: Colors.blue),
+                title: const Text('박지효 (손님)'),
+                subtitle: const Text('jihyo_customer'),
+                onTap: () => Navigator.pop(ctx, 'jihyo_customer'),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+    if (picked == null || !mounted) return;
+
+    final result = await _seedLoginService.loginAsSeed(picked);
+    if (!mounted) return;
+    if (!result.isSuccess || result.response == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(result.errorMessage ?? '시드 로그인 실패')),
+      );
+      return;
+    }
+    await ref.read(userProvider.notifier).setUser(result.response!);
+    // 로그인 완료 — main.dart _RootNavigator 가 다음 라우팅을 결정.
+    // 명시적 push 안 해도 setUser 가 user state 변경하면 자동 분기.
   }
 
   // ── 로고 + 슬로건 ───────────────────────────────────────

@@ -255,3 +255,51 @@ class AuthSignupResult {
   final AuthResponse? response;
   final String? errorMessage;
 }
+
+// ══════════════════════════════════════════════════════════
+// 2026-05-31 시연 셋업: 폰 2대로 손님앱·사장앱 분리 시연용 시드 로그인.
+// 백엔드 POST /api/dev/login-as-seed 호출 → 시드 사용자 JWT 발급.
+// DEV_PROMOTE_ENABLED=true 환경에서만 200, 운영 환경에선 403.
+// ══════════════════════════════════════════════════════════
+class DevSeedLoginService {
+  const DevSeedLoginService();
+
+  Future<AuthSignupResult> loginAsSeed(String seedKey) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/dev/login-as-seed'),
+            headers: const {'Content-Type': 'application/json'},
+            body: jsonEncode({'seedKey': seedKey}),
+          )
+          .timeout(AppConfig.apiTimeout);
+
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = body['data'] as Map<String, dynamic>;
+        // 시드 로그인은 nextStep 을 직접 안 주므로 role/status 로 추론
+        final role = data['role'] as String? ?? 'CUSTOMER';
+        final status = data['status'] as String? ?? 'APPROVED';
+        final nextStep = role == 'OWNER'
+            ? (status == 'APPROVED' ? 'OWNER_HOME' : 'OWNER_PENDING')
+            : 'HOME';
+        return AuthSignupResult.success(AuthResponse(
+          accessToken: data['accessToken'] as String,
+          isNewUser: false,
+          nextStep: nextStep,
+          userId: data['userId'] as String,
+          name: data['name'] as String? ?? '시연 사용자',
+          role: role,
+          status: status,
+        ));
+      }
+
+      return AuthSignupResult.failure(
+        extractApiErrorMessage(response.body) ?? '시드 로그인 실패 (${response.statusCode})',
+      );
+    } catch (e) {
+      debugPrint('[DevSeedLoginService] 에러: $e');
+      return AuthSignupResult.failure('시드 로그인 중 오류가 발생했어요.');
+    }
+  }
+}
