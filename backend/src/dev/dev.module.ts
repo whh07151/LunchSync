@@ -13,10 +13,12 @@
 
 import { Module } from '@nestjs/common';
 import { SupabaseModule } from '../supabase/supabase.module';
+import { AuthModule } from '../auth/auth.module';
 import { DevController } from './dev.controller';
 
 @Module({
-  imports: [SupabaseModule],
+  // AuthModule 을 import 해서 JwtService 주입 (login-as-seed 시드 JWT 발급용)
+  imports: [SupabaseModule, AuthModule],
   controllers: [DevController],
 })
 export class DevModule {}

@@ -24,13 +24,25 @@ import {
   Controller,
   ForbiddenException,
   Logger,
+  NotFoundException,
   Post,
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsOptional, IsString, IsUUID } from 'class-validator';
+import { IsIn, IsOptional, IsString, IsUUID } from 'class-validator';
+import { JwtService } from '@nestjs/jwt';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { SupabaseService } from '../supabase/supabase.service';
+
+// 2026-05-31 시연 셋업: 3화면(폰 손님 + web 사장 + POS) 동시 시연 시 같은 카카오
+// 계정으로 폰/web 둘 다 진입하면 role 토글이 양쪽에 동시 영향이라 시연이 망가짐.
+// 시드 사용자(이메일 가입형)의 JWT 를 즉시 발급해서 web 만 다른 계정으로 띄울 수
+// 있게 한다. 운영용 가드 동일 — DEV_PROMOTE_ENABLED=true 일 때만 활성.
+class LoginAsSeedDto {
+  @IsString()
+  @IsIn(['hyunho_owner', 'yongjae_customer', 'minjun_customer', 'jihyo_customer'])
+  seedKey!: string;
+}
 
 class PromoteToOwnerDto {
   /// 매핑할 식당 UUID. 미지정 시 사용자가 마지막에 결제한 식당 자동 매핑.
@@ -40,11 +52,22 @@ class PromoteToOwnerDto {
   @IsOptional() @IsString() role?: 'OWNER' | 'CUSTOMER';
 }
 
+// 시연용 시드 사용자 매핑 (이메일은 시드 데이터와 일치해야 함)
+const SEED_USER_MAP: Record<string, { email: string; expectedRole: 'OWNER' | 'CUSTOMER' }> = {
+  hyunho_owner: { email: 'hyunho@lunchsync.app', expectedRole: 'OWNER' },
+  yongjae_customer: { email: 'demo.yongjae@lunchsync.test', expectedRole: 'CUSTOMER' },
+  minjun_customer: { email: 'demo.minjun@lunchsync.test', expectedRole: 'CUSTOMER' },
+  jihyo_customer: { email: 'demo.jihyo@lunchsync.test', expectedRole: 'CUSTOMER' },
+};
+
 @Controller('dev')
 export class DevController {
   private readonly logger = new Logger(DevController.name);
 
-  constructor(private readonly supabase: SupabaseService) {}
+  constructor(
+    private readonly supabase: SupabaseService,
+    private readonly jwtService: JwtService,
+  ) {}
 
   // ── POST /api/dev/promote-to-owner ────────────────────
   // 본인 JWT 로 자기 자신의 role/status/restaurant_id 를 변경한다.
@@ -102,5 +125,53 @@ export class DevController {
     );
 
     return { success: true, data };
+  }
+
+  // ── POST /api/dev/login-as-seed ────────────────────────
+  // 시연용: 시드 사용자의 JWT 를 발급한다. 폰=hyunho 손님, web=다른 시드 사장
+  // 같은 분리 시연이 필요한 경우 활용. DEV_PROMOTE_ENABLED 미설정 시 즉시 거절.
+  @Post('login-as-seed')
+  async loginAsSeed(@Body() dto: LoginAsSeedDto) {
+    if (process.env.DEV_PROMOTE_ENABLED !== 'true') {
+      throw new ForbiddenException(
+        'dev 라우트 비활성. EC2 .env 에 DEV_PROMOTE_ENABLED=true 추가 후 재시작 필요.',
+      );
+    }
+
+    const meta = SEED_USER_MAP[dto.seedKey];
+    if (!meta) {
+      throw new NotFoundException('알 수 없는 seedKey 입니다.');
+    }
+
+    const { data: user, error } = await this.supabase.client
+      .from('users')
+      .select('id, name, email, role, status, restaurant_id')
+      .eq('email', meta.email)
+      .maybeSingle();
+
+    if (error || !user) {
+      throw new NotFoundException(
+        `시드 사용자(${meta.email}) 미존재. 시드 마이그레이션 필요.`,
+      );
+    }
+
+    // 일반 카카오/이메일 로그인과 동일한 페이로드 — JwtAuthGuard 가 그대로 수용.
+    const accessToken = this.jwtService.sign({ sub: user.id });
+
+    this.logger.warn(
+      `[dev] login-as-seed key=${dto.seedKey} user=${user.id} (${user.name}) role=${user.role}`,
+    );
+
+    return {
+      success: true,
+      data: {
+        accessToken,
+        userId: user.id,
+        name: user.name,
+        role: user.role,
+        status: user.status,
+        restaurantId: user.restaurant_id,
+      },
+    };
   }
 }
