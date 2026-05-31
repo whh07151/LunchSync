@@ -885,6 +885,15 @@ class _RecommendationListScreenState
             ],
           ),
 
+          // ── CU-21 "최근에 다녀왔어요" 배지 ──────────────
+          // 백엔드 recentVisitHint('RECENT_3D' / 'RECENT_7D') 가 있을 때만 노출.
+          // 3일 내 = 더 강조(주황 배경), 7일 내 = 약한 강조(회색 배경)
+          // 디자인 토큰 변경 금지 원칙: 기존 AppColors / Theme primary 만 사용.
+          if (rec.isRecentlyVisited) ...[
+            const SizedBox(height: 6),
+            _buildRecentVisitBadge(rec.recentVisitHint),
+          ],
+
           const SizedBox(height: AppSpacing.sm),
 
           // ── 카테고리 + 가격대 ─────────────────────────
@@ -984,6 +993,56 @@ class _RecommendationListScreenState
 
   // 가격대 표기는 normalizer.dart 의 formatRestaurantPriceRange 로 통일.
   // 추천 카드에서 천단위 콤마 포맷은 더 이상 사용하지 않아 제거했음.
+
+  // ══════════════════════════════════════════════════════════
+  // CU-21 최근 방문 배지 — "최근에 다녀왔어요"
+  //
+  // 설계 의도:
+  //   백엔드(CORE-08)가 동일 식당을 -10/-20점 감점한 사실을 사용자에게
+  //   투명하게 알려주어, "왜 이 식당이 낮은 순위인지" 의문을 해소한다.
+  //   동시에 "지난번 갔던 곳" 을 다시 골라야 한다면 명시적 의사결정이 되도록.
+  //
+  // 분기:
+  //   · RECENT_3D : "3일 안에 다녀온 곳" — 주황 톤 강조 (primary)
+  //   · RECENT_7D : "최근 1주 안에 다녀온 곳" — 회색 약한 톤
+  //   · null/그외 : 호출 측에서 isRecentlyVisited 가드로 안 들어옴
+  //
+  // 디자인 토큰 정책 준수:
+  //   · 새 색상 정의 없이 Theme primary / AppColors.backgroundGrey 만 사용.
+  //   · AppRadius.chip + AppTextStyles.caption 으로 기존 칩과 톤앤매너 일치.
+  // ══════════════════════════════════════════════════════════
+  Widget _buildRecentVisitBadge(String? hint) {
+    final primary = Theme.of(context).colorScheme.primary;
+    final is3d = hint == 'RECENT_3D';
+
+    // 3일 내: 주황 칠 + 흰 글자(강조)
+    // 7일 내: 회색 칠 + 보조 텍스트색(약한 강조)
+    final bg = is3d ? primary.withAlpha(35) : AppColors.backgroundGrey;
+    final fg = is3d ? primary : AppColors.textSecondary;
+    final label = is3d ? '3일 안에 다녀온 곳' : '최근에 다녀온 곳';
+
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+      decoration: BoxDecoration(
+        color: bg,
+        borderRadius: BorderRadius.circular(AppRadius.chip),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(Icons.history_rounded, size: 12, color: fg),
+          const SizedBox(width: 4),
+          Text(
+            label,
+            style: AppTextStyles.caption.copyWith(
+              color: fg,
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 
   // ══════════════════════════════════════════════════════════
   // 미니게임 결정 — 룰렛/사다리로 후보 중 하나 선택

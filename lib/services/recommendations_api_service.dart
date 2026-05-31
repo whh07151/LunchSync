@@ -18,6 +18,12 @@ import '../core/api/api_auth_hooks.dart';
 ///
 /// score: 추천 점수 (높을수록 상위)
 /// reasons: 추천 근거 문구 리스트 (예: ["전원 예산 범위 내", "알레르기 없음"])
+/// recentVisitHint: CU-21 최근 식사 이력 hint
+///   - 'RECENT_3D' : 최근 3일 내 방문 (강한 회피 -20점 적용)
+///   - 'RECENT_7D' : 최근 7일 내 방문 (-10점)
+///   - null        : 식사 이력 없음
+///
+/// 백엔드 응답에 hint 필드가 없는 구버전에서도 안전하게 null 로 폴백.
 class RecommendationDto {
   const RecommendationDto({
     required this.restaurantId,
@@ -29,6 +35,7 @@ class RecommendationDto {
     required this.lng,
     required this.score,
     required this.reasons,
+    this.recentVisitHint,
   });
 
   final String restaurantId;
@@ -40,6 +47,13 @@ class RecommendationDto {
   final double? lng;
   final int score;
   final List<String> reasons;
+  // CU-21: 최근 방문 hint ('RECENT_3D' / 'RECENT_7D' / null)
+  // 배지/칩 표시에 사용.
+  final String? recentVisitHint;
+
+  /// 최근에 다녀왔는지(3일/7일 통합) — UI 배지 노출 조건.
+  bool get isRecentlyVisited =>
+      recentVisitHint == 'RECENT_3D' || recentVisitHint == 'RECENT_7D';
 
   factory RecommendationDto.fromJson(Map<String, dynamic> json) {
     // reasons는 항상 배열이지만 방어적으로 안전 처리
@@ -47,6 +61,13 @@ class RecommendationDto {
     final reasons = reasonsRaw is List
         ? reasonsRaw.map((e) => e.toString()).toList()
         : <String>[];
+
+    // recentVisitHint: 구버전 백엔드 호환을 위해 누락 시 null 폴백.
+    // 잘못된 값은 무시(허용 enum 외에는 null 로 취급).
+    final hintRaw = json['recentVisitHint'];
+    final String? hint = (hintRaw == 'RECENT_3D' || hintRaw == 'RECENT_7D')
+        ? hintRaw as String
+        : null;
 
     return RecommendationDto(
       restaurantId: json['restaurantId'] as String,
@@ -58,6 +79,7 @@ class RecommendationDto {
       lng: (json['lng'] as num?)?.toDouble(),
       score: (json['score'] as num?)?.toInt() ?? 0,
       reasons: reasons,
+      recentVisitHint: hint,
     );
   }
 }
@@ -90,6 +112,21 @@ class RecommendationsApiService {
       if (response.statusCode == 200) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         final list = json['data'] as List<dynamic>;
+
+        // ── CU-21 metadata.recentPenalty 디버그 로그 ─────
+        // 응답 봉투에 metadata 가 있으면 어느 식당이 -10/-20 감점을 받았는지
+        // 콘솔에서 확인 가능. UI 칩 표시는 RecommendationDto.recentVisitHint
+        // 기반으로 이뤄지므로 여기서는 가시성만 확보.
+        final metadata = json['metadata'];
+        if (metadata is Map<String, dynamic>) {
+          final penalty = metadata['recentPenalty'];
+          if (penalty is Map && penalty.isNotEmpty) {
+            debugPrint(
+              '[RecommendationsApiService] recentPenalty=$penalty (CU-21)',
+            );
+          }
+        }
+
         return list
             .map((e) => RecommendationDto.fromJson(e as Map<String, dynamic>))
             .toList();

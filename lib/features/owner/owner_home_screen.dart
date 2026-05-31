@@ -9,6 +9,7 @@ import '../../services/reviews_api_service.dart';
 import '../auth/login_screen.dart';
 import '../restaurant/restaurant_reviews_screen.dart';
 import 'menu_management_screen.dart';
+import 'owner_payments_screen.dart';
 import 'owner_profile_edit_screen.dart';
 import 'sales_screen.dart';
 
@@ -332,6 +333,14 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
             label: '매출 보기',
             onTap: () => Navigator.of(context).push(
               MaterialPageRoute(builder: (_) => const SalesScreen()),
+            ),
+          ),
+          // OW-10 (2026-05-31): 결제 내역 진입 — 빠른실행 그리드와 동일 화면.
+          _ownerInfoRow(
+            icon: Icons.account_balance_wallet_rounded,
+            label: '결제 내역',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const OwnerPaymentsScreen()),
             ),
           ),
           _ownerInfoRow(
@@ -728,6 +737,10 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
   }
 
   Widget _buildQuickActions() {
+    // OW-10 (2026-05-31): "결제 내역" 카드 신규 추가.
+    // 5개 카드로 늘어남에 따라 crossAxisCount 를 4→5 로 조정해
+    // 한 줄에 가지런히 표시. childAspectRatio 0.9 유지 시 카드가 조밀해 보여
+    // 0.78 로 살짝 키워 아이콘+라벨 균형 잡음.
     final actions = <_OwnerAction>[
       _OwnerAction(
         icon: Icons.receipt_long_rounded,
@@ -746,6 +759,14 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
           MaterialPageRoute(builder: (_) => const SalesScreen()),
         ),
       ),
+      // OW-10: 결제 내역 — 오늘/어제/주간/월간 칩 + 환불 시뮬.
+      _OwnerAction(
+        icon: Icons.account_balance_wallet_rounded,
+        label: '결제 내역',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const OwnerPaymentsScreen()),
+        ),
+      ),
       _OwnerAction(
         icon: Icons.point_of_sale_rounded,
         label: 'POS 연동',
@@ -754,10 +775,10 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
     ];
 
     return GridView.count(
-      crossAxisCount: 4,
+      crossAxisCount: 5,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 0.9,
+      childAspectRatio: 0.78,
       children: actions.map(_buildQuickActionItem).toList(),
     );
   }

@@ -142,6 +142,66 @@ export class PosController {
     return this.getStats(req, restaurantId);
   }
 
+  // ══════════════════════════════════════════════════════════
+  // ── OW-10: 결제 내역 조회 (2026-05-31) ──
+  //
+  // 라우트:
+  //   GET /api/pos/restaurants/:id/payment-history?dateFrom=...&dateTo=...
+  //
+  // 쿼리:
+  //   · dateFrom — ISO 8601 (예: 2026-05-31T00:00:00.000Z). 옵션. 미지정=무제한.
+  //   · dateTo   — ISO 8601. 옵션.
+  //   ※ "오늘/어제/주간/월간" 분기는 클라이언트(Flutter) 가 칩별로 변환해 전달.
+  //
+  // 권한:
+  //   JwtAuthGuard 통과 후 assertPosAccessTo — 토큰의 매장 ID 일치 필수.
+  //
+  // 폴링성 GET → SkipThrottle 적용 (사장 화면 진입 시 dateFilter 변경마다 호출).
+  // ══════════════════════════════════════════════════════════
+  @SkipThrottle({ default: true, auth: true, signup: true })
+  @Get('restaurants/:id/payment-history')
+  async getPaymentHistory(
+    @Req() req: AuthedRequest,
+    @Param('id') restaurantId: string,
+    @Query('dateFrom') dateFrom?: string,
+    @Query('dateTo') dateTo?: string,
+  ) {
+    assertPosAccessTo(req.user, restaurantId);
+    const result = await this.posService.getPaymentHistory(
+      restaurantId,
+      dateFrom,
+      dateTo,
+    );
+    return { success: true, data: result };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── OW-10: 환불 시뮬레이션 (2026-05-31) ──
+  //
+  // 라우트:
+  //   POST /api/pos/orders/:id/refund-sim
+  //
+  // 본문: 없음 (status 만 REFUNDED 로 변경).
+  //
+  // 권한:
+  //   orderId → restaurant_id 사전 조회 후 assertPosAccessTo.
+  //   다른 매장 주문에 환불 시뮬을 거는 우회 시도 차단.
+  //
+  // 실제 토스 cancel API 호출 X — 데모/시연 환경 매출 차감 시뮬용.
+  // 정식 환불은 POST /api/pos/orders/:id/cancel 사용.
+  // ══════════════════════════════════════════════════════════
+  @Post('orders/:id/refund-sim')
+  async refundSim(
+    @Req() req: AuthedRequest,
+    @Param('id') orderId: string,
+  ) {
+    const restaurantId =
+      await this.posService.getRestaurantIdByOrderId(orderId);
+    assertPosAccessTo(req.user, restaurantId);
+    const result = await this.posService.refundSim(orderId);
+    return { success: true, data: result };
+  }
+
   // ── 주문 상태 변경 (PREPARING → READY 등) ────────────
   // 권한: orderId → restaurant_id 사전 조회 후 토큰 일치 검증 (2026-05-13 보강)
   @Patch('orders/:id/status')

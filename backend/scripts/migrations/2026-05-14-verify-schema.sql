@@ -30,11 +30,16 @@ WHERE table_schema = 'public'
        --   todays_note 가 누락되면 손님 추천 카드의 노란 띠/점수 가중치가
        --   silent 하게 사라져 사장이 입력해도 "내 가게가 안 보이는" 회귀.
        (table_name = 'restaurants' AND column_name IN ('rating', 'image_url', 'todays_note'))
-    OR (table_name = 'users'       AND column_name IN ('fcm_token'))
+    OR (table_name = 'users'       AND column_name IN ('fcm_token', 'taste_tags', 'allergens', 'disliked_categories'))
     OR (table_name = 'sessions'    AND column_name IN ('radius', 'budget', 'return_minutes', 'memo'))
     -- 2026-05-31 회귀 감사 4회차: 별점/리뷰 컬럼이 silent 누락되는 경우
     -- 주문 상세 화면의 별점 카드가 항상 null 로 반환되어 추적 어려움.
     OR (table_name = 'orders'      AND column_name IN ('review_score', 'review_text', 'review_at'))
+    -- 2026-05-31 CORE-09: 메뉴 알레르기 컬럼 검증.
+    --   2026-05-12 마이그레이션에서 1차 추가됐지만 신규 환경/롤백 후 복구
+    --   안전망. 누락 시 GET /api/menus/restaurant/:id/check-allergens 가
+    --   항상 빈 conflicts 배열을 반환해 메뉴 화면 ⚠️ 배지가 사라진다.
+    OR (table_name = 'menu_items'  AND column_name = 'allergens')
   )
 ORDER BY table_name, column_name;
 
@@ -74,10 +79,13 @@ WHERE enumtypid = (SELECT oid FROM pg_type WHERE typname = 'order_status')
 ORDER BY enumsortorder;
 
 -- ── 4) 기대값 ────────────────────────────────────────────
--- 1) 컬럼 8개: restaurants.image_url / restaurants.rating /
+-- 1) 컬럼 12개: restaurants.image_url / restaurants.rating /
 --             restaurants.todays_note (2026-05-31 WOW#1) /
---             users.fcm_token / sessions.radius / sessions.budget /
---             sessions.return_minutes / sessions.memo
+--             users.fcm_token / users.taste_tags / users.allergens /
+--             users.disliked_categories (2026-05-31 CU-04) /
+--             sessions.radius / sessions.budget /
+--             sessions.return_minutes / sessions.memo /
+--             menu_items.allergens (2026-05-31 CORE-09)
 -- 2) 테이블 3개: pos_reservations / pos_seats / tournament_results (2026-05-31 WOW#9)
 -- 3) 함수 4개: check_schema_resources / create_order_with_items /
 --             create_session_with_host_member / delete_session_cascade
@@ -86,6 +94,8 @@ ORDER BY enumsortorder;
 --   - restaurants.rating → 2026-05-14-add-rating-column.sql
 --   - restaurants.image_url → 2026-05-14-fill-empty-image-urls.sql (ALTER 포함)
 --   - users.fcm_token → 2026-05-14-add-fcm-token.sql
+--   - users.taste_tags / allergens / disliked_categories → 2026-05-31-add-user-preferences.sql (CU-04)
+--   - menu_items.allergens → 2026-05-31-add-menus-allergens.sql (CORE-09, 2026-05-12 와 동시 멱등)
 --   - sessions.radius/budget/return_minutes/memo → 2026-05-14-ensure-sessions-columns.sql
 --   - pos_seats → 2026-05-14-add-pos-tables.sql
 --   - pos_reservations → 2026-05-14-add-pos-reservations.sql (이번 복원)

@@ -31,6 +31,14 @@ export interface UpdateUserDto {
   businessNumber?: string;
 }
 
+// 2026-05-31 CU-04 — PATCH /users/me/preferences 요청 바디 타입.
+// 추천 엔진이 직접 읽는 구조화 데이터.
+export interface UpdatePreferencesDto {
+  tasteTags?: string[];          // 좋아하는 맛 태그
+  allergens?: string[];          // 알레르기 식재료 (후보군 제외)
+  dislikedCategories?: string[]; // 비선호 카테고리 (점수 감점/제외)
+}
+
 @Injectable()
 export class UsersService {
   private readonly logger = new Logger(UsersService.name);
@@ -38,12 +46,13 @@ export class UsersService {
   constructor(private readonly supabase: SupabaseService) {}
 
   // ── GET /users/me ─────────────────────────────────────
-  // JWT에서 추출한 userId로 내 프로필 조회
+  // JWT에서 추출한 userId로 내 프로필 조회.
+  // 2026-05-31 CU-04 — taste_tags / allergens / disliked_categories 컬럼 동기 노출.
   async getMe(userId: string) {
     const { data, error } = await this.supabase.client
       .from('users')
       .select(
-        'id, name, org, profile_image, radius, budget, speed, role, status, auth_provider, email, phone_number, business_name, business_number, restaurant_id, allergies, dislikes',
+        'id, name, org, profile_image, radius, budget, speed, role, status, auth_provider, email, phone_number, business_name, business_number, restaurant_id, allergies, dislikes, taste_tags, allergens, disliked_categories',
       )
       .eq('id', userId)
       .single();
@@ -73,6 +82,10 @@ export class UsersService {
       restaurantId: data.restaurant_id,
       allergies: data.allergies ?? [],
       dislikes: data.dislikes ?? [],
+      // 2026-05-31 CU-04 — 추천 엔진이 읽는 구조화 취향 데이터
+      tasteTags: data.taste_tags ?? [],
+      allergens: data.allergens ?? [],
+      dislikedCategories: data.disliked_categories ?? [],
     };
   }
 
@@ -120,6 +133,65 @@ export class UsersService {
       // OWNER 정보 — 사장 정보 수정 직후 상태 동기화에 사용
       businessName: data.business_name,
       businessNumber: data.business_number,
+    };
+  }
+
+  // ── PATCH /users/me/preferences ──────────────────────────
+  // 2026-05-31 CU-04 — 손님 취향/알레르기/비선호 카테고리 일괄 저장.
+  //
+  // 정책:
+  //   - 세 필드 모두 선택적 (undefined 면 미변경)
+  //   - 빈 배열 [] 은 "모두 해제" 의미 — DB 에 빈 배열로 그대로 저장
+  //   - DB 컬럼명은 snake_case (taste_tags / allergens / disliked_categories)
+  //
+  // 응답:
+  //   { tasteTags, allergens, dislikedCategories } — 저장된 최종값.
+  //   프론트는 이 값으로 자신의 캐시를 동기화.
+  async updatePreferences(
+    userId: string,
+    dto: UpdatePreferencesDto,
+  ): Promise<{
+    tasteTags: string[];
+    allergens: string[];
+    dislikedCategories: string[];
+  }> {
+    // camelCase → snake_case 매핑. undefined 필드는 보내지 않음.
+    const updateData: Record<string, unknown> = {};
+    if (dto.tasteTags !== undefined) updateData.taste_tags = dto.tasteTags;
+    if (dto.allergens !== undefined) updateData.allergens = dto.allergens;
+    if (dto.dislikedCategories !== undefined) {
+      updateData.disliked_categories = dto.dislikedCategories;
+    }
+
+    // 변경 대상이 하나도 없으면 DB 호출 생략 — 현재값 그대로 반환.
+    // (불필요한 update 이벤트로 다른 구독자가 깨어나지 않도록)
+    if (Object.keys(updateData).length === 0) {
+      const me = await this.getMe(userId);
+      return {
+        tasteTags: me.tasteTags,
+        allergens: me.allergens,
+        dislikedCategories: me.dislikedCategories,
+      };
+    }
+
+    const { data, error } = await this.supabase.client
+      .from('users')
+      .update(updateData)
+      .eq('id', userId)
+      .select('taste_tags, allergens, disliked_categories')
+      .single();
+
+    if (error || !data) {
+      this.logger.error(`취향 설정 저장 실패: ${error?.message}`);
+      throw new InternalServerErrorException(
+        '취향 설정을 저장하지 못했어요.',
+      );
+    }
+
+    return {
+      tasteTags: data.taste_tags ?? [],
+      allergens: data.allergens ?? [],
+      dislikedCategories: data.disliked_categories ?? [],
     };
   }
 

@@ -27,9 +27,10 @@ import { UsersService } from './users.service';
 // 파일 역할: 유저 관련 HTTP 엔드포인트
 //
 // 엔드포인트:
-//   GET  /api/users/me            — 내 프로필 조회
-//   PATCH /api/users/me           — 프로필/조건 수정
-//   POST /api/users/me/fcm-token  — FCM 토큰 저장 (앱 로그인 직후 호출)
+//   GET  /api/users/me                     — 내 프로필 조회
+//   PATCH /api/users/me                    — 프로필/조건 수정
+//   PATCH /api/users/me/preferences        — 취향/알레르기/비선호 카테고리 수정 (CU-04)
+//   POST /api/users/me/fcm-token           — FCM 토큰 저장 (앱 로그인 직후 호출)
 //
 // @UseGuards(JwtAuthGuard): Authorization 헤더의 JWT 검증
 //   → 성공 시 req.user = { userId: '...' } 주입
@@ -49,6 +50,33 @@ class AddFavoriteDto {
   @IsNotEmpty({ message: '식당 ID 가 필요해요.' })
   @MaxLength(64)
   restaurantId: string;
+}
+
+// 2026-05-31 CU-04 — 취향/알레르기/비선호 카테고리 일괄 수정 DTO.
+// 추천 엔진이 직접 읽는 구조화 데이터이므로
+// 라벨 길이/배열 개수를 강하게 제한해서 오염 방지.
+class UpdatePreferencesDto {
+  // 좋아하는 맛 (매콤/담백/짠/단/신/쓴 등). 최대 30개, 라벨 30자 이하.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(30, { each: true, message: '맛 태그는 30자 이하여야 해요.' })
+  tasteTags?: string[];
+
+  // 알레르기 식재료 (견과/유제품/계란/갑각류/콩/밀/돼지/소 등).
+  // 후보군 제외 기준이라 라벨 변동에 매우 민감 — 클라이언트와 1:1 일치 필요.
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(30, { each: true, message: '알레르기 항목은 30자 이하여야 해요.' })
+  allergens?: string[];
+
+  // 비선호 음식 카테고리 (한식/중식/일식 등).
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(30, { each: true, message: '카테고리는 30자 이하여야 해요.' })
+  dislikedCategories?: string[];
 }
 
 // 보안 패치: 모든 입력 필드에 길이/범위 제한 추가 (DoS + DB bloat 방어)
@@ -128,6 +156,31 @@ export class UsersController {
     @Body() dto: UpdateUserDto,
   ) {
     const result = await this.usersService.updateMe(req.user.userId, dto);
+    return { success: true, data: result };
+  }
+
+  // ── PATCH /api/users/me/preferences ──────────────────
+  // CU-04 — 손님이 자신의 취향/알레르기/비선호 카테고리를 일괄 저장.
+  // 추천 엔진(점수 계산)이 직접 읽는 구조화 데이터이므로
+  // 일반 프로필 PATCH 와 분리해서 명시적으로 다룬다.
+  //
+  // body 예시:
+  //   { "tasteTags": ["매콤","담백"], "allergens": ["견과"],
+  //     "dislikedCategories": ["분식"] }
+  //
+  // 정책:
+  //   - 세 필드 모두 선택적 (undefined 면 미변경)
+  //   - 빈 배열은 "모두 해제" 로 처리 (DB 에 '{}' 로 저장)
+  //   - 응답: 저장된 최종값을 그대로 반환 → 프론트 캐시 동기화
+  @Patch('me/preferences')
+  async updatePreferences(
+    @Req() req: { user: { userId: string } },
+    @Body() dto: UpdatePreferencesDto,
+  ) {
+    const result = await this.usersService.updatePreferences(
+      req.user.userId,
+      dto,
+    );
     return { success: true, data: result };
   }
 

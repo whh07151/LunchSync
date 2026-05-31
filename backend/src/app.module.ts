@@ -22,6 +22,7 @@ import { CrawlModule } from './crawl/crawl.module';
 import { NotificationsModule } from './notifications/notifications.module';
 import { FriendsModule } from './friends/friends.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
+import { MenusModule } from './menus/menus.module';
 import { DevModule } from './dev/dev.module';
 
 // ══════════════════════════════════════════════════════════
@@ -126,6 +127,11 @@ import { DevModule } from './dev/dev.module';
     //   POST /api/tournaments         : 우승 결과 1건 저장
     //   GET  /api/tournaments/trending: 최근 N일 우승 빈도 상위 식당
     TournamentsModule,
+
+    // CORE-09 — 메뉴 알레르기 충돌 검증기 (2026-05-31)
+    //   GET /api/menus/restaurant/:id/check-allergens?userId=
+    //   사용자 알레르기 ∩ 메뉴 알레르기 교집합 계산 (정확 매칭)
+    MenusModule,
 
     // dev 전용 — 자동 QA 우회 (DEV_PROMOTE_ENABLED=true 일 때만 동작)
     DevModule,

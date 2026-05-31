@@ -61,6 +61,11 @@ class UserState {
     this.phoneNumber,
     this.businessName,
     this.businessNumber,
+    // 2026-05-31 CU-04 — 추천 엔진이 읽는 구조화 취향 데이터.
+    // 화면 진입 시 GET /users/me 로 채워지고, 취향 설정 화면에서 갱신됨.
+    this.tasteTags = const [],
+    this.allergens = const [],
+    this.dislikedCategories = const [],
   });
 
   final String? accessToken;  // LunchSync JWT (API 요청 시 사용)
@@ -85,6 +90,13 @@ class UserState {
   final String? businessName;    // OWNER 상호
   final String? businessNumber;  // OWNER 사업자등록번호
 
+  // ── 2026-05-31 CU-04 — 손님 취향 (추천 엔진 입력) ──────────
+  // 영속 저장은 하지 않음 (앱 시작 시 GET /users/me 재호출로 복원).
+  // 빈 배열 = 미설정 또는 모두 해제 (두 케이스를 화면이 구분할 필요 없음).
+  final List<String> tasteTags;          // 좋아하는 맛 (매콤/담백/짠/단/신/쓴)
+  final List<String> allergens;          // 알레르기 식재료
+  final List<String> dislikedCategories; // 비선호 음식 카테고리
+
   /// 로그인된 상태인지 여부
   bool get isLoggedIn => accessToken != null;
 
@@ -107,6 +119,9 @@ class UserState {
     String? phoneNumber,
     String? businessName,
     String? businessNumber,
+    List<String>? tasteTags,
+    List<String>? allergens,
+    List<String>? dislikedCategories,
   }) {
     return UserState(
       accessToken: accessToken ?? this.accessToken,
@@ -121,6 +136,9 @@ class UserState {
       phoneNumber: phoneNumber ?? this.phoneNumber,
       businessName: businessName ?? this.businessName,
       businessNumber: businessNumber ?? this.businessNumber,
+      tasteTags: tasteTags ?? this.tasteTags,
+      allergens: allergens ?? this.allergens,
+      dislikedCategories: dislikedCategories ?? this.dislikedCategories,
     );
   }
 }
@@ -178,6 +196,10 @@ class UserNotifier extends Notifier<UserState> {
       phoneNumber: profile.phoneNumber,
       businessName: profile.businessName,
       businessNumber: profile.businessNumber,
+      // 2026-05-31 CU-04 — 매번 DB 값으로 덮어써서 캐시 동기화
+      tasteTags: profile.tasteTags,
+      allergens: profile.allergens,
+      dislikedCategories: profile.dislikedCategories,
     );
 
     // restaurantId 변경분 영속화 (다음 자동 로그인 시 즉시 사용)
@@ -194,6 +216,22 @@ class UserNotifier extends Notifier<UserState> {
     if (token != null && token.isNotEmpty) {
       unawaited(const FcmService().registerToken(accessToken: token));
     }
+  }
+
+  // ── 2026-05-31 CU-04 — 취향 설정 저장 후 캐시 갱신 ────────
+  // 취향 설정 화면(PreferencesScreen) 의 저장 성공 콜백에서 호출.
+  // PATCH /users/me/preferences 응답을 그대로 반영해서
+  // 추천 화면이 다음 렌더링에서 새 가중치를 적용하도록 함.
+  void setPreferences({
+    required List<String> tasteTags,
+    required List<String> allergens,
+    required List<String> dislikedCategories,
+  }) {
+    state = state.copyWith(
+      tasteTags: tasteTags,
+      allergens: allergens,
+      dislikedCategories: dislikedCategories,
+    );
   }
 
   // ── 결제 왕복 후 sessionStorage 에서 복원 ─────────────────

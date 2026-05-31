@@ -6,6 +6,7 @@ import '../../core/debug/debug_toast.dart';
 import '../../models/menu_item.dart';
 import '../../providers/cart_provider.dart';
 import '../../providers/user_provider.dart';
+import '../../services/menus_api_service.dart';
 import '../../services/restaurants_api_service.dart';
 import '../../services/sessions_api_service.dart';
 import '../payment/order_review_screen.dart';
@@ -103,6 +104,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
   // ── 식당/메뉴/세션 API 서비스 ────────────────────────────
   static const _restaurantsApi = RestaurantsApiService();
   static const _sessionsApi = SessionsApiService();
+  // CORE-09(2026-05-31): 알레르기 충돌 검증기
+  static const _menusApi = MenusApiService();
 
   // ── 메뉴 상태 ────────────────────────────────────────────
   // null = 아직 로딩 중, [] = 빈 응답(메뉴 없음), [..] = 정상 응답
@@ -260,6 +263,53 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
       _menuItems = mapped;
       _isLoading = false;
       _loadError = null;
+    });
+
+    // CORE-09(2026-05-31): 메뉴 로딩이 끝났다면 알레르기 충돌도 함께 조회.
+    // 별도 호출이지만 사용자 알레르기가 비어있으면 백엔드가 즉시 빈 결과로
+    // 떨어뜨리므로 비용은 사실상 1회 라운드트립.
+    _resolveAllergenConflicts();
+  }
+
+  // ── 알레르기 충돌 메뉴 조회 (CORE-09) ───────────────────
+  // _loadMenus 직후에 호출. _menuItems 가 채워진 상태에서 menuId 기준으로
+  // 충돌 메뉴 카드에 matchedAllergens 를 덮어쓴다.
+  //
+  // [실패 정책]
+  //   네트워크 실패 / userId 누락 등 어떤 사유로든 알레르기 표시는 부가 기능.
+  //   사용자 흐름을 막지 않고, 충돌 정보 없이도 메뉴 카드는 정상 표시된다.
+  Future<void> _resolveAllergenConflicts() async {
+    final items = _menuItems;
+    if (items == null || items.isEmpty) return;
+
+    final auth = ref.read(userProvider);
+    final token = auth.accessToken;
+    final userId = auth.userId;
+    if (token == null || token.isEmpty) return;
+    if (userId == null || userId.isEmpty) return;
+
+    final conflicts = await _menusApi.checkAllergens(
+      accessToken: token,
+      restaurantId: widget.restaurantId,
+      userId: userId,
+    );
+    if (!mounted) return;
+    if (conflicts.isEmpty) return; // 충돌 없음 → 기존 상태 유지
+
+    // menuId → matchedAllergens 매핑 (O(1) 조회용)
+    final byMenuId = <String, List<String>>{
+      for (final c in conflicts) c.menuId: c.matchedAllergens,
+    };
+
+    // 기존 _menuItems 를 순회하며 충돌이 있는 메뉴만 덮어쓰기.
+    final updated = items.map((m) {
+      final matched = byMenuId[m.id];
+      if (matched == null || matched.isEmpty) return m;
+      return m.copyWithAllergenConflicts(matched);
+    }).toList();
+
+    setState(() {
+      _menuItems = updated;
     });
   }
 
@@ -630,6 +680,50 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                     ),
                   ),
                 ),
+              // ── 알레르기 충돌 배지 (CORE-09, 2026-05-31) ──
+              // 사용자의 등록 알레르기와 메뉴 알레르기가 정확히 매칭된 경우에만 표시.
+              // - 우상단 작은 원형 배지(⚠️ 이모지).
+              // - 탭 시 BottomSheet 로 매칭 키워드 펼쳐 보여줌.
+              // - Semantics 로 라벨 제공 → 시각장애 접근성 확보.
+              if (item.allergenConflicts.isNotEmpty)
+                Positioned(
+                  top: 4,
+                  right: 4,
+                  child: Semantics(
+                    button: true,
+                    label:
+                        '알레르기 충돌 ${item.allergenConflicts.length}건. 자세히 보기',
+                    child: GestureDetector(
+                      onTap: () => _showAllergenSheet(item),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 6,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          // 위험 시그널 색상 — 디자인 토큰의 경고 컬러가 있다면
+                          // 추후 교체. 캡스톤 단계는 인라인 컬러 + 흰 글자로 충분히 가독.
+                          color: const Color(0xFFFF5252),
+                          borderRadius: BorderRadius.circular(10),
+                          boxShadow: const [
+                            BoxShadow(
+                              color: Color(0x33000000),
+                              blurRadius: 2,
+                              offset: Offset(0, 1),
+                            ),
+                          ],
+                        ),
+                        child: const Text(
+                          '⚠️',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
 
@@ -935,6 +1029,120 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
           ),
         ],
       ),
+    );
+  }
+
+  // ── 알레르기 충돌 BottomSheet (CORE-09) ──────────────────
+  // 메뉴 카드의 ⚠️ 배지를 탭했을 때 호출.
+  //
+  // [디자인]
+  //   - 상단 핸들 + 메뉴 이름 + 안내 카피.
+  //   - 매칭된 알레르기 키워드는 Wrap 으로 칩 형태로 나열.
+  //   - 우측 하단 닫기 버튼(Material 기본 BottomSheet drag-to-dismiss 와 병행).
+  //
+  // [카피 정책]
+  //   - "포함된 알레르기 성분" — 사장/추천 엔진이 등록한 알레르기와
+  //     사용자가 회피하고 싶은 알레르기가 정확히 매칭됐다는 사실만 전달.
+  //   - 의료 자문 톤은 피하고, "주문 전 확인해 주세요" 정도로 부드럽게.
+  void _showAllergenSheet(MenuItem item) {
+    showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: AppColors.background,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) {
+        return SafeArea(
+          top: false,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(
+              AppSpacing.screenHorizontal,
+              12,
+              AppSpacing.screenHorizontal,
+              20,
+            ),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // 상단 드래그 핸들
+                Center(
+                  child: Container(
+                    width: 36,
+                    height: 4,
+                    decoration: BoxDecoration(
+                      color: AppColors.divider,
+                      borderRadius: BorderRadius.circular(2),
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 14),
+                // 타이틀: ⚠️ + 메뉴명
+                Row(
+                  children: [
+                    const Text('⚠️ ', style: TextStyle(fontSize: 18)),
+                    Expanded(
+                      child: Text(
+                        item.name,
+                        style: AppTextStyles.heading3,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '내 알레르기와 겹치는 성분이 있어요. 주문 전 한 번만 확인해 주세요.',
+                  style: AppTextStyles.bodySmall.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
+                const SizedBox(height: AppSpacing.md),
+                // 매칭 키워드 칩 나열
+                Wrap(
+                  spacing: 8,
+                  runSpacing: 8,
+                  children: item.allergenConflicts
+                      .map(
+                        (a) => Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 12,
+                            vertical: 6,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0x1AFF5252), // 연한 빨강 배경
+                            borderRadius:
+                                BorderRadius.circular(AppRadius.chip),
+                            border: Border.all(
+                              color: const Color(0xFFFF5252),
+                              width: 1,
+                            ),
+                          ),
+                          child: Text(
+                            a,
+                            style: AppTextStyles.label.copyWith(
+                              color: const Color(0xFFD32F2F),
+                              fontWeight: FontWeight.w700,
+                            ),
+                          ),
+                        ),
+                      )
+                      .toList(),
+                ),
+                const SizedBox(height: AppSpacing.lg),
+                Align(
+                  alignment: Alignment.centerRight,
+                  child: TextButton(
+                    onPressed: () => Navigator.of(sheetContext).pop(),
+                    child: const Text('확인'),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        );
+      },
     );
   }
 

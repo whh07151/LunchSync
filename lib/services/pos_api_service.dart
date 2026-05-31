@@ -35,15 +35,20 @@ class PosOrder {
     this.customerName,
     this.createdAt,
     this.itemsSummary,
+    this.paymentMethod,
   });
 
   final String id;
-  final String status;            // PENDING | PAID | PREPARING | READY | COMPLETED | CANCELLED
+  final String status;            // PENDING | PAID | PREPARING | READY | COMPLETED | CANCELLED | REFUNDED
   final int totalAmount;          // 합계 금액 (원)
   final String? orderNumber;      // 주문번호(짧은 문자열) — 백엔드가 제공하면 표시
   final String? customerName;     // 손님 표시명 — 미연동 시 null
   final String? createdAt;        // ISO8601 타임스탬프
   final String? itemsSummary;     // "비빔밥 외 2건" 같은 짧은 요약 — 백엔드가 제공하면 표시
+
+  /// 결제수단 — TOSS | CARD | CASH | SIMULATE | null (미설정).
+  /// OW-10 결제 내역 화면에서 칩으로 표시.
+  final String? paymentMethod;
 
   factory PosOrder.fromJson(Map<String, dynamic> json) {
     return PosOrder(
@@ -60,6 +65,8 @@ class PosOrder {
           json['created_at'] as String?,
       itemsSummary: json['itemsSummary'] as String? ??
           json['items_summary'] as String?,
+      paymentMethod: json['paymentMethod'] as String? ??
+          json['payment_method'] as String?,
     );
   }
 }
@@ -248,6 +255,80 @@ class PosApiService {
       ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200;
     } catch (_) {
+      return false;
+    }
+  }
+
+  // ── GET /api/pos/restaurants/:id/payment-history ────────
+  // OW-10 결제 내역 화면 진입 시 사용.
+  // 날짜 범위 필터(dateFrom/dateTo) 는 ISO 8601 string 으로 전달 (UTC).
+  // 실패 시 빈 리스트 반환 — 화면은 "결제 내역이 없어요" 표시.
+  Future<List<PosOrder>> getPaymentHistory({
+    required String accessToken,
+    required String restaurantId,
+    DateTime? dateFrom,
+    DateTime? dateTo,
+  }) async {
+    try {
+      // 쿼리스트링 조립 — 옵션 파라미터만 포함.
+      final qp = <String, String>{};
+      if (dateFrom != null) qp['dateFrom'] = dateFrom.toUtc().toIso8601String();
+      if (dateTo != null) qp['dateTo'] = dateTo.toUtc().toIso8601String();
+
+      final uri = Uri.parse(
+        '${AppConfig.backendBaseUrl}/pos/restaurants/$restaurantId/payment-history',
+      ).replace(queryParameters: qp.isEmpty ? null : qp);
+
+      final response = await http
+          .get(uri, headers: {'Authorization': 'Bearer $accessToken'})
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+
+      if (response.statusCode != 200) return const [];
+
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final data = body['data'];
+
+      List<dynamic> rawList;
+      if (data is List) {
+        rawList = data;
+      } else if (data is Map<String, dynamic>) {
+        rawList = (data['orders'] as List<dynamic>?) ?? const [];
+      } else {
+        return const [];
+      }
+
+      return rawList
+          .whereType<Map<String, dynamic>>()
+          .map(PosOrder.fromJson)
+          .toList(growable: false);
+    } catch (e) {
+      debugPrint('[PosApiService] getPaymentHistory 에러: $e');
+      return const [];
+    }
+  }
+
+  // ── POST /api/pos/orders/:id/refund-sim ─────────────────
+  // 환불 시뮬 — status 만 REFUNDED 로 변경 (실제 토스 cancel API 미호출).
+  // 정식 환불은 cancelOrder() 사용.
+  Future<bool> refundSim({
+    required String accessToken,
+    required String orderId,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/pos/orders/$orderId/refund-sim'),
+            headers: {
+              'Authorization': 'Bearer $accessToken',
+              'Content-Type': 'application/json',
+            },
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (e) {
+      debugPrint('[PosApiService] refundSim 에러: $e');
       return false;
     }
   }

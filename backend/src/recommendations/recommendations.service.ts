@@ -20,7 +20,8 @@ import { normalizePriceRangeToWon } from '../restaurants/price-range-normalizer'
 //   가격 적합도  : -30 ~ +15점 (예산 대비 비율 기반 차등)
 //   카테고리 다양성: 0 ~ +10점 (멤버 비선호 카테고리와 거리 멀수록 가산)
 //   평점/방문이력: ± 5~10점 (해시 기반 미세 차등 + 중복 회피)
-//   최근 7일 방문: -30점
+//   최근 3일 방문: -20점 (CORE-08 / CU-21 차등 강화)
+//   최근 7일 방문: -10점 (CORE-08 / CU-21 차등 강화)
 //   알레르기 충돌: -50점
 //   비선호 음식   : -25점
 //   사장님 한줄  : +5점 (2026-05-31 WOW#1, v3 flag 무관)
@@ -91,6 +92,29 @@ export interface RecommendationResult {
   lng: number | null;
   score: number;
   reasons: string[];
+  // ── CU-21 식사 이력 hint ─────────────────────────────────
+  // 'RECENT_3D' : 최근 3일 내 방문한 식당 (강한 회피 -20점)
+  // 'RECENT_7D' : 최근 7일 내 (3일은 아님) 방문한 식당 (-10점)
+  // null        : 최근 식사 이력 없음
+  // 프론트는 이 hint 를 보고 카드에 "최근에 다녀왔어요" 배지를 노출.
+  recentVisitHint?: 'RECENT_3D' | 'RECENT_7D' | null;
+}
+
+// ══════════════════════════════════════════════════════════
+// 추천 API 전체 응답 봉투 (CU-21 metadata 도입)
+//
+// 기존: { success, data: RecommendationResult[] }
+// 개선: { success, data, metadata: { recentPenalty: { [id]: -N } } }
+//
+// recentPenalty 는 디버그/관측 용도 + 프론트 칩 표시 보조.
+// score 자체에 이미 감점이 반영되어 있으므로 metadata 는 정보 전달 전용.
+// ══════════════════════════════════════════════════════════
+export interface RecommendationResponse {
+  items: RecommendationResult[];
+  metadata: {
+    // 식당 ID → 적용된 페널티 (-10 또는 -20)
+    recentPenalty: Record<string, number>;
+  };
 }
 
 @Injectable()
@@ -100,7 +124,12 @@ export class RecommendationsService {
   constructor(private readonly supabase: SupabaseService) {}
 
   // ── 그룹 추천 메인 로직 ───────────────────────────────
-  async getRecommendations(sessionId: string): Promise<RecommendationResult[]> {
+  //
+  // 2026-05-31 CORE-08 / CU-21 차등 강화:
+  //   반환 타입을 RecommendationResponse 로 변경하여 items + metadata 봉투 형태로 통일.
+  //   metadata.recentPenalty 에는 최근 식사 이력에 의해 감점된 식당 ID → 페널티 점수가 들어감.
+  //   호환성: controller 는 새 타입을 그대로 사용. 프론트는 items 만 읽으면 기존 동작 유지.
+  async getRecommendations(sessionId: string): Promise<RecommendationResponse> {
     // 1. 세션 정보 조회 — 기준 좌표(lat/lng) + 검색 반경(radius)
     //    lat/lng가 null이면 반경 필터를 생략하고 DB 전체 식당을 대상으로 폴백.
     const { data: session } = await this.supabase.client
@@ -121,7 +150,10 @@ export class RecommendationsService {
       .eq('session_id', sessionId);
 
     const memberIds = members?.map((m) => m.user_id) ?? [];
-    if (memberIds.length === 0) return [];
+    if (memberIds.length === 0) {
+      // 빈 응답도 동일한 봉투 형태로 — 프론트 파싱 코드 단일화.
+      return { items: [], metadata: { recentPenalty: {} } };
+    }
 
     // 3. 멤버 프로필 수집
     const { data: profiles } = await this.supabase.client
@@ -163,7 +195,9 @@ export class RecommendationsService {
       .select('id, name, category, price_range, address, lat, lng, rating, todays_note')
       .returns<Restaurant[]>();
 
-    if (!allRestaurants || allRestaurants.length === 0) return [];
+    if (!allRestaurants || allRestaurants.length === 0) {
+      return { items: [], metadata: { recentPenalty: {} } };
+    }
 
     const restaurants: Restaurant[] =
       centerLat != null && centerLng != null
@@ -184,24 +218,61 @@ export class RecommendationsService {
         `반경내=${restaurants.length}`,
     );
 
-    if (restaurants.length === 0) return [];
+    if (restaurants.length === 0) {
+      return { items: [], metadata: { recentPenalty: {} } };
+    }
 
-    // 5. 최근 7일 식사 이력 조회 (CORE-08 중복 회피)
-    const weekAgo = new Date();
-    weekAgo.setDate(weekAgo.getDate() - 7);
+    // 5. 최근 7일 / 3일 식사 이력 조회 (CORE-08 + CU-21 차등 강화)
+    //
+    // 정책 변경(2026-05-31):
+    //   기존: 7일 단일 기준 -30점.
+    //   개선: 3일 내 방문 -20 / 7일 내 방문 -10 으로 차등.
+    //         "어제 갔던 곳"과 "5일 전 갔던 곳"을 같이 취급하면
+    //         CU-21 식사 이력 의도("다양한 식당 추천")가 살지 않음.
+    //
+    // 쿼리 단순화:
+    //   sessions 조인 후 winner_restaurant_id 를 보던 기존 로직은 세션이
+    //   ORDERED 가 아니거나 winner 가 null 인 경우 누락이 잦았다.
+    //   orders.restaurant_id 가 NOT NULL 이므로 직접 사용하면 더 정확.
+    //
+    //   - status IN ('PAID', 'COMPLETED', 'DONE') : 실제 식사한 주문만.
+    //     PENDING/CANCELLED 는 "다녀온" 게 아님.
+    //   - created_at 으로 3일/7일 분리.
+    const now = Date.now();
+    const sevenDaysAgo = new Date(now - 7 * 86400000);
+    const threeDaysAgo = new Date(now - 3 * 86400000);
 
     const { data: recentOrders } = await this.supabase.client
       .from('orders')
-      .select('id, session_id, sessions(winner_restaurant_id)')
+      .select('restaurant_id, created_at, status')
       .in('user_id', memberIds)
-      .gte('created_at', weekAgo.toISOString());
+      .in('status', ['PAID', 'COMPLETED', 'DONE'])
+      .gte('created_at', sevenDaysAgo.toISOString());
 
-    const recentRestaurantIds = new Set<string>();
-    (recentOrders ?? []).forEach((order: any) => {
-      if (order.sessions?.winner_restaurant_id) {
-        recentRestaurantIds.add(order.sessions.winner_restaurant_id);
+    // 최근 7일 / 3일 식당 ID 집합.
+    // 3일 내 방문은 자동으로 7일 집합에도 포함되지만, 점수 분기는
+    // 우선순위 검사(3일 먼저 매치되면 -20 적용 후 7일 분기 skip)로 처리.
+    const recent7d = new Set<string>();
+    const recent3d = new Set<string>();
+    for (const order of (recentOrders ?? []) as Array<{
+      restaurant_id: string | null;
+      created_at: string;
+    }>) {
+      if (!order.restaurant_id) continue;
+      recent7d.add(order.restaurant_id);
+      // created_at 이 3일 이내인지 비교 — 문자열 ISO 그대로 Date 변환.
+      if (new Date(order.created_at).getTime() >= threeDaysAgo.getTime()) {
+        recent3d.add(order.restaurant_id);
       }
-    });
+    }
+
+    this.logger.log(
+      `[CU-21 식사이력] members=${memberIds.length} orders=${recentOrders?.length ?? 0} ` +
+        `7d=${recent7d.size} 3d=${recent3d.size}`,
+    );
+
+    // metadata 누적 — 응답 봉투에 함께 실어 프론트 칩 표시·디버그에 사용.
+    const recentPenalty: Record<string, number> = {};
 
     // ── 멤버 그룹 통계 사전 계산 (식당마다 반복 계산 방지) ──
     // 예산: 그룹 최저 예산 기준으로 가격 적합도 산정
@@ -382,10 +453,26 @@ export class RecommendationsService {
         reasons.push('비선호 음식 포함');
       }
 
-      // ── (G) CORE-08: 최근 식사 중복 회피 ───────────
-      if (recentRestaurantIds.has(r.id)) {
-        score -= 30;
+      // ── (G) CORE-08 + CU-21: 최근 식사 중복 회피 (차등) ──
+      //
+      // 우선순위: 3일 내 > 7일 내. 3일에 매치되면 7일 분기는 건너뛴다.
+      // 점수:
+      //   · recent3d: -20점 + "최근 3일 내 방문" reason + RECENT_3D hint
+      //   · recent7d: -10점 + "최근 7일 내 방문" reason + RECENT_7D hint
+      //
+      // metadata.recentPenalty 에는 적용된 페널티(-N)를 식당 ID 키로 저장.
+      // 프론트는 reason 라벨과 hint 양쪽으로 "최근에 다녀왔어요" 칩을 띄움.
+      let recentVisitHint: 'RECENT_3D' | 'RECENT_7D' | null = null;
+      if (recent3d.has(r.id)) {
+        score -= 20;
+        reasons.push('최근 3일 내 방문');
+        recentVisitHint = 'RECENT_3D';
+        recentPenalty[r.id] = -20;
+      } else if (recent7d.has(r.id)) {
+        score -= 10;
         reasons.push('최근 7일 내 방문');
+        recentVisitHint = 'RECENT_7D';
+        recentPenalty[r.id] = -10;
       }
 
       // ══════════════════════════════════════════════════════════
@@ -473,6 +560,7 @@ export class RecommendationsService {
         lng: r.lng ?? null,
         score,
         reasons,
+        recentVisitHint,
       };
     });
 
@@ -482,7 +570,12 @@ export class RecommendationsService {
       return a.restaurantId.localeCompare(b.restaurantId);
     });
 
-    return scored.slice(0, 10); // 상위 10개
+    // 상위 10개로 자르되, metadata 는 전체 페널티 정보를 그대로 전달.
+    // (UI 표시되는 카드 중 일부만 페널티가 적용되어 있어도 디버그/관측 용도로 유용)
+    return {
+      items: scored.slice(0, 10),
+      metadata: { recentPenalty },
+    };
   }
 
   // ══════════════════════════════════════════════════════════

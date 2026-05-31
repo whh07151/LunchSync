@@ -5,6 +5,7 @@ import '../../core/widgets/widgets.dart';
 import '../../core/debug/debug_toast.dart';
 import '../../providers/user_provider.dart';
 import '../../services/users_api_service.dart';
+import 'preferences_screen.dart';
 import 'wrapped_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -645,6 +646,23 @@ class _MyInfoScreenState extends ConsumerState<MyInfoScreen> {
       color: AppColors.background,
       child: Column(
         children: [
+          // ── 취향 설정 (CU-04 — 2026-05-31) ────────────────
+          // 추천 엔진이 직접 참조하는 취향/알레르기/비선호 카테고리.
+          // 탭하면 PreferencesScreen (FilterChip 다중 선택) 로 이동.
+          _buildSettingsRow(
+            icon: Icons.tune,
+            label: '취향 설정',
+            trailing: const SizedBox.shrink(),
+            onTap: () {
+              Navigator.of(context).push(
+                MaterialPageRoute(
+                  builder: (_) => const PreferencesScreen(),
+                ),
+              );
+            },
+          ),
+          const Divider(height: 1, indent: 56, color: AppColors.divider),
+
           // 알림 설정 (준비 중)
           _buildSettingsRow(
             icon: Icons.notifications_outlined,

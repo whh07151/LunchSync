@@ -226,6 +226,196 @@ export class PosService {
     return stats;
   }
 
+  // ══════════════════════════════════════════════════════════
+  // ── OW-10: 결제 내역 조회 + 환불 시뮬 (2026-05-31) ──
+  //
+  // 사장 화면 "결제 내역" 진입 시 사용. getOrdersByRestaurant 가 모든 상태를
+  // 반환하는 것과 달리, 여기는 명시적으로 PAID 이상의 결제 발생 상태만 추림.
+  //
+  // 필터:
+  //   - status IN ('PAID', 'PREPARING', 'READY', 'COMPLETED', 'REFUNDED', 'CANCELLED')
+  //     → PENDING(결제 전) 은 제외. 결제 발생 이력만 보여주는 게 자연스러움.
+  //   - dateFrom / dateTo (ISO 8601 string) — 선택. 미지정이면 전체.
+  //     날짜 필터는 controller 에서 "오늘/어제/주간/월간" 칩 선택값을 변환해서 넘김.
+  //
+  // 응답:
+  //   getOrdersByRestaurant 와 동일 스키마 (PosOrderResponse[]) — Flutter 가 동일
+  //   PosOrder 모델로 받으므로 중복 매퍼 안 만듦.
+  // ══════════════════════════════════════════════════════════
+  async getPaymentHistory(
+    restaurantId: string,
+    dateFrom?: string,
+    dateTo?: string,
+  ): Promise<PosOrderResponse[]> {
+    // 결제 발생 이력 상태만 — PENDING(결제 전) 제외.
+    // CANCELLED / REFUNDED 는 환불 시뮬까지 포함해서 보여줘야 하므로 같이 노출.
+    const PAYMENT_STATUSES = [
+      'PAID',
+      'PREPARING',
+      'READY',
+      'COMPLETED',
+      'REFUNDED',
+      'CANCELLED',
+    ];
+
+    // getOrdersByRestaurant 와 동일한 select 절 재사용 — 응답 스키마 일관성.
+    // completion_photo_url 컬럼 미적용 환경 fallback 도 동일하게 적용.
+    const baseSelect = `
+        id, session_id, user_id, restaurant_id, status, total_price, payment_key, payment_method,
+        created_at, updated_at,
+        users(id, name, org),
+        order_items(id, quantity, price, menu_items(id, name))
+      `;
+    const selectWithPhoto = baseSelect.replace(
+      'created_at, updated_at,',
+      'created_at, updated_at, completion_photo_url,',
+    );
+
+    const buildQb = (selectStr: string) => {
+      let q = this.supabase.client
+        .from('orders')
+        .select(selectStr)
+        .eq('restaurant_id', restaurantId)
+        .in('status', PAYMENT_STATUSES)
+        .order('created_at', { ascending: false });
+      if (dateFrom) q = q.gte('created_at', dateFrom);
+      if (dateTo) q = q.lte('created_at', dateTo);
+      return q;
+    };
+
+    let { data, error } = await buildQb(selectWithPhoto);
+
+    if (
+      error &&
+      typeof error.message === 'string' &&
+      error.message.includes('completion_photo_url')
+    ) {
+      this.logger.warn(
+        '[getPaymentHistory] completion_photo_url 컬럼 미적용 환경 — fallback select',
+      );
+      ({ data, error } = await buildQb(baseSelect));
+    }
+
+    if (error) {
+      throw new Error(`결제 내역 조회 실패: ${error.message}`);
+    }
+
+    return (data ?? []).map((o: any) => {
+      const items = (o.order_items ?? []).map((it: any) => ({
+        name: (it.menu_items?.name as string) ?? '메뉴',
+        quantity: (it.quantity as number) ?? 0,
+        price: (it.price as number) ?? 0,
+      }));
+
+      const customerName = (o.users?.name as string | undefined) ?? null;
+      const customerOrg = (o.users?.org as string | undefined) ?? null;
+
+      return {
+        id: o.id,
+        sessionId: o.session_id,
+        userId: o.user_id,
+        restaurantId: o.restaurant_id ?? null,
+        status: o.status,
+        totalPrice: o.total_price,
+        totalAmount: o.total_price,
+        paymentKey: o.payment_key ?? null,
+        paymentMethod: o.payment_method ?? null,
+        createdAt: o.created_at,
+        updatedAt: o.updated_at,
+        orderNumber: this.formatOrderNumber(o.id),
+        customer: customerName || customerOrg
+          ? { name: customerName, org: customerOrg }
+          : null,
+        customerName,
+        items,
+        itemsSummary: this.buildItemsSummary(items),
+        completionPhotoUrl: (o.completion_photo_url as string | null) ?? null,
+      };
+    });
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── OW-10: 환불 시뮬레이션 (2026-05-31) ──
+  //
+  // 실제 토스 cancel API 호출 없이 status 만 REFUNDED 로 변경.
+  // cancelOrder(POS-09) 와 다른 점:
+  //   - cancelOrder: PAID/PENDING 만 가능, 실제 토스 환불 발생, status=CANCELLED
+  //   - refundSim:   COMPLETED/READY/PAID 까지 허용, 환불 미발생, status=REFUNDED
+  //
+  // 용도:
+  //   사장 화면 "결제 내역" 에서 "환불 토글" 으로 사용. 데모/시연 환경에서
+  //   실제 결제 취소 없이 매출 차감 효과만 시뮬레이션해 보여주려는 의도.
+  //
+  // 보안:
+  //   - 컨트롤러가 JwtAuthGuard + assertPosAccessTo 로 권한 검증 후 진입.
+  //   - 이미 REFUNDED / CANCELLED 인 주문은 idempotent — 그대로 반환 (재호출 방지).
+  // ══════════════════════════════════════════════════════════
+  async refundSim(orderId: string): Promise<{
+    id: string;
+    status: string;
+    refundedAt: string;
+  }> {
+    // 1) 주문 존재 + 현재 상태 확인 (이미 REFUNDED 면 idempotent 반환).
+    const { data: existing, error: readError } = await this.supabase.client
+      .from('orders')
+      .select('id, status, updated_at')
+      .eq('id', orderId)
+      .single();
+
+    if (readError || !existing) {
+      throw new NotFoundException('주문을 찾을 수 없습니다.');
+    }
+
+    if (existing.status === 'REFUNDED') {
+      // 이미 환불 시뮬된 주문 — 다시 호출해도 같은 결과 보장 (멱등성).
+      return {
+        id: existing.id,
+        status: existing.status,
+        refundedAt: existing.updated_at,
+      };
+    }
+
+    // 2) 환불 시뮬 가능 상태 검증.
+    //    PAID 이상 + 진행 단계 모두 허용 (시연용이므로 관대하게).
+    //    PENDING(결제 전) 은 환불 대상 자체가 없으므로 거절.
+    const refundableStatuses = new Set([
+      'PAID',
+      'PREPARING',
+      'READY',
+      'COMPLETED',
+    ]);
+    if (!refundableStatuses.has(existing.status)) {
+      throw new InternalServerErrorException(
+        `${existing.status} 상태인 주문은 환불 시뮬할 수 없습니다.`,
+      );
+    }
+
+    // 3) status 만 REFUNDED 로 변경 — 실제 토스 cancel API 호출 X.
+    //    payment_key 그대로 두어 추후 실제 환불 필요 시 별도 처리 가능하도록.
+    const { data, error } = await this.supabase.client
+      .from('orders')
+      .update({ status: 'REFUNDED' })
+      .eq('id', orderId)
+      .select('id, status, updated_at')
+      .single();
+
+    if (error || !data) {
+      throw new InternalServerErrorException(
+        `환불 시뮬 실패: ${error?.message ?? 'unknown'}`,
+      );
+    }
+
+    this.logger.log(
+      `[refundSim] order=${orderId} status=PAID/COMPLETED → REFUNDED (시뮬)`,
+    );
+
+    return {
+      id: data.id,
+      status: data.status,
+      refundedAt: data.updated_at,
+    };
+  }
+
   // ── 권한 검증용: orderId → restaurant_id 사전 조회 ─────
   // 컨트롤러가 assertPosAccessTo 호출 전에 어느 매장의 주문인지 확인하기 위함.
   // 주문이 없으면 NotFoundException — 컨트롤러가 그대로 위로 전파.
