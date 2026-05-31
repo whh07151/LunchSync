@@ -14,9 +14,11 @@ import {
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
   IsIn,
+  IsNumber,
   IsOptional,
   IsString,
   MaxLength,
+  Min,
   ValidateIf,
 } from 'class-validator';
 // 2026-05-13 SkipThrottle: POS 단말이 주문 목록/통계를 폴링하면서 글로벌
@@ -84,6 +86,28 @@ class UpdateTodaysNoteDto {
   @IsString({ message: 'note 는 문자열 또는 null 이어야 합니다.' })
   @MaxLength(200, { message: 'note 는 200자 이내여야 합니다.' })
   note!: string | null;
+}
+
+// 2026-05-31 POS-13: Toss POS 시뮬 결제 DTO.
+//
+// method:
+//   · CARD — POS 단말 토스 카드 결제 (시뮬)
+//   · CASH — POS 현금 수납 (사장이 현장에서 받은 금액)
+//
+// receivedAmount:
+//   · CASH 일 때만 의미. 사장이 받은 금액(원). LSPOS 가 거스름돈 = 받은 금액 - 총액
+//     으로 사용자에게 즉시 표시. DB 에는 저장 X (시연 임팩트 작음).
+//   · 음수 방어 위해 Min(0). 옵션.
+class TossPosChargeDto {
+  @IsIn(['CARD', 'CASH'], {
+    message: "method 는 'CARD' 또는 'CASH' 이어야 합니다.",
+  })
+  method!: 'CARD' | 'CASH';
+
+  @IsOptional()
+  @IsNumber({}, { message: 'receivedAmount 는 숫자여야 합니다.' })
+  @Min(0, { message: 'receivedAmount 는 0 이상이어야 합니다.' })
+  receivedAmount?: number;
 }
 
 @Controller('pos')
@@ -311,6 +335,55 @@ export class PosController {
     const result = await this.posService.updateTodaysNote(
       restaurantId,
       normalized,
+    );
+    return { success: true, data: result };
+  }
+
+  // ══════════════════════════════════════════════════════════
+  // ── POS-13: Toss POS 시뮬 결제 (2026-05-31) ──
+  //
+  // 라우트:
+  //   POST /api/pos/orders/:id/toss-pos-charge
+  //
+  // 본문:
+  //   {
+  //     "method": "CARD" | "CASH",
+  //     "receivedAmount": 50000   // CASH 시 사장이 받은 금액 (옵션)
+  //   }
+  //
+  // 동작:
+  //   · 주문 status = 'PAID' + payment_method = 'POS_TOSS' | 'POS_CASH' 업데이트
+  //   · 이미 PAID 이상이면 멱등 — 새 UPDATE 없이 현재 상태 반환
+  //   · CANCELLED/REFUNDED 는 거절(500)
+  //
+  // 응답:
+  //   { success: true, data: { orderId, status, paymentMethod, approvedAt } }
+  //
+  // 보안:
+  //   · JwtAuthGuard 통과 후 orderId → restaurant_id 사전 조회
+  //   · assertPosAccessTo 로 POS 토큰의 매장 ID 일치 검증
+  //   · 다른 매장 주문에 결제 처리 시도 차단
+  //
+  // 단계:
+  //   본 티켓은 P1 시연 시뮬 단계 — 실제 토스 POS API 미연동.
+  //   서비스 메서드명(chargeViaPosToss) 그대로 두어 향후 실 API 통합 시
+  //   메서드 내부 구현만 교체하면 됨 (인터페이스 호환).
+  // ══════════════════════════════════════════════════════════
+  @Post('orders/:id/toss-pos-charge')
+  async chargeViaPosToss(
+    @Req() req: AuthedRequest,
+    @Param('id') orderId: string,
+    @Body() dto: TossPosChargeDto,
+  ) {
+    // 권한 검증 — 다른 매장 주문에 결제 처리 못 하도록.
+    const restaurantId =
+      await this.posService.getRestaurantIdByOrderId(orderId);
+    assertPosAccessTo(req.user, restaurantId);
+
+    const result = await this.posService.chargeViaPosToss(
+      orderId,
+      dto.method,
+      dto.receivedAmount,
     );
     return { success: true, data: result };
   }

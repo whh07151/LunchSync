@@ -168,6 +168,9 @@ export class PosService {
       ready: 0,
       completed: 0,
       cancelled: 0,
+      // 2026-05-31 7회차 회귀 fix: REFUNDED 카운터 누락 — getPaymentHistory
+      // 가 REFUNDED 를 PAYMENT_STATUSES 에 포함시켰는데 통계에 빠져 매출 카드 0원 회귀.
+      refunded: 0,
       totalRevenue: 0,
       // 결제수단별 매출 분리 (2026-05-13 추가, 백엔드 협의 #9b)
       tossRevenue: 0,
@@ -200,6 +203,10 @@ export class PosService {
           break;
         case 'CANCELLED':
           stats.cancelled++;
+          break;
+        case 'REFUNDED':
+          // 환불은 매출 합산 X(countAsRevenue=false), 카운터만 노출
+          stats.refunded++;
           break;
       }
 
@@ -857,21 +864,133 @@ export class PosService {
     };
   }
 
-  // ── POS-13: Toss POS 연동 준비 (인터페이스) ──────────
-  // 추후 Toss Payments secretKey를 .env에서 읽어 실제 API 호출
-  // 현재는 인터페이스만 정의
+  // ══════════════════════════════════════════════════════════
+  // ── POS-13: Toss POS 시뮬 결제 (2026-05-31) ──
+  //
+  // 시연용 시뮬 단계 — 실제 토스 POS API 미연동.
+  // POS 단말에서 사장님이 매장 손님에게 직접 결제를 받는 흐름을 모사한다.
+  //
+  // 동작:
+  //   1) 주문 존재 + 현재 상태 확인 (이미 PAID 면 멱등 반환 — 새 업데이트 X)
+  //   2) PENDING 상태에서만 결제 가능 (재결제·이미 진행 중 주문 차단)
+  //   3) method 에 따라 payment_method 결정:
+  //        - CARD → 'POS_TOSS' (POS 토스 카드 결제 시뮬)
+  //        - CASH → 'POS_CASH' (POS 현금 수납)
+  //   4) status='PAID' + payment_method 일괄 UPDATE
+  //   5) approvedAt 은 DB 의 updated_at(트리거가 NOW() 로 갱신) 그대로 사용
+  //
+  // 멱등성 (Q3 원자성과 동일 원칙):
+  //   - 이미 PAID/PREPARING/READY/COMPLETED 인 주문은 새 업데이트 없이 현재 상태 반환.
+  //     같은 결제 요청을 두 번 눌러도 부작용 없음.
+  //   - REFUNDED/CANCELLED 같은 종료 상태는 명시적 거절(409 의미) 로 throw.
+  //
+  // 보안:
+  //   컨트롤러에서 JwtAuthGuard + assertPosAccessTo 통과 후 진입.
+  //
+  // receivedAmount:
+  //   현금 결제 시 사장이 받은 금액(거스름돈 표시용). DB 에는 저장 X — UI 즉시 표시 전용.
+  //   추후 cash 거스름돈 이력이 필요해지면 별도 컬럼 추가 (현재는 시연 임팩트 작아 미저장).
+  // ══════════════════════════════════════════════════════════
+  async chargeViaPosToss(
+    orderId: string,
+    method: 'CARD' | 'CASH',
+    _receivedAmount?: number,
+  ): Promise<{
+    orderId: string;
+    status: string;
+    paymentMethod: string;
+    approvedAt: string;
+  }> {
+    // 1) 주문 존재 + 현재 상태 사전 확인 (idempotent 분기).
+    const { data: existing, error: readError } = await this.supabase.client
+      .from('orders')
+      .select('id, status, payment_method, updated_at')
+      .eq('id', orderId)
+      .single();
+
+    if (readError || !existing) {
+      throw new NotFoundException('주문을 찾을 수 없습니다.');
+    }
+
+    // 2) 이미 PAID 이상이면 멱등 — 새 UPDATE 없이 현재 상태 그대로 반환.
+    //    같은 결제 버튼 두 번 클릭 / 네트워크 재시도 시 부작용 차단.
+    const paidStatuses = new Set([
+      'PAID',
+      'PREPARING',
+      'READY',
+      'COMPLETED',
+    ]);
+    if (paidStatuses.has(existing.status)) {
+      this.logger.log(
+        `[chargeViaPosToss] idempotent — order=${orderId} 이미 ${existing.status}`,
+      );
+      return {
+        orderId: existing.id,
+        status: existing.status,
+        paymentMethod: (existing.payment_method as string | null) ?? 'POS_TOSS',
+        approvedAt: existing.updated_at,
+      };
+    }
+
+    // 3) 종료 상태(취소/환불) 는 명시적으로 거절 — 재결제 우회 차단.
+    if (
+      existing.status === 'CANCELLED' ||
+      existing.status === 'REFUNDED'
+    ) {
+      throw new InternalServerErrorException(
+        `${existing.status} 상태인 주문은 POS 결제할 수 없습니다.`,
+      );
+    }
+
+    // 4) PENDING 외 상태(없을 가능성 높지만 안전망) 차단.
+    if (existing.status !== 'PENDING') {
+      throw new InternalServerErrorException(
+        `${existing.status} 상태인 주문은 POS 결제 흐름 대상이 아닙니다.`,
+      );
+    }
+
+    // 5) method → payment_method ENUM 매핑.
+    //    POS_TOSS = POS 단말 토스 카드 결제 시뮬, POS_CASH = POS 현금 수납.
+    const paymentMethod = method === 'CARD' ? 'POS_TOSS' : 'POS_CASH';
+
+    // 6) status='PAID' + payment_method 동시 업데이트.
+    //    updated_at 트리거가 NOW() 로 자동 갱신 → approvedAt 으로 활용.
+    const { data: updated, error: updateError } = await this.supabase.client
+      .from('orders')
+      .update({ status: 'PAID', payment_method: paymentMethod })
+      .eq('id', orderId)
+      .select('id, status, payment_method, updated_at')
+      .single();
+
+    if (updateError || !updated) {
+      this.logger.error(
+        `[chargeViaPosToss] UPDATE 실패 order=${orderId} ` +
+          `method=${method} error=${updateError?.message}`,
+      );
+      throw new InternalServerErrorException(
+        `POS 결제 실패: ${updateError?.message ?? 'unknown'}`,
+      );
+    }
+
+    this.logger.log(
+      `[chargeViaPosToss] order=${orderId} PENDING → PAID ` +
+        `method=${paymentMethod} (시뮬)`,
+    );
+
+    return {
+      orderId: updated.id,
+      status: updated.status,
+      paymentMethod:
+        (updated.payment_method as string | null) ?? paymentMethod,
+      approvedAt: updated.updated_at,
+    };
+  }
+
+  // ── POS-13: 환불 인터페이스 (기존 토스 환불 미연결 자리) ──
+  // 실제 환불은 PaymentsService.cancelPayment 가 처리하므로 이 헬퍼는 자리만 유지.
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   private async refundViaToss(paymentKey: string, amount: number, reason?: string) {
-    // TODO: 실제 환불 구현
-    // const secretKey = this.configService.get('TOSS_SECRET_KEY');
-    // const response = await fetch(`https://api.tosspayments.com/v1/payments/${paymentKey}/cancel`, {
-    //   method: 'POST',
-    //   headers: {
-    //     Authorization: `Basic ${Buffer.from(secretKey + ':').toString('base64')}`,
-    //     'Content-Type': 'application/json',
-    //   },
-    //   body: JSON.stringify({ cancelReason: reason ?? '점주 취소' }),
-    // });
+    // TODO: 실제 환불 구현 (현재는 PaymentsService.cancelPayment 가 담당)
     return { success: true };
   }
 
