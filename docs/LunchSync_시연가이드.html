@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<title>LunchSync 시연 가이드</title>
+<style>
+  :root{
+    --cream:#FBF3E8; --ink:#241A12; --ink2:#5A4A3C; --orange:#FF6A2B;
+    --orange-d:#E8590C; --amber:#F2A900; --line:#E8D6C0; --tomato:#E63A4A;
+    --serif:Georgia,'Times New Roman',serif;
+    --sans:'Pretendard','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+  }
+  @page{ size:A4; margin:16mm 15mm; }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  body{font-family:var(--sans);color:var(--ink);line-height:1.62;font-size:10.5pt;background:#fff;}
+  .accent{color:var(--orange-d);}
+  h2,h3{line-height:1.25;}
+  p{margin:5px 0;}
+  ul,ol{margin:5px 0 5px 2px;padding-left:20px;}
+  li{margin:2.5px 0;}
+  code{background:#FBF3E8;padding:1px 6px;border-radius:4px;font-family:'Consolas',monospace;font-size:9pt;color:var(--orange-d);}
+  strong{font-weight:800;}
+
+  /* cover */
+  .cover{
+    position:relative;background:var(--ink);color:var(--cream);
+    border-radius:22px;padding:46px 40px;overflow:hidden;margin-bottom:26px;
+  }
+  .cover::after{content:"";position:absolute;width:320px;height:320px;border-radius:50%;
+    background:radial-gradient(circle at 35% 35%,#FFB47A,var(--orange));top:-110px;right:-90px;opacity:.55;filter:blur(4px);}
+  .cover .em{font-size:42px;position:relative;z-index:2;}
+  .cover h1{font-size:34pt;font-weight:900;letter-spacing:-1.5px;margin:6px 0 4px;position:relative;z-index:2;}
+  .cover h1 .o{color:var(--amber);}
+  .cover .sub{font-size:13pt;color:#E9D7C2;position:relative;z-index:2;}
+  .cover .meta{margin-top:18px;font-size:10pt;color:#C9B49C;position:relative;z-index:2;}
+  .cover .pills{margin-top:14px;display:flex;gap:8px;position:relative;z-index:2;}
+  .cover .pill{background:rgba(255,255,255,.12);border:1px solid rgba(255,255,255,.2);border-radius:999px;padding:5px 13px;font-size:9.5pt;font-weight:700;}
+
+  /* section header */
+  h2{
+    display:flex;align-items:center;gap:12px;font-size:16pt;font-weight:900;letter-spacing:-.5px;
+    margin:26px 0 12px;color:var(--ink);
+  }
+  h2 .num{
+    flex:none;width:34px;height:34px;border-radius:11px;background:linear-gradient(135deg,var(--orange),var(--amber));
+    color:#fff;display:flex;align-items:center;justify-content:center;font-size:14pt;font-weight:900;
+  }
+  h3{font-size:12pt;font-weight:800;color:var(--orange-d);margin:14px 0 5px;}
+
+  table{border-collapse:collapse;width:100%;margin:9px 0;font-size:9.7pt;border-radius:8px;overflow:hidden;}
+  th,td{border:1px solid var(--line);padding:6px 10px;text-align:left;vertical-align:top;}
+  th{background:var(--ink);color:var(--cream);font-weight:700;}
+  tr:nth-child(even) td{background:#FCF6EE;}
+
+  .box{background:#FCF6EE;border:1px solid var(--line);border-left:5px solid var(--orange);border-radius:10px;padding:11px 15px;margin:11px 0;}
+  .box.warn{border-left-color:var(--tomato);background:#FDF1F0;}
+  .box .t{font-weight:800;margin-bottom:3px;}
+
+  .check{list-style:none;padding-left:0;}
+  .check li{position:relative;padding-left:26px;margin:5px 0;}
+  .check li::before{content:"";position:absolute;left:0;top:3px;width:15px;height:15px;border:2px solid var(--orange);border-radius:4px;}
+
+  .qa{border:1px solid var(--line);border-radius:12px;padding:11px 15px;margin:9px 0;background:#fff;box-shadow:0 3px 10px -6px rgba(120,60,10,.25);}
+  .qa .q{font-weight:800;color:var(--orange-d);}
+  .qa .q::before{content:"Q. ";}
+  .qa .a{margin-top:3px;color:var(--ink2);}
+  .qa .a::before{content:"A. ";font-weight:800;color:var(--ink);}
+
+  .flow-cards{display:flex;gap:10px;margin:10px 0;}
+  .flow-cards .fc{flex:1;border:1px solid var(--line);border-radius:12px;padding:12px;background:#FCF6EE;}
+  .flow-cards .fc .tag{display:inline-block;background:var(--orange);color:#fff;font-weight:800;font-size:8.5pt;padding:3px 10px;border-radius:999px;margin-bottom:6px;}
+  .flow-cards .fc ol{padding-left:16px;font-size:9pt;}
+
+  .pagebreak{page-break-before:always;}
+  .small{font-size:9pt;color:var(--ink2);}
+  .flowline{background:#FCF6EE;border-radius:8px;padding:8px 13px;font-weight:700;color:var(--orange-d);font-size:10pt;}
+</style>
+</head>
+<body>
+
+<div class="cover">
+  <div class="em">🍱</div>
+  <h1>Lunch<span class="o">Sync</span> 시연 가이드</h1>
+  <div class="sub">팀 점심 결정·주문 통합 플랫폼 — 발표 준비용</div>
+  <div class="pills"><span class="pill">🙋 손님앱</span><span class="pill">🧑‍🍳 사장앱</span><span class="pill">🖥️ POS</span></div>
+  <div class="meta">캡스톤 발표용 · 본 문서는 시연 시나리오·기능·예상질문 요약입니다.</div>
+</div>
+
+<h2><span class="num">1</span>한 줄 소개 &amp; 핵심 가치</h2>
+<p><strong>LunchSync</strong>는 "점심 뭐 먹지?"의 결정 피로를 없애는 앱입니다. 팀원이 <strong>세션</strong>을 만들고,
+AI 추천·투표·이상형 월드컵으로 <strong>식당을 함께 결정</strong>한 뒤, 앱에서 바로 <strong>주문·결제·픽업 추적</strong>까지
+끝냅니다. 사장님은 전용 앱/POS로 주문을 받고 매출을 관리합니다.</p>
+<div class="box"><div class="t">차별점 3가지</div>
+<ul>
+<li><strong>함께 결정</strong> — 혼자 고민이 아니라 팀이 투표·토너먼트로 재미있게 결정</li>
+<li><strong>결정→주문→픽업 한 번에</strong> — 더치페이 자동 계산까지 한 흐름</li>
+<li><strong>위치 기반 실데이터</strong> — 카카오·네이버 크롤 + AI 폴백으로 어느 동네든 후보 확보</li>
+</ul></div>
+
+<h2><span class="num">2</span>시연 전 체크리스트 <span class="small">(가장 중요!)</span></h2>
+<ul class="check">
+<li><strong>네트워크: 핸드폰 핫스팟 사용</strong> (공용 와이파이 X — 스타벅스/학교 와이파이는 캡티브 포털이라 끊김)</li>
+<li>앱 설치 확인 — 폰에 설치되어 AWS 서버(EC2)에 연결됨 (USB 불필요, 폰 단독 작동)</li>
+<li>로그인 상태 — 카카오 로그인 또는 시연용 시드 로그인 FAB</li>
+<li>백엔드 살아있는지 — 홈에 식당/세션이 뜨면 정상</li>
+<li>2대 분리 시연 — 폰=손님(카카오), 다른 기기=사장(시드 로그인)으로 계정 분리</li>
+<li>결제는 <strong>토스 테스트 키</strong> — 실제 결제 안 됨 ("테스트 환경이에요" 표시)</li>
+</ul>
+<div class="box"><div class="t">💡 네트워크 안전장치</div>
+<span class="small">모든 API가 일시 끊김 시 자동 재시도(2~3회)하도록 보강됨 — 핫스팟이 깜빡여도 "후보 0개" 오류 대신 자동 복구.
+그래도 안정적인 핫스팟 권장.</span></div>
+
+<h2><span class="num">3</span>기술 아키텍처</h2>
+<table>
+<tr><th>구성</th><th>기술</th><th>역할</th></tr>
+<tr><td>프론트엔드</td><td>Flutter + Riverpod</td><td>손님앱 / 사장앱 (단일 앱, role 분기)</td></tr>
+<tr><td>POS</td><td>Flutter (LSPOS)</td><td>매장 단말 — 좌석·예약·주문·결제</td></tr>
+<tr><td>백엔드</td><td>NestJS (TypeScript)</td><td>단일 문지기 — 권한·로직·트랜잭션</td></tr>
+<tr><td>DB</td><td>Supabase (PostgreSQL)</td><td>모든 데이터, 백엔드만 접근</td></tr>
+<tr><td>인증 / 결제</td><td>Kakao + JWT / Toss v2</td><td>로그인 / 결제(테스트)</td></tr>
+<tr><td>배포 / 데이터</td><td>AWS EC2 / 카카오·네이버·Gemini</td><td>서버 / 식당·메뉴 수집·폴백</td></tr>
+</table>
+<p class="flowline">핵심 원칙: Flutter → NestJS HTTP API만 호출 (Supabase 직접 접근 금지) · 실시간은 3초 폴링 + HTTP 304.</p>
+
+<div class="pagebreak"></div>
+<h2><span class="num">4</span>시연 시나리오 (3-흐름)</h2>
+<div class="flow-cards">
+  <div class="fc"><span class="tag">🙋 손님</span>
+    <ol><li>로그인 → 홈</li><li>세션 만들기·초대</li><li>AI추천/투표/토너먼트로 결정</li><li>메뉴 담기→결제</li><li>픽업 추적→별점</li></ol></div>
+  <div class="fc"><span class="tag">🧑‍🍳 사장</span>
+    <ol><li>OWNER 로그인</li><li>주문 접수·상태 진행</li><li>음식 사진·오늘의 한 줄</li><li>메뉴 관리</li><li>매출·단골 통계</li></ol></div>
+  <div class="fc"><span class="tag">🖥️ POS</span>
+    <ol><li>좌석 관리</li><li>예약·대기</li><li>주문 접수</li><li>결제·환불 시뮬</li><li>본사 실시간 연결</li></ol></div>
+</div>
+<h3>손님 흐름 상세 (메인 시연)</h3>
+<ol>
+<li><strong>로그인</strong> → 홈 ("안녕하세요, OOO님!") — 오늘의 세션·AI추천·인기 식당 표시</li>
+<li><strong>세션 만들기</strong> → 이름·반경·예산·복귀시간 입력 (방장 자동 참여)</li>
+<li><strong>친구 초대</strong> → 8자리 코드/링크 공유 (24h 만료)</li>
+<li><strong>식당 결정</strong> → AI추천+투표 / 이상형 월드컵(8강→결승) / 룰렛·사다리 중 선택</li>
+<li><strong>메뉴 담기 → 주문 검토 → 토스 결제위젯</strong>(카드·계좌·간편결제) → 완료</li>
+<li><strong>주문 추적</strong> → 3초 폴링 실시간 상태 + 예상 픽업시간 + 사장님 사진 + 더치페이</li>
+<li><strong>별점·리뷰</strong> → 픽업 완료 후 작성 → 다음 추천 반영, 단골 등급 토스트</li>
+</ol>
+
+<h2><span class="num">5</span>핵심 기능 상세</h2>
+<h3>① AI 추천 엔진</h3>
+<p>위치(반경)·예산·알레르기/취향·<strong>최근 식사 이력</strong>을 종합한 점수 추천. 최근 3일 방문은 강한 회피(-20점),
+7일 내 -10점 → "최근에 다녀왔어요" 배지.</p>
+<h3>② 이상형 월드컵 토너먼트 (WOW#6)</h3>
+<p>후보 8개 셔플 → 8강→4강→결승 1:1 대결. 우승은 홈 "이번 주 인기 식당"(트렌딩, WOW#9)에 반영.</p>
+<h3>③ 주문 추적 &amp; 더치페이</h3>
+<p>3초 폴링 실시간 갱신. 2명 이상이면 1인당 금액 자동 계산 → "카톡에 보내기" 공유.</p>
+<h3>④ 식당 데이터 3단 수집</h3>
+<p>카카오 로컬 → 네이버 플레이스(메뉴·평점) → Gemini AI 추정 → 카테고리 라이브러리. 어느 동네든 채워짐.</p>
+<h3>⑤ 안정성 (최근 보강)</h3>
+<p>모든 API 호출 자동 재시도(일시 오류·타임아웃 2~3회 백오프). 공용망 깜빡임에도 화면 안 깨짐.</p>
+
+<div class="pagebreak"></div>
+<h2><span class="num">6</span>예상 질문 &amp; 답변</h2>
+<div class="qa"><div class="q">추천은 어떤 기준인가요?</div><div class="a">위치 반경·1인 예산·멤버 알레르기/취향·최근 식사 이력(중복 회피)을 종합한 점수 기반입니다.</div></div>
+<div class="qa"><div class="q">실시간 동기화는 소켓인가요?</div><div class="a">안정성을 위해 WebSocket 대신 3초 폴링 + HTTP 304(변경 없으면 본문 미전송)를 씁니다.</div></div>
+<div class="qa"><div class="q">결제는 진짜 돈이 나가나요?</div><div class="a">아니요. 토스 테스트 키라 UI는 실제와 같지만 실결제는 안 됩니다.</div></div>
+<div class="qa"><div class="q">식당 데이터는 직접 입력했나요?</div><div class="a">카카오+네이버 크롤로 실제 식당·메뉴·평점 수집, 없는 지역은 Gemini AI·카테고리 폴백.</div></div>
+<div class="qa"><div class="q">손님앱·사장앱이 따로인가요?</div><div class="a">단일 앱에서 role(CUSTOMER/OWNER) 분기. POS(LSPOS)만 매장 단말용 별도 앱입니다.</div></div>
+<div class="qa"><div class="q">폰 2대 동시 시연은?</div><div class="a">같은 카카오 계정은 role이 양쪽에 영향 → 시연용 시드 로그인으로 한쪽을 다른 계정(사장)으로 분리.</div></div>
+<div class="qa"><div class="q">네트워크가 끊기면?</div><div class="a">자동 재시도로 복구합니다. 그래서 개인 핫스팟 권장, 토너먼트는 통신오류와 "후보 없음"을 구분 표시.</div></div>
+<div class="qa"><div class="q">보안은?</div><div class="a">NestJS가 모든 권한 검증(JWT·본인 주문만·POS는 자기 매장만·초대코드 8자리+24h). Supabase는 백엔드로만 접근.</div></div>
+
+<h2><span class="num">7</span>트러블슈팅</h2>
+<table>
+<tr><th>증상</th><th>원인</th><th>대응</th></tr>
+<tr><td>"후보가 부족해요 / 0개"</td><td>네트워크 일시 끊김</td><td>"다시 시도" 탭(자동 재시도) — 핫스팟 신호 확인</td></tr>
+<tr><td>홈에 식당이 안 뜸</td><td>위치 권한 / 응답 지연</td><td>위치 권한 허용, 잠시 대기</td></tr>
+<tr><td>로그인 안 됨</td><td>카카오 redirect / 네트워크</td><td>시드 로그인으로 우회</td></tr>
+<tr><td>주문 상태 안 바뀜</td><td>사장 미처리</td><td>사장앱/POS에서 상태 진행</td></tr>
+</table>
+<div class="box warn"><div class="t">📌 발표 마무리 멘트 예시</div>
+"LunchSync는 점심 결정의 피로를 함께하는 재미로 바꾸고, 결정부터 주문·픽업까지 한 흐름으로 끝내는
+팀 점심 플랫폼입니다. 손님·사장·POS 세 축이 실시간으로 연결됩니다."</div>
+
+<p class="small" style="text-align:center;margin-top:22px;color:#B89A7C;">🍱 LunchSync 시연 가이드 · 손님앱 / 사장앱 / POS</p>
+
+</body>
+</html>

@@ -1,0 +1,310 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LunchSync — 점심, 같이 정해요</title>
+<style>
+  :root{
+    --cream:#FBF3E8; --cream2:#FFF9F2; --ink:#241A12; --ink2:#5A4A3C;
+    --orange:#FF6A2B; --orange-d:#E8590C; --amber:#F2A900; --tomato:#E63A4A;
+    --line:#E8D6C0; --card:#FFFFFF;
+    --shadow:0 18px 40px -18px rgba(120,60,10,.35);
+    --shadow-sm:0 8px 22px -12px rgba(120,60,10,.3);
+    --serif:Georgia,'Times New Roman',serif;
+    --sans:'Pretendard','Malgun Gothic','Apple SD Gothic Neo',sans-serif;
+  }
+  *{box-sizing:border-box;margin:0;padding:0;}
+  html{scroll-behavior:smooth;}
+  body{
+    font-family:var(--sans); color:var(--ink); background:var(--cream);
+    line-height:1.6; overflow-x:hidden;
+    -webkit-font-smoothing:antialiased;
+  }
+  /* grain overlay */
+  body::before{
+    content:""; position:fixed; inset:0; z-index:9999; pointer-events:none; opacity:.04;
+    background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+  }
+  .wrap{max-width:1160px;margin:0 auto;padding:0 28px;}
+  a{color:inherit;text-decoration:none;}
+
+  /* ── nav ── */
+  nav{
+    position:sticky;top:0;z-index:100;backdrop-filter:blur(12px);
+    background:rgba(251,243,232,.82);border-bottom:1px solid var(--line);
+  }
+  .nav-in{display:flex;align-items:center;justify-content:space-between;height:66px;}
+  .logo{font-weight:900;font-size:21px;letter-spacing:-.5px;display:flex;align-items:center;gap:8px;}
+  .logo .dot{color:var(--orange);}
+  .nav-links{display:flex;gap:30px;font-size:14.5px;font-weight:600;color:var(--ink2);}
+  .nav-links a:hover{color:var(--orange-d);}
+  .nav-cta{background:var(--ink);color:var(--cream);padding:9px 18px;border-radius:999px;font-weight:700;font-size:14px;transition:.2s;}
+  .nav-cta:hover{background:var(--orange-d);transform:translateY(-1px);}
+  @media(max-width:760px){.nav-links{display:none;}}
+
+  /* ── hero ── */
+  .hero{position:relative;padding:90px 0 70px;overflow:hidden;}
+  .blob{position:absolute;border-radius:50%;filter:blur(8px);opacity:.5;z-index:0;}
+  .blob.b1{width:420px;height:420px;background:radial-gradient(circle at 30% 30%,#FFD9A0,#FF8A4C);top:-120px;right:-80px;opacity:.45;}
+  .blob.b2{width:300px;height:300px;background:radial-gradient(circle at 40% 40%,#FFB38A,#FF6A2B);bottom:-100px;left:-60px;opacity:.28;}
+  .hero-in{position:relative;z-index:2;display:grid;grid-template-columns:1.15fr .85fr;gap:40px;align-items:center;}
+  @media(max-width:880px){.hero-in{grid-template-columns:1fr;}}
+  .eyebrow{
+    display:inline-flex;align-items:center;gap:8px;background:#fff;border:1px solid var(--line);
+    color:var(--orange-d);font-weight:800;font-size:13px;padding:7px 15px;border-radius:999px;
+    box-shadow:var(--shadow-sm);margin-bottom:22px;
+    animation:rise .7s both;
+  }
+  h1.title{
+    font-weight:900;font-size:clamp(44px,7vw,80px);line-height:.98;letter-spacing:-2.5px;
+    margin-bottom:22px;
+  }
+  h1.title .hl{
+    background:linear-gradient(120deg,var(--orange),var(--amber));
+    -webkit-background-clip:text;background-clip:text;color:transparent;
+    position:relative;
+  }
+  .title .l1{animation:rise .7s .05s both;display:block;}
+  .title .l2{animation:rise .7s .15s both;display:block;}
+  .lead{font-size:19px;color:var(--ink2);max-width:480px;margin-bottom:32px;animation:rise .7s .25s both;}
+  .lead b{color:var(--ink);font-weight:800;}
+  .cta-row{display:flex;gap:14px;flex-wrap:wrap;animation:rise .7s .35s both;}
+  .btn{padding:15px 26px;border-radius:14px;font-weight:800;font-size:15.5px;transition:.22s;cursor:pointer;border:none;}
+  .btn-p{background:var(--orange);color:#fff;box-shadow:0 12px 26px -10px var(--orange);}
+  .btn-p:hover{background:var(--orange-d);transform:translateY(-2px);}
+  .btn-s{background:#fff;color:var(--ink);border:1.5px solid var(--line);}
+  .btn-s:hover{border-color:var(--orange);color:var(--orange-d);}
+
+  /* phone mock */
+  .phone-stage{position:relative;display:flex;justify-content:center;animation:rise .8s .3s both;}
+  .phone{
+    width:268px;height:548px;background:var(--ink);border-radius:42px;padding:11px;
+    box-shadow:var(--shadow),0 0 0 2px rgba(0,0,0,.05);position:relative;z-index:2;
+  }
+  .screen{width:100%;height:100%;background:linear-gradient(170deg,#FFF1E4,#fff 40%);border-radius:32px;overflow:hidden;position:relative;}
+  .s-head{background:linear-gradient(120deg,var(--orange),var(--amber));padding:26px 20px 30px;color:#fff;}
+  .s-head .hi{font-size:13px;opacity:.9;}
+  .s-head .q{font-size:23px;font-weight:900;margin-top:4px;letter-spacing:-.5px;}
+  .s-actions{display:flex;gap:10px;padding:18px;}
+  .s-pill{flex:1;background:#fff;border:1px solid var(--line);border-radius:14px;padding:12px 6px;text-align:center;box-shadow:var(--shadow-sm);}
+  .s-pill .e{font-size:22px;}
+  .s-pill .t{font-size:10.5px;font-weight:700;color:var(--ink2);margin-top:5px;}
+  .s-card{margin:4px 18px;background:#fff;border:1px solid var(--line);border-radius:16px;padding:14px;box-shadow:var(--shadow-sm);}
+  .s-card .badge{display:inline-block;background:#E9F9EE;color:#1A9E4B;font-size:10px;font-weight:800;padding:3px 9px;border-radius:999px;}
+  .s-card .nm{font-weight:800;margin-top:8px;font-size:15px;}
+  .s-card .mt{font-size:11px;color:var(--ink2);margin-top:2px;}
+  .s-btn{margin:10px 18px 0;background:var(--orange);color:#fff;text-align:center;padding:12px;border-radius:13px;font-weight:800;font-size:13px;}
+  .float{position:absolute;font-size:34px;z-index:3;filter:drop-shadow(0 8px 14px rgba(120,60,10,.25));}
+  .float.f1{top:8px;left:-6px;animation:bob 3.4s ease-in-out infinite;}
+  .float.f2{bottom:70px;right:-12px;animation:bob 3s ease-in-out .5s infinite;}
+  .float.f3{top:180px;right:-22px;animation:bob 3.8s ease-in-out .2s infinite;}
+
+  @keyframes rise{from{opacity:0;transform:translateY(22px);}to{opacity:1;transform:none;}}
+  @keyframes bob{0%,100%{transform:translateY(0) rotate(-4deg);}50%{transform:translateY(-12px) rotate(4deg);}}
+
+  /* ── strip ── */
+  .strip{background:var(--ink);color:var(--cream);padding:20px 0;overflow:hidden;}
+  .strip-in{display:flex;gap:48px;font-weight:800;font-size:15px;white-space:nowrap;animation:marq 22s linear infinite;}
+  .strip-in span{display:flex;align-items:center;gap:10px;opacity:.92;}
+  .strip-in .o{color:var(--amber);}
+  @keyframes marq{from{transform:translateX(0);}to{transform:translateX(-50%);}}
+
+  /* ── sections ── */
+  section{padding:88px 0;}
+  .sec-tag{font-weight:900;color:var(--orange-d);font-size:14px;letter-spacing:1px;text-transform:uppercase;margin-bottom:12px;}
+  .sec-h{font-size:clamp(30px,4.5vw,46px);font-weight:900;letter-spacing:-1.5px;line-height:1.08;margin-bottom:18px;}
+  .sec-sub{font-size:17px;color:var(--ink2);max-width:560px;}
+
+  /* problem */
+  .problem{background:linear-gradient(180deg,var(--cream),#fff);}
+  .prob-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px;margin-top:46px;}
+  @media(max-width:760px){.prob-grid{grid-template-columns:1fr;}}
+  .prob-card{background:#fff;border:1px solid var(--line);border-radius:20px;padding:28px;box-shadow:var(--shadow-sm);}
+  .prob-card .e{font-size:38px;}
+  .prob-card h3{font-size:19px;font-weight:800;margin:14px 0 8px;}
+  .prob-card p{color:var(--ink2);font-size:14.5px;}
+
+  /* features */
+  .feat-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:50px;}
+  @media(max-width:880px){.feat-grid{grid-template-columns:repeat(2,1fr);}}
+  @media(max-width:560px){.feat-grid{grid-template-columns:1fr;}}
+  .feat{
+    position:relative;background:var(--card);border:1px solid var(--line);border-radius:22px;padding:26px;
+    box-shadow:var(--shadow-sm);transition:.28s;overflow:hidden;
+  }
+  .feat::after{content:"";position:absolute;inset:0;background:linear-gradient(135deg,transparent 60%,rgba(255,106,43,.07));opacity:0;transition:.28s;}
+  .feat:hover{transform:translateY(-6px);box-shadow:var(--shadow);border-color:#FFC79E;}
+  .feat:hover::after{opacity:1;}
+  .feat .ic{width:54px;height:54px;border-radius:16px;display:flex;align-items:center;justify-content:center;font-size:27px;background:linear-gradient(135deg,#FFE3CC,#FFD0A8);}
+  .feat h3{font-size:18.5px;font-weight:800;margin:16px 0 8px;}
+  .feat p{color:var(--ink2);font-size:14px;}
+  .feat .n{position:absolute;top:20px;right:22px;font-family:var(--serif);font-style:italic;font-size:30px;color:#F0DFC9;font-weight:700;}
+
+  /* flows */
+  .flows{background:var(--ink);color:var(--cream);}
+  .flows .sec-tag{color:var(--amber);}
+  .flows .sec-h{color:#fff;}
+  .flow-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:22px;margin-top:50px;}
+  @media(max-width:880px){.flow-grid{grid-template-columns:1fr;}}
+  .flow{background:rgba(255,255,255,.05);border:1px solid rgba(255,255,255,.12);border-radius:22px;padding:28px;backdrop-filter:blur(4px);}
+  .flow .tag{display:inline-block;background:var(--orange);color:#fff;font-weight:800;font-size:12px;padding:5px 13px;border-radius:999px;}
+  .flow h3{font-size:21px;font-weight:900;margin:16px 0 14px;}
+  .flow ol{list-style:none;counter-reset:s;}
+  .flow li{counter-increment:s;padding:9px 0 9px 38px;position:relative;font-size:14.5px;color:#E9DDCF;border-top:1px solid rgba(255,255,255,.08);}
+  .flow li:first-child{border-top:none;}
+  .flow li::before{content:counter(s);position:absolute;left:0;top:8px;width:26px;height:26px;background:rgba(242,169,0,.18);color:var(--amber);border-radius:50%;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:12.5px;}
+
+  /* stats */
+  .stats{background:linear-gradient(120deg,var(--orange),var(--amber));color:#fff;}
+  .stat-grid{display:grid;grid-template-columns:repeat(4,1fr);gap:20px;}
+  @media(max-width:760px){.stat-grid{grid-template-columns:repeat(2,1fr);}}
+  .stat{text-align:center;padding:14px;}
+  .stat .num{font-size:clamp(38px,6vw,58px);font-weight:900;letter-spacing:-2px;line-height:1;}
+  .stat .lab{font-size:14px;font-weight:600;opacity:.92;margin-top:8px;}
+
+  /* tech */
+  .tech-grid{display:flex;flex-wrap:wrap;gap:14px;margin-top:40px;}
+  .chip{background:#fff;border:1px solid var(--line);border-radius:14px;padding:14px 20px;font-weight:700;display:flex;align-items:center;gap:10px;box-shadow:var(--shadow-sm);font-size:15px;}
+  .chip .e{font-size:20px;}
+  .chip small{color:var(--ink2);font-weight:600;font-size:12px;}
+
+  /* cta */
+  .final{text-align:center;background:linear-gradient(180deg,#fff,var(--cream));}
+  .final h2{font-size:clamp(32px,5vw,52px);font-weight:900;letter-spacing:-1.5px;margin-bottom:18px;}
+  .final p{font-size:18px;color:var(--ink2);margin-bottom:30px;}
+
+  footer{background:var(--ink);color:#C9B8A6;padding:46px 0;font-size:14px;}
+  .foot-in{display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:16px;}
+  .foot-in .logo{color:var(--cream);}
+  .reveal{opacity:0;transform:translateY(28px);transition:.7s cubic-bezier(.2,.7,.3,1);}
+  .reveal.in{opacity:1;transform:none;}
+</style>
+</head>
+<body>
+
+<nav><div class="wrap nav-in">
+  <div class="logo">🍱 Lunch<span class="dot">Sync</span></div>
+  <div class="nav-links">
+    <a href="#problem">왜?</a><a href="#features">기능</a><a href="#flows">작동방식</a><a href="#tech">기술</a>
+  </div>
+  <a href="#final" class="nav-cta">시연 보기</a>
+</div></nav>
+
+<header class="hero">
+  <div class="blob b1"></div><div class="blob b2"></div>
+  <div class="wrap hero-in">
+    <div>
+      <span class="eyebrow">🥢 팀 점심 결정 · 주문 통합 플랫폼</span>
+      <h1 class="title"><span class="l1">점심 뭐 먹지,</span><span class="l2 hl">이제 같이 정해요.</span></h1>
+      <p class="lead"><b>AI 추천부터 투표·이상형 월드컵</b>으로 팀이 함께 식당을 정하고,
+        앱에서 <b>주문·결제·픽업 추적</b>까지 한 번에. 더치페이 계산은 덤이에요.</p>
+      <div class="cta-row">
+        <button class="btn btn-p" onclick="location.href='#features'">기능 둘러보기</button>
+        <button class="btn btn-s" onclick="location.href='#flows'">작동 방식 보기</button>
+      </div>
+    </div>
+    <div class="phone-stage">
+      <div class="float f1">🍜</div><div class="float f2">🍙</div><div class="float f3">🍗</div>
+      <div class="phone"><div class="screen">
+        <div class="s-head"><div class="hi">안녕하세요, 현호님 👋</div><div class="q">오늘 점심은<br>어디로?</div></div>
+        <div class="s-actions">
+          <div class="s-pill"><div class="e">➕</div><div class="t">점심 만들기</div></div>
+          <div class="s-pill"><div class="e">🗳️</div><div class="t">투표</div></div>
+          <div class="s-pill"><div class="e">🏆</div><div class="t">토너먼트</div></div>
+        </div>
+        <div class="s-card"><span class="badge">AI 추천</span><div class="nm">무궁화반점 강남점</div><div class="mt">중식 · 도보 4분 · ₩9,500</div></div>
+        <div class="s-btn">이 식당으로 결정하기</div>
+      </div></div>
+    </div>
+  </div>
+</header>
+
+<div class="strip"><div class="strip-in">
+  <span>🤝 함께 결정</span><span class="o">●</span><span>🤖 AI 추천</span><span class="o">●</span>
+  <span>🏆 이상형 월드컵</span><span class="o">●</span><span>💳 바로 주문·결제</span><span class="o">●</span>
+  <span>📍 실시간 픽업 추적</span><span class="o">●</span><span>🧮 더치페이 자동계산</span><span class="o">●</span>
+  <span>🤝 함께 결정</span><span class="o">●</span><span>🤖 AI 추천</span><span class="o">●</span>
+  <span>🏆 이상형 월드컵</span><span class="o">●</span><span>💳 바로 주문·결제</span><span class="o">●</span>
+  <span>📍 실시간 픽업 추적</span><span class="o">●</span><span>🧮 더치페이 자동계산</span><span class="o">●</span>
+</div></div>
+
+<section id="problem" class="problem"><div class="wrap">
+  <div class="reveal"><div class="sec-tag">The Problem</div>
+  <h2 class="sec-h">매일 반복되는<br>"점심 뭐 먹지?" 의 피로</h2>
+  <p class="sec-sub">선택은 어렵고, 의견은 갈리고, 주문은 또 따로. LunchSync는 이 세 가지를 한 번에 풀어요.</p></div>
+  <div class="prob-grid">
+    <div class="prob-card reveal"><div class="e">😵‍💫</div><h3>결정 피로</h3><p>"아무거나"의 무한 루프. 누가 정해도 누군가는 아쉬운 점심.</p></div>
+    <div class="prob-card reveal"><div class="e">🗣️</div><h3>의견 취합의 번거로움</h3><p>단톡방에서 메뉴 투표하고, 취합하고, 또 까먹고. 매번 수동.</p></div>
+    <div class="prob-card reveal"><div class="e">🧾</div><h3>흩어진 주문·정산</h3><p>식당 정하면 주문은 또 따로. 더치페이 계산은 늘 머리 아픔.</p></div>
+  </div>
+</div></section>
+
+<section id="features"><div class="wrap">
+  <div class="reveal"><div class="sec-tag">Core Features</div>
+  <h2 class="sec-h">결정부터 픽업까지,<br>끊김 없는 한 흐름</h2>
+  <p class="sec-sub">팀 점심에 필요한 모든 단계를 하나의 앱에서. 재미있게 정하고, 빠르게 받아요.</p></div>
+  <div class="feat-grid">
+    <div class="feat reveal"><span class="n">01</span><div class="ic">🤖</div><h3>AI 맞춤 추천</h3><p>위치·예산·알레르기·최근 식사 이력까지 반영한 점수 기반 식당 추천.</p></div>
+    <div class="feat reveal"><span class="n">02</span><div class="ic">🏆</div><h3>이상형 월드컵</h3><p>8강→4강→결승, 둘 중 하나 탭으로 즐겁게 메뉴·식당 결정.</p></div>
+    <div class="feat reveal"><span class="n">03</span><div class="ic">🗳️</div><h3>실시간 투표·룰렛</h3><p>멤버 투표 집계, 룰렛·사다리로 즉석 결정도 가능.</p></div>
+    <div class="feat reveal"><span class="n">04</span><div class="ic">💳</div><h3>바로 주문·결제</h3><p>결정된 식당 메뉴를 담아 토스페이먼츠로 결제까지 앱 안에서.</p></div>
+    <div class="feat reveal"><span class="n">05</span><div class="ic">📍</div><h3>실시간 픽업 추적</h3><p>준비중→픽업가능→완료, 3초 폴링 + 예상 시간 + 사장님 음식 사진.</p></div>
+    <div class="feat reveal"><span class="n">06</span><div class="ic">🧮</div><h3>더치페이 자동계산</h3><p>인원수로 1인당 금액 자동 계산, 카톡으로 바로 공유.</p></div>
+  </div>
+</div></section>
+
+<section id="flows" class="flows"><div class="wrap">
+  <div class="reveal"><div class="sec-tag">How it works</div>
+  <h2 class="sec-h">손님 · 사장 · POS,<br>세 축이 실시간으로</h2>
+  <p class="sec-sub" style="color:#D9C9B8">하나의 점심이 만들어지는 전체 흐름. 모두 같은 데이터로 연결됩니다.</p></div>
+  <div class="flow-grid">
+    <div class="flow reveal"><span class="tag">🙋 손님</span><h3>정하고, 주문하고, 받기</h3>
+      <ol><li>세션 만들고 팀원 초대</li><li>AI 추천·투표·토너먼트로 결정</li><li>메뉴 담아 결제</li><li>픽업 상태 실시간 확인 + 별점</li></ol></div>
+    <div class="flow reveal"><span class="tag">🧑‍🍳 사장</span><h3>주문 받고, 관리하기</h3>
+      <ol><li>들어온 주문 실시간 확인</li><li>준비중→픽업가능→완료 처리</li><li>음식 사진·오늘의 한 줄 전송</li><li>매출·단골 통계 확인</li></ol></div>
+    <div class="flow reveal"><span class="tag">🖥️ POS</span><h3>매장 현장 운영</h3>
+      <ol><li>좌석·예약·대기 관리</li><li>주문 접수·상태 동기화</li><li>결제·환불 처리</li><li>본사 데이터와 실시간 연결</li></ol></div>
+  </div>
+</div></section>
+
+<section class="stats"><div class="wrap"><div class="stat-grid">
+  <div class="stat reveal"><div class="num">3</div><div class="lab">앱 흐름 (손님·사장·POS)</div></div>
+  <div class="stat reveal"><div class="num">13</div><div class="lab">연동 API 서비스</div></div>
+  <div class="stat reveal"><div class="num">3초</div><div class="lab">실시간 폴링 주기</div></div>
+  <div class="stat reveal"><div class="num">0원</div><div class="lab">테스트 결제 (실결제 X)</div></div>
+</div></div></section>
+
+<section id="tech"><div class="wrap">
+  <div class="reveal"><div class="sec-tag">Tech Stack</div>
+  <h2 class="sec-h">탄탄한 풀스택 구성</h2>
+  <p class="sec-sub">Flutter 단일 앱(role 분기) + NestJS 단일 문지기 + Supabase. 외부 데이터는 크롤 + AI 폴백.</p></div>
+  <div class="tech-grid">
+    <div class="chip reveal"><span class="e">📱</span>Flutter <small>+ Riverpod</small></div>
+    <div class="chip reveal"><span class="e">⚙️</span>NestJS <small>TypeScript</small></div>
+    <div class="chip reveal"><span class="e">🗄️</span>Supabase <small>PostgreSQL</small></div>
+    <div class="chip reveal"><span class="e">💬</span>Kakao <small>로그인</small></div>
+    <div class="chip reveal"><span class="e">💳</span>Toss Payments <small>위젯 v2</small></div>
+    <div class="chip reveal"><span class="e">☁️</span>AWS EC2 <small>배포</small></div>
+    <div class="chip reveal"><span class="e">🤖</span>Gemini <small>메뉴 폴백</small></div>
+    <div class="chip reveal"><span class="e">🔔</span>FCM <small>푸시</small></div>
+  </div>
+</div></section>
+
+<section id="final" class="final"><div class="wrap reveal">
+  <h2>점심 결정의 피로를<br>함께하는 재미로.</h2>
+  <p>LunchSync — 정하고, 주문하고, 받는 것까지 한 흐름으로.</p>
+  <button class="btn btn-p" onclick="location.href='#features'">🍱 다시 둘러보기</button>
+</div></section>
+
+<footer><div class="wrap foot-in">
+  <div class="logo">🍱 Lunch<span style="color:var(--orange)">Sync</span></div>
+  <div>캡스톤 프로젝트 · 팀 점심 결정·주문 통합 플랫폼</div>
+</div></footer>
+
+<script>
+  const io=new IntersectionObserver((es)=>{es.forEach((e,i)=>{if(e.isIntersecting){setTimeout(()=>e.target.classList.add('in'),(i%3)*90);io.unobserve(e.target);}})},{threshold:.15});
+  document.querySelectorAll('.reveal').forEach(el=>io.observe(el));
+</script>
+</body>
+</html>
