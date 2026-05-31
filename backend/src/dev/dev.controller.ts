@@ -39,8 +39,17 @@ import { SupabaseService } from '../supabase/supabase.service';
 // 시드 사용자(이메일 가입형)의 JWT 를 즉시 발급해서 web 만 다른 계정으로 띄울 수
 // 있게 한다. 운영용 가드 동일 — DEV_PROMOTE_ENABLED=true 일 때만 활성.
 class LoginAsSeedDto {
+  // 2026-05-31 fix: 실제 DB 시드 5명(minjun/jihyo/dayeon/taehwan/seoyeon)과 일치.
+  // hyunho_owner 는 카카오 가입자라 별도 이메일이 없어 제외 — 시연 사장은
+  // dev/promote-to-owner 로 직접 토글하는 방법 안내.
   @IsString()
-  @IsIn(['hyunho_owner', 'yongjae_customer', 'minjun_customer', 'jihyo_customer'])
+  @IsIn([
+    'minjun_customer',
+    'jihyo_customer',
+    'dayeon_customer',
+    'taehwan_customer',
+    'seoyeon_customer',
+  ])
   seedKey!: string;
 }
 
@@ -52,12 +61,13 @@ class PromoteToOwnerDto {
   @IsOptional() @IsString() role?: 'OWNER' | 'CUSTOMER';
 }
 
-// 시연용 시드 사용자 매핑 (이메일은 시드 데이터와 일치해야 함)
+// 시연용 시드 사용자 매핑 (이메일은 실제 DB 시드 데이터와 1:1 일치)
 const SEED_USER_MAP: Record<string, { email: string; expectedRole: 'OWNER' | 'CUSTOMER' }> = {
-  hyunho_owner: { email: 'hyunho@lunchsync.app', expectedRole: 'OWNER' },
-  yongjae_customer: { email: 'demo.yongjae@lunchsync.test', expectedRole: 'CUSTOMER' },
   minjun_customer: { email: 'demo.minjun@lunchsync.test', expectedRole: 'CUSTOMER' },
   jihyo_customer: { email: 'demo.jihyo@lunchsync.test', expectedRole: 'CUSTOMER' },
+  dayeon_customer: { email: 'demo.dayeon@lunchsync.test', expectedRole: 'CUSTOMER' },
+  taehwan_customer: { email: 'demo.taehwan@lunchsync.test', expectedRole: 'CUSTOMER' },
+  seoyeon_customer: { email: 'demo.seoyeon@lunchsync.test', expectedRole: 'CUSTOMER' },
 };
 
 @Controller('dev')

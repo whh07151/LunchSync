@@ -250,18 +250,6 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
               ),
               const Divider(height: 1),
               ListTile(
-                leading: const Icon(Icons.storefront, color: Colors.orange),
-                title: const Text('우현호 (사장 · 오로라)'),
-                subtitle: const Text('hyunho_owner'),
-                onTap: () => Navigator.pop(ctx, 'hyunho_owner'),
-              ),
-              ListTile(
-                leading: const Icon(Icons.person_outline, color: Colors.blue),
-                title: const Text('이용재 (손님)'),
-                subtitle: const Text('yongjae_customer'),
-                onTap: () => Navigator.pop(ctx, 'yongjae_customer'),
-              ),
-              ListTile(
                 leading: const Icon(Icons.person_outline, color: Colors.blue),
                 title: const Text('김민준 (손님)'),
                 subtitle: const Text('minjun_customer'),
@@ -272,6 +260,31 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
                 title: const Text('박지효 (손님)'),
                 subtitle: const Text('jihyo_customer'),
                 onTap: () => Navigator.pop(ctx, 'jihyo_customer'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_outline, color: Colors.blue),
+                title: const Text('이다연 (손님)'),
+                subtitle: const Text('dayeon_customer'),
+                onTap: () => Navigator.pop(ctx, 'dayeon_customer'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_outline, color: Colors.blue),
+                title: const Text('안태환 (손님)'),
+                subtitle: const Text('taehwan_customer'),
+                onTap: () => Navigator.pop(ctx, 'taehwan_customer'),
+              ),
+              ListTile(
+                leading: const Icon(Icons.person_outline, color: Colors.blue),
+                title: const Text('최서연 (손님)'),
+                subtitle: const Text('seoyeon_customer'),
+                onTap: () => Navigator.pop(ctx, 'seoyeon_customer'),
+              ),
+              const Padding(
+                padding: EdgeInsets.fromLTRB(16, 8, 16, 4),
+                child: Text(
+                  '💡 사장 시연은 카카오 로그인 후 dev/promote-to-owner 사용',
+                  style: TextStyle(fontSize: 11, color: Colors.grey),
+                ),
               ),
               const SizedBox(height: 8),
             ],
