@@ -1,12 +1,12 @@
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 미니게임 결정 화면의 "사다리 게임" 위젯
 //
-// 동작 방식:
-//   1. 후보 N개를 사다리 윗줄에 배치(예: ① ② ③ ④)
-//   2. 아래줄에는 ❌ N-1개 + ✅ 1개 가 무작위 위치에 배치됨
-//   3. 사용자가 윗줄에서 한 칸을 탭하면, 사다리 가로선을 따라 내려가는
-//      경로가 애니메이션으로 그려지고, 도달한 아래줄 칸이 결과가 됨
-//   4. ✅ 칸에 도달한 윗줄 후보의 인덱스가 winner → 부모에게 통보
+// 동작 방식(선택 존중형):
+//   1. 후보 N개를 사다리 윗줄·아랫줄에 동일 순서로 배치
+//   2. 사용자가 윗줄에서 한 칸(식당)을 탭하면, 사다리 가로선을 따라
+//      내려가는 경로가 애니메이션으로 그려짐
+//   3. 도달한 아랫줄 칸의 식당이 곧 당첨 → 그 인덱스를 부모에게 통보
+//      (어느 칸을 고르느냐에 따라 결과가 달라짐 = 사용자 선택이 반영됨)
 //
 // 왜 간단하게 구현?
 //   - 시연 시 5초 안에 결과가 나와야 임팩트가 좋음
@@ -78,8 +78,8 @@ class _LadderGameState extends State<LadderGame>
   // 최소 6 ~ 최대 9 사이로 고정
   static const int _rowCount = 8;
 
-  // 당첨 위치(아래줄에서 ✅ 가 있는 열 인덱스)
-  int _winnerColumn = 0;
+  // 추적이 끝나 도달한 아랫줄 열 인덱스(-1: 아직 미도달) — 결과 강조용
+  int _landedColumn = -1;
 
   // 사용자가 선택한 윗줄 열 인덱스 (-1: 미선택)
   int _selectedColumn = -1;
@@ -155,7 +155,6 @@ class _LadderGameState extends State<LadderGame>
       rungs.add(row);
     }
     _rungs = rungs;
-    _winnerColumn = _random.nextInt(n); // ✅ 위치 무작위
   }
 
   void _reset() {
@@ -163,6 +162,7 @@ class _LadderGameState extends State<LadderGame>
     setState(() {
       _generateBoard();
       _selectedColumn = -1;
+      _landedColumn = -1;
       _path = const [];
       _isFinished = false;
     });
@@ -194,13 +194,16 @@ class _LadderGameState extends State<LadderGame>
       // 현재 행에서 좌/우 가로선 확인
       final hasLeftRung = col > 0 && _rungs[row].contains(col - 1);
       final hasRightRung = _rungs[row].contains(col);
-      // 가로선이 있으면 가로 이동 후 아래로 내려감
+      // 가로선이 있으면 기둥을 타고 가로선 높이까지 내려온 뒤 옆으로 건넌다.
+      // (세로→가로→세로의 ㄴ자 경로로 그려야 빨간 추적선이 실제 기둥/가로선
+      //  위에 정확히 겹친다. 대각선으로 그리면 격자와 어긋나 보임.)
       if (hasRightRung) {
-        // 같은 행에서 오른쪽으로 가로 이동
-        points.add(Offset(col + 1.0, row + 0.5));
+        points.add(Offset(col.toDouble(), row + 0.5)); // 가로선 높이까지 하강
+        points.add(Offset(col + 1.0, row + 0.5)); // 오른쪽으로 건넘
         col += 1;
       } else if (hasLeftRung) {
-        points.add(Offset(col - 1.0, row + 0.5));
+        points.add(Offset(col.toDouble(), row + 0.5));
+        points.add(Offset(col - 1.0, row + 0.5)); // 왼쪽으로 건넘
         col -= 1;
       }
       // 다음 행 끝까지 내려옴
@@ -212,34 +215,17 @@ class _LadderGameState extends State<LadderGame>
   void _handleTraceStatus(AnimationStatus status) {
     if (status != AnimationStatus.completed) return;
     if (_path.isEmpty) return;
+    // 사용자가 고른 윗줄에서 출발해 사다리를 타고 도달한 아랫줄 열이 곧 결과.
+    // 어느 칸을 고르느냐에 따라 종착 열이 달라지므로 사용자의 선택이 반영된다.
     final lastCol = _path.last.dx.round();
-    final isWinner = lastCol == _winnerColumn;
-    setState(() => _isFinished = true);
-    // 부모(DecideScreen)에는 윗줄 인덱스(=사용자가 고른 열) 와
-    // 결과(당첨 여부)를 함께 보내야 사다리 특성을 살릴 수 있지만,
-    // 캡스톤 시연용 단순화를 위해 "당첨자 윗줄 인덱스" 만 통보:
-    //   - ✅ 도달한 윗줄 열 = winnerColumn 으로 도달한 윗줄(역추적)
-    // 다만 사다리는 1:1 매핑이므로, ✅ 칸에 도달하는 윗줄은 단 하나.
-    // 시연 흐름: 사용자가 직접 골랐을 때 도달한 열이 ✅ 면 그 사람의 식당이,
-    //          ❌ 면 ✅ 가 있던 컬럼 인덱스 가 당첨 식당.
-    // → 어느 쪽이든 결국 "✅ 가 가리키는 윗줄 후보" 를 결과로 통보합니다.
-    final winnerTopIndex = _findTopIndexForBottom(_winnerColumn);
-    widget.onResult(winnerTopIndex);
-    // (isWinner 값은 향후 UX 분기에 사용할 수 있도록 보존)
-    debugPrint('[LadderGame] picked=$_selectedColumn '
-        'reached=$lastCol winner=$isWinner');
-  }
-
-  // 아래줄의 특정 열(bottomCol) 에 도달하는 윗줄 시작 열을 역으로 찾는 헬퍼
-  //
-  // 사다리는 1:1 매핑이므로 모든 윗줄 열에 대해 _computePath 를 돌려
-  // 종착지가 bottomCol 인 시작 열을 찾으면 됩니다.
-  int _findTopIndexForBottom(int bottomCol) {
-    for (var c = 0; c < widget.labels.length; c++) {
-      final p = _computePath(c);
-      if (p.last.dx.round() == bottomCol) return c;
-    }
-    return 0;
+    setState(() {
+      _isFinished = true;
+      _landedColumn = lastCol;
+    });
+    // 윗줄·아랫줄을 같은 순서로 배치했으므로 도달한 열 인덱스가 곧
+    // 당첨 식당 인덱스. 그대로 부모(DecideScreen)에 통보한다.
+    widget.onResult(lastCol);
+    debugPrint('[LadderGame] picked=$_selectedColumn reached=$lastCol');
   }
 
   @override
@@ -259,7 +245,9 @@ class _LadderGameState extends State<LadderGame>
     return Column(
       mainAxisSize: MainAxisSize.min,
       children: [
-        // ── 윗줄: 후보 칩 (탭하여 시작 위치 선택) ─────────────
+        // ── 윗줄: 출발 번호(1,2,3…) 칩 (탭하여 시작 위치 선택) ──
+        // 윗줄은 식당이 아니라 단순 출발 번호. 탭한 번호가 사다리를 타고
+        // 내려가 도달한 아랫줄 식당이 결과가 된다.
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
           child: Row(
@@ -285,7 +273,7 @@ class _LadderGameState extends State<LadderGame>
                   ),
                   alignment: Alignment.center,
                   child: Text(
-                    _shortLabel(widget.labels[i]),
+                    '${i + 1}',
                     style: AppTextStyles.label.copyWith(
                       color: isSelected
                           ? AppColors.background
@@ -316,7 +304,7 @@ class _LadderGameState extends State<LadderGame>
                   columnCount: n,
                   rowCount: _rowCount,
                   rungs: _rungs,
-                  winnerColumn: _winnerColumn,
+                  landedColumn: _isFinished ? _landedColumn : -1,
                   path: _path,
                   progress: t,
                 ),
@@ -326,18 +314,19 @@ class _LadderGameState extends State<LadderGame>
         ),
 
         const SizedBox(height: AppSpacing.sm),
-        // ── 아래줄: ✅ / ❌ 표시 ─────────────────────────────
+        // ── 아래줄: 후보 식당(도달 시 강조) ───────────────────
+        // 윗줄과 동일 순서로 배치 — 추적이 끝나 도달한 칸만 초록으로 강조한다.
         Padding(
           padding: const EdgeInsets.symmetric(horizontal: AppSpacing.md),
           child: Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
             children: List.generate(n, (i) {
-              final isWin = i == _winnerColumn;
+              final isLanded = _isFinished && i == _landedColumn;
               return Container(
                 width: 56,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: isWin
+                  color: isLanded
                       ? AppColors.success
                       : AppColors.disabledBackground,
                   borderRadius:
@@ -345,13 +334,16 @@ class _LadderGameState extends State<LadderGame>
                 ),
                 alignment: Alignment.center,
                 child: Text(
-                  isWin ? '당첨!' : '꽝',
+                  _shortLabel(widget.labels[i]),
                   style: AppTextStyles.label.copyWith(
-                    color: isWin
+                    color: isLanded
                         ? AppColors.background
                         : AppColors.textSecondary,
                     fontWeight: FontWeight.w700,
                   ),
+                  textAlign: TextAlign.center,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
                 ),
               );
             }),
@@ -376,7 +368,7 @@ class _LadderPainter extends CustomPainter {
     required this.columnCount,
     required this.rowCount,
     required this.rungs,
-    required this.winnerColumn,
+    required this.landedColumn,
     required this.path,
     required this.progress,
   });
@@ -384,7 +376,7 @@ class _LadderPainter extends CustomPainter {
   final int columnCount;
   final int rowCount;
   final List<Set<int>> rungs;
-  final int winnerColumn;
+  final int landedColumn; // 도달한 아랫줄 열(-1: 미도달) — 강조용
   final List<Offset> path; // (col, rowFractional) 단위
   final double progress; // 0.0 ~ 1.0
 
@@ -462,17 +454,20 @@ class _LadderPainter extends CustomPainter {
       canvas.drawPath(tracePath, tracePaint);
     }
 
-    // ── 당첨 컬럼 강조(아래줄로 떨어지는 화살표) ──────────
-    final hint = Paint()
-      ..color = AppColors.success
-      ..strokeWidth = 3
-      ..strokeCap = StrokeCap.round;
-    final winnerX = winnerColumn * colSpacing;
-    canvas.drawLine(
-      Offset(winnerX, size.height - 8),
-      Offset(winnerX, size.height),
-      hint,
-    );
+    // ── 도달한 컬럼 강조(아래줄로 떨어지는 표시) ──────────
+    // 추적이 끝나기 전(landedColumn<0)에는 미리 노출하지 않는다.
+    if (landedColumn >= 0) {
+      final hint = Paint()
+        ..color = AppColors.success
+        ..strokeWidth = 3
+        ..strokeCap = StrokeCap.round;
+      final landedX = landedColumn * colSpacing;
+      canvas.drawLine(
+        Offset(landedX, size.height - 8),
+        Offset(landedX, size.height),
+        hint,
+      );
+    }
   }
 
   @override
@@ -480,5 +475,5 @@ class _LadderPainter extends CustomPainter {
       old.progress != progress ||
       old.path != path ||
       old.rungs != rungs ||
-      old.winnerColumn != winnerColumn;
+      old.landedColumn != landedColumn;
 }

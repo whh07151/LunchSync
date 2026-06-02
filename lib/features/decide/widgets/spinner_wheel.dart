@@ -128,9 +128,15 @@ class _SpinnerWheelState extends State<SpinnerWheel>
   // 애니메이션 상태가 "완료" 로 바뀌면 결과 계산 후 부모에게 통보
   void _handleAnimationStatus(AnimationStatus status) {
     if (status != AnimationStatus.completed) return;
+    // 회전이 끝난 시점에 누적 각도를 먼저 확정한다.
+    // (빌더의 _rotation 갱신은 setState 기반이라 다음 프레임에 일어나므로,
+    //  여기서 직접 더해주지 않으면 _computeWinnerIndex 가 이번 회전(_spinDelta)이
+    //  반영되지 않은 "이전 각도"를 읽어 → 휠 그림과 다른 식당이 당첨으로 통보된다.
+    //  첫 회전은 항상 index 0 으로 찍히던 버그의 원인.)
+    _rotation = (_rotation + _spinDelta) % (2 * math.pi);
+    _spinDelta = 0;
     setState(() => _isSpinning = false);
-    final winner = _computeWinnerIndex();
-    widget.onResult(winner);
+    widget.onResult(_computeWinnerIndex());
   }
 
   // 현재 회전각으로부터 상단 화살표가 가리키는 sector index 계산
@@ -188,11 +194,10 @@ class _SpinnerWheelState extends State<SpinnerWheel>
                 builder: (context, _) {
                   // ease-out curve 로 자연스럽게 멈추도록 보간
                   final t = Curves.easeOut.transform(_controller.value);
+                  // 누적값(_rotation) 확정은 _handleAnimationStatus 에서 처리한다.
+                  // 여기서 갱신하면 당첨 계산보다 한 프레임 늦게 반영돼
+                  // 결과가 한 박자 밀리므로 의도적으로 하지 않는다.
                   final currentAngle = _rotation + _spinDelta * t;
-                  // 애니메이션이 끝나는 시점에 누적값 저장
-                  if (_controller.isCompleted) {
-                    _rotation = currentAngle;
-                  }
                   return Transform.rotate(
                     angle: currentAngle,
                     child: CustomPaint(
