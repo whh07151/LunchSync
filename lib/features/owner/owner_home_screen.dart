@@ -1190,6 +1190,11 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
   // ── 상태 전이 규칙 (LSPOS src/lib/utils/status.ts 의 nextStatus 와 동일) ───
   String? _nextStatus(String current) {
     switch (current) {
+      // 2026-06-03: 결제 미완(Toss successUrl 리다이렉트 미완)으로 PENDING 에 갇힌
+      //   주문도 사장이 "주문 수락"하여 바로 조리(PREPARING)에 들어갈 수 있게 한다.
+      //   (수락 = 조리중, 별도 ACCEPTED 단계 없이 단순화)
+      case 'PENDING':
+        return 'PREPARING';
       case 'PAID':
         return 'PREPARING';
       case 'PREPARING':
@@ -1197,7 +1202,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
       case 'READY':
         return 'COMPLETED';
       default:
-        // PENDING(결제 전), COMPLETED(서빙 완료), CANCELLED 는 전이 불가
+        // COMPLETED(서빙 완료), CANCELLED 는 전이 불가
         return null;
     }
   }
@@ -1205,8 +1210,11 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
   /// 다음 단계 버튼에 표시할 라벨 ("조리 시작", "조리 완료", "픽업 완료")
   String _nextStatusLabel(String current) {
     switch (current) {
+      // 2026-06-03: 조리 시작 전(PENDING/PAID) 주문의 다음 액션은 "주문 수락" 으로 표기.
+      //   사장이 들어온 주문을 받아 조리에 들어가는 행위이므로 '수락' 이 직관적이다.
+      case 'PENDING':
       case 'PAID':
-        return '조리 시작';
+        return '주문 수락';
       case 'PREPARING':
         return '조리 완료';
       case 'READY':
@@ -1216,9 +1224,10 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
     }
   }
 
-  /// 취소 가능 여부 — PAID/PREPARING 만 취소 허용 (이미 픽업 완료된 주문은 환불 절차 별도)
+  /// 거절(취소) 가능 여부 — 백엔드 cancelOrder 의 허용 상태(PENDING/PAID)와 일치시킨다.
+  /// (2026-06-03) 조리 시작(PREPARING) 후엔 백엔드가 거절을 막으므로 버튼도 노출하지 않는다.
   bool _isCancellable(String current) {
-    return current == 'PAID' || current == 'PREPARING';
+    return current == 'PENDING' || current == 'PAID';
   }
 
   // ── 주문 상태 라벨/색상 (LSPOS의 STATUS_LABEL 한글 정렬과 동일) ───
