@@ -3,44 +3,102 @@
 import { useMemo, useState } from "react";
 import AppShell from "@/components/AppShell";
 import { useAuth } from "@/lib/hooks/useAuth";
-import { useSales } from "@/lib/hooks/useSales";
+import { useOrders } from "@/lib/hooks/useOrders";
 import { formatPrice } from "@/lib/utils/format";
-import type { PaymentMethod, Sale } from "@/lib/types";
+import type { Order, OrderStatus } from "@/lib/types";
 
-// pos_memo §6-3 — 결제 관리. useSales가 누적한 결제 내역을 시간순 + 수단별 필터.
-type Filter = "ALL" | PaymentMethod;
+// ══════════════════════════════════════════════════════════
+// 파일 역할: 점주/POS "결제 관리" — orders 테이블 기반 실DB 결제 내역
+//
+// 2026-06-03 연동 변경 (localStorage → Supabase):
+//   · 기존엔 useSales(localStorage `ls_pos_sales_*`)의 좌석 결제 시뮬을 보여줬으나,
+//     이제 백엔드 GET /pos/orders/:restaurantId(useOrders, 3초 폴링)의 실제 주문 중
+//     '결제 완료' 상태(PAID/PREPARING/READY/COMPLETED)를 결제 내역으로 집계한다.
+//   · 결제수단은 orders.payment_method(문자열, 출처별로 POS_TOSS/POS_CASH/TOSS/CARD/null
+//     혼재)를 현금/카드 2분류로 정규화(paymentBucket).
+//   → Supabase 가 단일 진실원본. 손님앱·사장앱·POS 어디서 결제·처리해도 동일하게 반영되며,
+//     사장이 Supabase 를 직접 만지지 않아도 POS 화면에 실시간 표시된다.
+//   · dashboard/seats 페이지는 여전히 useSales(좌석 워크인 시뮬)를 사용 — 본 변경과 무관.
+// ══════════════════════════════════════════════════════════
+
+type PayKind = "CARD" | "CASH";
+type Filter = "ALL" | PayKind;
 type DateScope = "TODAY" | "ALL";
+
+// 결제 완료로 간주하는 주문 상태.
+//   PENDING = 결제 전, CANCELLED/REFUNDED = 결제 무효/환불 → 결제 내역에서 제외.
+const PAID_STATUSES = new Set<OrderStatus>([
+  "PAID",
+  "PREPARING",
+  "READY",
+  "COMPLETED",
+]);
+
+// orders.payment_method 문자열 → 현금/카드 2분류.
+//   값이 출처별로 섞여 있어(예: 'POS_CASH', 'CASH', 'POS_TOSS', 'TOSS', 'CARD', null)
+//   'CASH' 포함 여부로만 현금을 판별하고, 나머지는 카드로 본다.
+function paymentBucket(pm?: string | null): PayKind {
+  if (pm && pm.toUpperCase().includes("CASH")) return "CASH";
+  return "CARD";
+}
+
+function isSameDay(iso: string, date: Date): boolean {
+  const d = new Date(iso);
+  return (
+    d.getFullYear() === date.getFullYear() &&
+    d.getMonth() === date.getMonth() &&
+    d.getDate() === date.getDate()
+  );
+}
 
 export default function PaymentsPage() {
   const auth = useAuth();
-  const { sales, ready, todayStats } = useSales(auth.restaurantId);
+  // 주문 전체를 3초 폴링으로 받아 결제 완료분만 추린다 (status 필터 없이 전체 조회).
+  const orders = useOrders(auth.restaurantId, undefined, auth.ready);
 
   const [filter, setFilter] = useState<Filter>("ALL");
   const [scope, setScope] = useState<DateScope>("TODAY");
 
   const today = new Date();
-  const isSameDay = (iso: string) => {
-    const d = new Date(iso);
-    return (
-      d.getFullYear() === today.getFullYear() &&
-      d.getMonth() === today.getMonth() &&
-      d.getDate() === today.getDate()
-    );
-  };
+
+  // 결제 완료 주문만 (결제 확정 시각 = updatedAt 사용)
+  const paidOrders = useMemo(
+    () => (orders.data ?? []).filter((o) => PAID_STATUSES.has(o.status)),
+    [orders.data],
+  );
 
   const filtered = useMemo(() => {
-    let arr = sales.slice();
-    if (scope === "TODAY") arr = arr.filter((s) => isSameDay(s.closedAt));
-    if (filter !== "ALL") arr = arr.filter((s) => s.method === filter);
-    arr.sort((a, b) => (b.closedAt > a.closedAt ? 1 : -1));
+    let arr = paidOrders.slice();
+    if (scope === "TODAY") arr = arr.filter((o) => isSameDay(o.updatedAt, today));
+    if (filter !== "ALL")
+      arr = arr.filter((o) => paymentBucket(o.paymentMethod) === filter);
+    arr.sort((a, b) => (b.updatedAt > a.updatedAt ? 1 : -1));
     return arr;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [sales, filter, scope]);
+  }, [paidOrders, filter, scope]);
+
+  // 오늘 결제 집계 (카드/현금 분리)
+  const todayStats = useMemo(() => {
+    const todays = paidOrders.filter((o) => isSameDay(o.updatedAt, today));
+    const card = todays.filter((o) => paymentBucket(o.paymentMethod) === "CARD");
+    const cash = todays.filter((o) => paymentBucket(o.paymentMethod) === "CASH");
+    const sum = (arr: Order[]) => arr.reduce((a, b) => a + b.totalPrice, 0);
+    return {
+      total: sum(todays),
+      count: todays.length,
+      card: { total: sum(card), count: card.length },
+      cash: { total: sum(cash), count: cash.length },
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [paidOrders]);
 
   const totals = useMemo(() => {
-    const sum = filtered.reduce((a, s) => a + s.total, 0);
+    const sum = filtered.reduce((a, o) => a + o.totalPrice, 0);
     return { sum, count: filtered.length };
   }, [filtered]);
+
+  // 첫 로드 전(data 없음 + 식당 매핑 있음)만 로딩으로 본다.
+  const loading = orders.data === undefined && Boolean(auth.restaurantId);
 
   return (
     <AppShell>
@@ -48,10 +106,13 @@ export default function PaymentsPage() {
         <div>
           <h1 className="text-h1 text-ink-900">결제 관리</h1>
           <p className="text-sm text-ink-500 mt-1">
-            POS 좌석 결제 내역 (카드/현금) ·{" "}
-            <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-chip border border-line-border bg-white text-[10px] font-medium text-ink-700">
-              데모 · 로컬 저장
-            </span>
+            주문 결제 내역 (카드/현금) · 3초 폴링
+            {orders.lastUpdatedAt && (
+              <span className="ml-2 inline-flex items-center gap-1.5 text-ink-700">
+                <span className="inline-block h-1.5 w-1.5 rounded-full bg-state-success animate-pulse" />
+                {orders.lastUpdatedAt.toLocaleTimeString("ko-KR")}
+              </span>
+            )}
           </p>
         </div>
 
@@ -111,7 +172,13 @@ export default function PaymentsPage() {
           />
         </div>
 
-        {!ready ? (
+        {orders.error && (
+          <div className="bg-red-50 border border-red-200 text-red-700 rounded-card p-4 text-sm">
+            결제 내역을 불러오지 못했습니다 · {orders.error}
+          </div>
+        )}
+
+        {loading ? (
           <p className="py-10 text-center text-sm text-ink-500">불러오는 중…</p>
         ) : filtered.length === 0 ? (
           <div className="bg-white border border-line-divider rounded-card p-10 text-center text-sm text-ink-500">
@@ -120,25 +187,20 @@ export default function PaymentsPage() {
         ) : (
           <div className="bg-white border border-line-divider rounded-card shadow-card overflow-hidden">
             <ul className="divide-y divide-line-divider">
-              {filtered.map((s) => (
-                <SaleRow key={s.id} sale={s} />
+              {filtered.map((o) => (
+                <OrderRow key={o.id} order={o} />
               ))}
             </ul>
           </div>
         )}
-
-        <p className="text-xs text-ink-500">
-          ※ 백엔드{" "}
-          <code className="font-mono">orders.payment_method</code> 컬럼 + 결제 집계 API 연결 후
-          서버 데이터로 교체.
-        </p>
       </div>
     </AppShell>
   );
 }
 
-function SaleRow({ sale }: { sale: Sale }) {
-  const at = new Date(sale.closedAt);
+function OrderRow({ order }: { order: Order }) {
+  const kind = paymentBucket(order.paymentMethod);
+  const at = new Date(order.updatedAt);
   const time = at.toLocaleTimeString("ko-KR", {
     hour: "2-digit",
     minute: "2-digit",
@@ -147,13 +209,16 @@ function SaleRow({ sale }: { sale: Sale }) {
     month: "2-digit",
     day: "2-digit",
   });
+  const orderNo = "#" + order.id.replace(/-/g, "").slice(-4).toUpperCase();
+  const who = order.customer?.name ?? "손님";
   const itemSummary =
-    sale.items.length === 0
+    !order.items || order.items.length === 0
       ? "—"
-      : sale.items
+      : order.items
           .slice(0, 2)
           .map((it) => `${it.name} ×${it.quantity}`)
-          .join(", ") + (sale.items.length > 2 ? ` 외 ${sale.items.length - 2}` : "");
+          .join(", ") +
+        (order.items.length > 2 ? ` 외 ${order.items.length - 2}` : "");
 
   return (
     <li className="px-5 py-3 flex items-center justify-between gap-3">
@@ -161,31 +226,30 @@ function SaleRow({ sale }: { sale: Sale }) {
         <span
           className={
             "shrink-0 inline-flex h-8 w-8 rounded-lg items-center justify-center text-base " +
-            (sale.method === "CARD"
+            (kind === "CARD"
               ? "bg-primary-surface text-primary-dark"
               : "bg-emerald-50 text-emerald-700")
           }
         >
-          {sale.method === "CARD" ? "💳" : "💵"}
+          {kind === "CARD" ? "💳" : "💵"}
         </span>
         <div className="min-w-0">
-          <p className="text-sm font-bold text-ink-900">
-            {sale.seatLabel} 테이블{" "}
-            <span className="text-ink-500 font-normal">· {itemSummary}</span>
+          <p className="text-sm font-bold text-ink-900 truncate">
+            {orderNo}{" "}
+            <span className="text-ink-500 font-normal">
+              · {who} · {itemSummary}
+            </span>
           </p>
           <p className="text-[11px] text-ink-500 mt-0.5 tabular-nums">
-            {date} {time}
-            {sale.method === "CASH" && typeof sale.change === "number" && (
-              <span className="ml-2 text-emerald-700">
-                받음 {formatPrice(sale.receivedAmount ?? 0)} / 거스름{" "}
-                {formatPrice(sale.change)}
-              </span>
+            {date} {time} · {kind === "CARD" ? "카드" : "현금"}
+            {order.status === "COMPLETED" && (
+              <span className="ml-1 text-ink-700">· 서빙완료</span>
             )}
           </p>
         </div>
       </div>
       <span className="text-base font-extrabold text-ink-900 tabular-nums shrink-0">
-        {formatPrice(sale.total)}
+        {formatPrice(order.totalPrice)}
       </span>
     </li>
   );
