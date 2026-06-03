@@ -68,6 +68,9 @@ export default function OrdersPage() {
 
   const filterCount = (k: FilterKey) => {
     if (k === "ALL") return orders.data?.length ?? 0;
+    // 2026-06-03: 신규 주문 칩(PAID)에는 결제대기(PENDING)도 함께 집계 —
+    //   칸반 첫 컬럼이 PENDING+PAID 를 함께 보여주는 것과 카운트를 일치시킨다.
+    if (k === "PAID") return grouped.PENDING.length + grouped.PAID.length;
     return grouped[k as OrderStatus].length;
   };
 
@@ -188,10 +191,14 @@ export default function OrdersPage() {
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
             {(filter === "ALL" || filter === "PAID") && (
               <KanbanColumn
-                title={STATUS_LABEL.PAID}
-                caption="PAID — 결제 완료, 조리 시작 대기"
+                title="신규 주문"
+                caption="결제대기(PENDING)·결제완료(PAID) — 수락 대기"
                 highlight
-                orders={grouped.PAID}
+                // 2026-06-03: 결제 미완으로 PENDING 에 갇힌 주문도 사장이 수락/거절할 수
+                //   있도록 첫 컬럼에 PENDING+PAID 를 함께 노출한다. (이전엔 PAID 만 표시되어
+                //   PENDING 주문이 POS 에 아예 안 보였고, Supabase 에서 직접 status 를
+                //   바꿔야만 처리되던 문제를 해소.)
+                orders={[...grouped.PENDING, ...grouped.PAID]}
                 onAdvance={advance}
                 onCancel={(o) => setCancelTarget(o)}
                 busyOrderId={busyId}

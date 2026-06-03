@@ -45,6 +45,11 @@ export const STATUS_TONE: Record<
 // 다음 상태 전이 (POS 흐름: PAID → PREPARING → READY → COMPLETED)
 export function nextStatus(current: OrderStatus): OrderStatus | null {
   switch (current) {
+    // 2026-06-03: 결제 미완(Toss successUrl 리다이렉트 미완)으로 주문이 PENDING 에
+    //   갇히는 경우에도, 사장이 직접 "주문 수락"으로 조리에 들어갈 수 있어야 한다.
+    //   수락 = 바로 조리중(PREPARING) 으로 전이 (별도 ACCEPTED 단계 없이 단순화).
+    case "PENDING":
+      return "PREPARING";
     case "PAID":
       return "PREPARING";
     case "PREPARING":
@@ -59,9 +64,10 @@ export function nextStatus(current: OrderStatus): OrderStatus | null {
 export function nextStatusLabel(current: OrderStatus): string | null {
   const next = nextStatus(current);
   if (!next) return null;
+  // 2026-06-03: 조리 시작 전(PENDING/PAID) 주문의 다음 액션은 "주문 수락" 으로 표기.
+  //   사장이 들어온 주문을 받아 조리에 들어가는 행위이므로 '수락' 이 직관적이다.
+  if (current === "PENDING" || current === "PAID") return "주문 수락";
   switch (next) {
-    case "PREPARING":
-      return "조리 시작";
     case "READY":
       return "조리 완료";
     case "COMPLETED":
@@ -75,7 +81,9 @@ export function nextStatusLabel(current: OrderStatus): string | null {
 export const ACTIVE_STATUSES: OrderStatus[] = ["PAID", "PREPARING", "READY"];
 
 export function isCancellable(status: OrderStatus): boolean {
-  return status === "PAID" || status === "PREPARING";
+  // 2026-06-03: 백엔드 cancelOrder 의 거절 가능 상태(PAID/PENDING)와 일치시킨다.
+  //   조리 시작(PREPARING) 후엔 백엔드가 거절을 막으므로 버튼도 노출하지 않는다.
+  return status === "PAID" || status === "PENDING";
 }
 
 // POS-09 (2026-05-31) — 환불 시뮬레이션 가능 여부.
