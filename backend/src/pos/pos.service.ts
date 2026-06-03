@@ -401,7 +401,7 @@ export class PosService {
     //    payment_key 그대로 두어 추후 실제 환불 필요 시 별도 처리 가능하도록.
     const { data, error } = await this.supabase.client
       .from('orders')
-      .update({ status: 'REFUNDED' })
+      .update({ status: 'REFUNDED', updated_at: new Date().toISOString() })
       .eq('id', orderId)
       .select('id, status, updated_at')
       .single();
@@ -453,7 +453,9 @@ export class PosService {
 
     const { data, error } = await this.supabase.client
       .from('orders')
-      .update({ status })
+      // 2026-06-03: updated_at 트리거가 실DB 에 없어 status 만 바꾸면 updated_at 이
+      //   생성시각 그대로 고정됨(결제관리 오늘집계/통계 처리시간 부정확). 명시적으로 갱신.
+      .update({ status, updated_at: new Date().toISOString() })
       .eq('id', orderId)
       .select('id, status, updated_at')
       .single();
@@ -636,7 +638,7 @@ export class PosService {
     // 4) 환불 성공(또는 payment_key 없음) → 상태 CANCELLED 로 변경
     await this.supabase.client
       .from('orders')
-      .update({ status: 'CANCELLED' })
+      .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
       .eq('id', orderId);
 
     return {
@@ -954,10 +956,11 @@ export class PosService {
     const paymentMethod = method === 'CARD' ? 'POS_TOSS' : 'POS_CASH';
 
     // 6) status='PAID' + payment_method 동시 업데이트.
-    //    updated_at 트리거가 NOW() 로 자동 갱신 → approvedAt 으로 활용.
+    //    2026-06-03: updated_at 트리거가 실DB 에 없으므로 명시적으로 갱신 → approvedAt 으로 활용.
+    const nowIso = new Date().toISOString();
     const { data: updated, error: updateError } = await this.supabase.client
       .from('orders')
-      .update({ status: 'PAID', payment_method: paymentMethod })
+      .update({ status: 'PAID', payment_method: paymentMethod, updated_at: nowIso })
       .eq('id', orderId)
       .select('id, status, payment_method, updated_at')
       .single();
