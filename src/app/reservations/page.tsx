@@ -10,7 +10,9 @@ import {
 } from "@/lib/hooks/useReservations";
 import { formatTimeAgo } from "@/lib/utils/format";
 
-// pos_memo §6-3, §8-2 — 웨이팅 / 예약 관리 (백엔드 미구현 → localStorage)
+// pos_memo §6-3, §8-2 — 웨이팅 / 예약 관리.
+// 2026-06-03: useReservations 훅이 백엔드(GET/POST/PATCH/DELETE /pos/reservations)에
+//   연동되어 pos_reservations 테이블에 영속. curl 라운드트립으로 실DB 동작 확인.
 export default function ReservationsPage() {
   const auth = useAuth();
   const { list, ready, stats, add, updateStatus, remove } = useReservations(
@@ -37,8 +39,8 @@ export default function ReservationsPage() {
             <h1 className="text-h1 text-ink-900">웨이팅·예약</h1>
             <p className="text-sm text-ink-500 mt-1">
               대기 손님과 예약을 관리합니다
-              <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-chip border border-line-border bg-white text-[10px] font-medium text-ink-700">
-                데모 · 로컬 저장
+              <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-chip border border-emerald-200 bg-emerald-50 text-[10px] font-medium text-emerald-700">
+                실시간 동기화
               </span>
             </p>
           </div>
@@ -106,7 +108,7 @@ export default function ReservationsPage() {
         )}
 
         <p className="text-xs text-ink-500">
-          ※ 백엔드 웨이팅·예약 모델이 합의된 후 실시간 동기화로 교체 예정.
+          ※ 웨이팅·예약은 백엔드(pos_reservations)에 저장되어 다른 단말과 실시간 동기화됩니다.
         </p>
       </div>
 

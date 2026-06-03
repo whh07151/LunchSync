@@ -12,7 +12,9 @@ import { formatPrice } from "@/lib/utils/format";
 import type { Seat } from "@/lib/types";
 
 // pos_memo.md §2 — 좌석 예약/선택 + 좌석별 메뉴 관리 + 결제 수단별(현금/카드).
-// 백엔드 좌석/매출 API 미구현 → 전부 식당 ID별 localStorage. 새로고침 시 유지, 멀티 단말 동기화 X.
+// 2026-06-03: 좌석 배치·점유는 useSeats 훅이 백엔드(pos_seats)에 연동되어 실시간 동기화
+//   (curl 라운드트립으로 실DB 확인). 단 상단 매출 카드(좌석 결제 todayStats)는
+//   useSales 로컬 시뮬 유지 — 좌석 워크인 결제용 백엔드 모델은 별도 티켓.
 export default function SeatsPage() {
   const auth = useAuth();
   const {
@@ -44,8 +46,8 @@ export default function SeatsPage() {
             <h1 className="text-h1 text-ink-900">좌석</h1>
             <p className="text-sm text-ink-500 mt-1">
               주문 들어오면 좌석을 탭해서 메뉴를 담고 결제하세요
-              <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-chip border border-line-border bg-white text-[10px] font-medium text-ink-700">
-                데모 · 로컬 저장
+              <span className="ml-2 inline-flex items-center gap-1 px-2 py-0.5 rounded-chip border border-emerald-200 bg-emerald-50 text-[10px] font-medium text-emerald-700">
+                좌석 실시간 동기화
               </span>
             </p>
           </div>
@@ -119,8 +121,8 @@ export default function SeatsPage() {
         </div>
 
         <p className="text-xs text-ink-500">
-          ※ 좌석/메뉴/매출 모두 이 단말 localStorage에 저장됩니다. 다른 단말과
-          공유되지 않으며, 백엔드 좌석·매출 모델 합의 후 동기화로 교체 예정입니다.
+          ※ 좌석 배치·점유는 백엔드(pos_seats)에 저장되어 다른 단말과 실시간 동기화됩니다.
+          상단 매출 카드(좌석 결제)는 아직 데모(로컬 시뮬)입니다.
         </p>
       </div>
 
