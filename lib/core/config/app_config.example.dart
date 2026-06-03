@@ -16,8 +16,9 @@ class AppConfig {
   /// 카카오 JavaScript 앱 키 (Web)
   static const String kakaoJavaScriptAppKey = '<your-kakao-js-key>';
 
-  /// 백엔드 기본 URL
-  static const String backendBaseUrl = 'http://localhost:3000/api';
+  /// 백엔드 기본 URL — 운영 EC2(DuckDNS 도메인). IP가 바뀌어도 도메인은 그대로.
+  /// 로컬 백엔드로 테스트할 때만 'http://localhost:3000/api' 로 바꿔 쓰세요.
+  static const String backendBaseUrl = 'https://lunchsync-api.duckdns.org/api';
 
   /// 토스페이먼츠 테스트 클라이언트 키 (test_ck_...)
   /// https://developers.tosspayments.com/ → API 키 → 테스트 → 클라이언트 키

@@ -44,13 +44,17 @@ class AppConfig {
 
   static const String _backendHost = String.fromEnvironment(
     'BACKEND_HOST',
-    defaultValue: '13.125.165.80',
+    defaultValue: '',
   );
 
-  // 우선순위: BACKEND_URL > BACKEND_HOST > 기본값(EC2)
+  // 우선순위: BACKEND_URL > BACKEND_HOST(http:3000) > DuckDNS 도메인(HTTPS, 기본)
+  //   2026-06-03: 기본값을 직접 IP(13.125.165.80) → DuckDNS 도메인으로 변경.
+  //   EC2 퍼블릭 IP가 바뀌어도(Stop/Start 등) 도메인은 그대로라 앱 재설정 불필요.
   static const String backendBaseUrl = _backendUrlOverride.length > 0
       ? _backendUrlOverride
-      : 'http://$_backendHost:3000/api';
+      : (_backendHost.length > 0
+          ? 'http://$_backendHost:3000/api'
+          : 'https://lunchsync-api.duckdns.org/api');
 
   // ══════════════════════════════════════════════════════════
   // 토스페이먼츠 (결제위젯 v2)
