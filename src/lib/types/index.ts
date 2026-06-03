@@ -24,6 +24,11 @@ export interface Order {
   status: OrderStatus;
   totalPrice: number;
   paymentKey?: string | null;
+  // 결제 수단 — 백엔드 getOrdersByRestaurant 의 select 에 orders.payment_method 가
+  // 포함되어 응답에 함께 내려온다. 값 분포(예: 'POS_TOSS' | 'POS_CASH' | 'CARD' |
+  // 'TOSS' | null)가 출처별로 섞여 있어 string 으로 받고, 화면 단에서 헬퍼로
+  // 현금/카드 2분류로 정규화한다(결제관리 페이지 paymentBucket 참고).
+  paymentMethod?: string | null;
   createdAt: string;
   updatedAt: string;
   // 백엔드 응답 보강 후 채워질 선택 필드 (POS_BUILD_GUIDE.md §3·§11)
