@@ -1,4 +1,4 @@
-import { Module } from '@nestjs/common';
+import { MiddlewareConsumer, Module, NestModule } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
 import { ServeStaticModule } from '@nestjs/serve-static';
 import { ThrottlerGuard, ThrottlerModule } from '@nestjs/throttler';
@@ -24,6 +24,8 @@ import { FriendsModule } from './friends/friends.module';
 import { TournamentsModule } from './tournaments/tournaments.module';
 import { MenusModule } from './menus/menus.module';
 import { DevModule } from './dev/dev.module';
+import { ObservabilityModule } from './observability/observability.module';
+import { RequestLoggingMiddleware } from './observability/request-logging.middleware';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: NestJS 루트 모듈
@@ -135,6 +137,7 @@ import { DevModule } from './dev/dev.module';
 
     // dev 전용 — 자동 QA 우회 (DEV_PROMOTE_ENABLED=true 일 때만 동작)
     DevModule,
+    ObservabilityModule,
   ],
   controllers: [AppController],
   providers: [
@@ -150,4 +153,8 @@ import { DevModule } from './dev/dev.module';
     SchemaHealthcheckService,
   ],
 })
-export class AppModule {}
+export class AppModule implements NestModule {
+  configure(consumer: MiddlewareConsumer): void {
+    consumer.apply(RequestLoggingMiddleware).forRoutes('*');
+  }
+}
