@@ -93,43 +93,34 @@ export class OrdersService {
       });
     }
 
-    // 3. orders 테이블 INSERT
-    // restaurant_id 는 NOT NULL 제약이 있어 반드시 포함해야 함
-    // payment_method: 사용자가 선택한 결제수단 그대로 저장 → 매출 통계 분리에 사용
+    // 3. orders + order_items 원자적 생성
+    // PostgreSQL 함수 안에서 어느 INSERT든 실패하면 주문 전체가 롤백된다.
     const paymentMethod = this.normalizePaymentMethod(dto.paymentMethod);
-    const { data: order, error: orderError } = await this.supabase.client
-      .from('orders')
-      .insert({
-        session_id: dto.sessionId,
-        user_id: userId,
-        restaurant_id: restaurantId,
-        total_price: totalPrice,
-        status: 'PENDING',
-        payment_method: paymentMethod,
-      })
-      .select('id, status, total_price, created_at')
-      .single();
+    const { data: orderRaw, error: orderError } =
+      await this.supabase.client.rpc('create_order_with_items', {
+        p_session_id: dto.sessionId,
+        p_user_id: userId,
+        p_restaurant_id: restaurantId,
+        p_total_price: totalPrice,
+        p_payment_method: paymentMethod,
+        p_items: orderItems,
+      });
 
-    if (orderError || !order) {
+    if (orderError || !orderRaw) {
       // InternalServerErrorException: DB 쓰기 실패 → 500 응답 (운영 모니터링 대상)
       throw new InternalServerErrorException(
         `주문 생성 실패: ${orderError?.message}`,
       );
     }
 
-    // 4. order_items 테이블 INSERT
-    const orderItemsData = orderItems.map((item) => ({
-      order_id: order.id,
-      menu_item_id: item.menuItemId,
-      quantity: item.quantity,
-      price: item.price,
-    }));
+    // RPC 응답은 JSON 객체이므로 필요한 공개 응답 필드만 좁혀 사용한다.
+    const order = orderRaw as unknown as {
+      id: string;
+      createdAt?: string;
+      created_at?: string;
+    };
 
-    await this.supabase.client
-      .from('order_items')
-      .insert(orderItemsData);
-
-    // 5. CORE-10: 결제 처리 (현재는 가상 결제 시뮬레이션)
+    // 4. CORE-10: 결제 처리 (현재는 가상 결제 시뮬레이션)
     const paymentResult = await this.processPayment(
       order.id,
       totalPrice,
@@ -144,7 +135,7 @@ export class OrdersService {
       paymentMethod: dto.paymentMethod,
       paymentKey: paymentResult.paymentKey,
       items: orderItems,
-      createdAt: order.created_at,
+      createdAt: order.createdAt ?? order.created_at,
     };
   }
 
