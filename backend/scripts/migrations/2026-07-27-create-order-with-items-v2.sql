@@ -38,7 +38,7 @@ BEGIN
     p_user_id,
     p_restaurant_id,
     p_total_price,
-    COALESCE(p_payment_method, 'SIMULATE')::payment_method_type,
+    COALESCE(p_payment_method, 'SIMULATE')::public.payment_method_type,
     'PENDING'
   )
   RETURNING id INTO v_order_id;
@@ -85,4 +85,28 @@ BEGIN
     'items', COALESCE(v_items_result, '[]'::JSON)
   );
 END;
-$$ LANGUAGE plpgsql;
+$$
+LANGUAGE plpgsql
+SECURITY INVOKER
+SET search_path = pg_catalog, pg_temp;
+
+-- PostgreSQL grants EXECUTE on new functions to PUBLIC by default. This RPC
+-- accepts server-derived identity, restaurant, total, and item prices, so only
+-- the NestJS service-role client may cross this database boundary.
+REVOKE ALL ON FUNCTION public.create_order_with_items(
+  UUID,
+  UUID,
+  UUID,
+  INT,
+  TEXT,
+  JSON
+) FROM PUBLIC, anon, authenticated;
+
+GRANT EXECUTE ON FUNCTION public.create_order_with_items(
+  UUID,
+  UUID,
+  UUID,
+  INT,
+  TEXT,
+  JSON
+) TO service_role;

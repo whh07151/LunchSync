@@ -12,7 +12,7 @@
 //
 // 동작:
 //   1. onModuleInit 훅에서 RPC `check_schema_resources` 호출
-//      (해당 RPC 는 2026-05-14-schema-introspection-rpc.sql 에 정의)
+//      (현재 응답 계약은 2026-07-29-schema-introspection-function-signatures.sql 에 정의)
 //   2. 응답 JSON 의 columns/tables/functions 배열을 순회
 //   3. present=false 인 자원이 있으면 누락 항목을 console.warn 로 출력
 //      + 적용해야 할 마이그레이션 파일명 안내
@@ -34,7 +34,63 @@ import { SupabaseService } from './supabase.service';
 interface SchemaCheckResult {
   columns: Array<{ table: string; column: string; present: boolean }>;
   tables: Array<{ table: string; present: boolean }>;
-  functions: Array<{ name: string; present: boolean }>;
+  functions: Array<{
+    name: string;
+    signature?: string | null;
+    parameters?: SchemaFunctionParameter[] | null;
+    returnType?: string | null;
+    contract?: SchemaFunctionContract | null;
+    present: boolean;
+  }>;
+}
+
+interface SchemaFunctionParameter {
+  name: string;
+  type: string;
+}
+
+interface SchemaFunctionContract {
+  parameters: SchemaFunctionParameter[];
+  returnType: string;
+}
+
+const CREATE_ORDER_WITH_ITEMS_PARAMETERS: SchemaFunctionParameter[] = [
+  { name: 'p_session_id', type: 'uuid' },
+  { name: 'p_user_id', type: 'uuid' },
+  { name: 'p_restaurant_id', type: 'uuid' },
+  { name: 'p_total_price', type: 'integer' },
+  { name: 'p_payment_method', type: 'text' },
+  { name: 'p_items', type: 'json' },
+];
+
+const CREATE_ORDER_WITH_ITEMS_SIGNATURE =
+  'public.create_order_with_items(uuid,uuid,uuid,integer,text,json)';
+const CREATE_ORDER_WITH_ITEMS_RETURN_TYPE = 'json';
+const CREATE_ORDER_CONTRACT_METADATA =
+  'check_schema_resources.create_order_with_items.contract';
+
+function hasExpectedOrderParameters(
+  parameters: SchemaFunctionParameter[] | null | undefined,
+): boolean {
+  return (
+    Array.isArray(parameters) &&
+    parameters.length === CREATE_ORDER_WITH_ITEMS_PARAMETERS.length &&
+    parameters.every((parameter, index) => {
+      const expected = CREATE_ORDER_WITH_ITEMS_PARAMETERS[index];
+      return (
+        parameter.name === expected.name && parameter.type === expected.type
+      );
+    })
+  );
+}
+
+function hasExpectedOrderContract(
+  contract: SchemaFunctionContract | null | undefined,
+): boolean {
+  return (
+    contract?.returnType === CREATE_ORDER_WITH_ITEMS_RETURN_TYPE &&
+    hasExpectedOrderParameters(contract.parameters)
+  );
 }
 
 // 누락된 자원과 해당 마이그레이션 파일을 매핑
@@ -47,11 +103,14 @@ const MIGRATION_HINTS: Record<string, string> = {
   'sessions.budget': '2026-05-14-ensure-sessions-columns.sql',
   'sessions.return_minutes': '2026-05-14-ensure-sessions-columns.sql',
   'sessions.memo': '2026-05-14-ensure-sessions-columns.sql',
-  'pos_seats': '2026-05-14-add-pos-tables.sql',
-  'pos_reservations': '2026-05-14-add-pos-reservations.sql',
-  'delete_session_cascade': '2026-05-13-delete-session-rpc.sql',
-  'create_order_with_items': '2026-05-14-create-order-rpc.sql',
-  'create_session_with_host_member': '2026-05-14-create-session-rpc.sql',
+  pos_seats: '2026-05-14-add-pos-tables.sql',
+  pos_reservations: '2026-05-14-add-pos-reservations.sql',
+  delete_session_cascade: '2026-05-13-delete-session-rpc.sql',
+  [CREATE_ORDER_CONTRACT_METADATA]:
+    '2026-07-29-schema-introspection-function-signatures.sql',
+  [CREATE_ORDER_WITH_ITEMS_SIGNATURE]:
+    '2026-07-27-create-order-with-items-v2.sql',
+  create_session_with_host_member: '2026-05-14-create-session-rpc.sql',
 };
 
 @Injectable()
@@ -65,21 +124,25 @@ export class SchemaHealthcheckService implements OnModuleInit {
   async onModuleInit(): Promise<void> {
     try {
       // service_role 키로 RPC 호출 → information_schema 접근 권한 보장
-      const { data, error } = await this.supabase.client.rpc('check_schema_resources');
+      const { data, error } = await this.supabase.client.rpc(
+        'check_schema_resources',
+      );
 
       if (error) {
         // RPC 가 아예 배포되지 않은 환경(=초기 셋업) 도 여기에 해당.
         // 부팅을 막지 않고 안내만 출력.
         console.warn(
           `[SchemaHealthcheck] introspection RPC 호출 실패: ${error.message} ` +
-            `→ 2026-05-14-schema-introspection-rpc.sql 을 Supabase Dashboard 에서 실행하세요.`,
+            `→ 2026-07-29-schema-introspection-function-signatures.sql 을 Supabase Dashboard 에서 실행하세요.`,
         );
         return;
       }
 
       // RPC 가 정상 응답이지만 페이로드가 비어있는 비정상 케이스
       if (!data) {
-        console.warn('[SchemaHealthcheck] introspection RPC 응답이 비어있습니다.');
+        console.warn(
+          '[SchemaHealthcheck] introspection RPC 응답이 비어있습니다.',
+        );
         return;
       }
 
@@ -99,7 +162,21 @@ export class SchemaHealthcheckService implements OnModuleInit {
         }
       }
       for (const fn of result.functions ?? []) {
-        if (!fn.present) {
+        if (fn.name === 'create_order_with_items') {
+          if (
+            !Object.prototype.hasOwnProperty.call(fn, 'contract') ||
+            !hasExpectedOrderContract(fn.contract)
+          ) {
+            missing.push(CREATE_ORDER_CONTRACT_METADATA);
+          } else if (
+            !fn.present ||
+            fn.signature !== CREATE_ORDER_WITH_ITEMS_SIGNATURE ||
+            !hasExpectedOrderParameters(fn.parameters) ||
+            fn.returnType !== CREATE_ORDER_WITH_ITEMS_RETURN_TYPE
+          ) {
+            missing.push(CREATE_ORDER_WITH_ITEMS_SIGNATURE);
+          }
+        } else if (!fn.present) {
           missing.push(fn.name);
         }
       }
@@ -113,7 +190,8 @@ export class SchemaHealthcheckService implements OnModuleInit {
       // 누락된 자원 + 적용해야 할 마이그레이션 안내
       // 각 항목을 보기 좋게 들여쓴 형태로 묶어서 출력
       const lines = missing.map((key) => {
-        const hint = MIGRATION_HINTS[key] ?? '(마이그레이션 파일 미정 — 사장님 확인 필요)';
+        const hint =
+          MIGRATION_HINTS[key] ?? '(마이그레이션 파일 미정 — 사장님 확인 필요)';
         return `    - ${key}  →  ${hint}`;
       });
 

@@ -77,7 +77,8 @@ D:\LunchSyncFr\
 
 - Node.js 20+, npm
 - Flutter 3.x 안정 채널 (Dart 3+)
-- `backend/.env` 값 확보 (팀원에게 공유 받음, 또는 `backend/.env.example` 참고)
+- `backend/.env.example`을 기준으로 한 로컬 설정과 승인된 비밀 관리자 또는
+  런타임 환경 변수 주입 경로
 - Supabase 프로젝트 접근 권한 + 최신 마이그레이션 적용 상태
 - (선택) Android 실기기 USB 디버깅, Chrome (웹 결제 테스트)
 
@@ -152,8 +153,7 @@ flutter analyze                                # 에러 0건이어야 정상
 |---|---|---|
 | `PORT` | NestJS 리스닝 포트 | 기본 3000 |
 | `SUPABASE_URL` | Supabase 프로젝트 URL | 필수 |
-| `SUPABASE_ANON_KEY` | Supabase anon 키 | `.env.example` 에 명시 |
-| `SUPABASE_SERVICE_ROLE_KEY` | RLS 우회용 service_role 키 | **서버 전용** · `.env.example` 미포함이므로 직접 추가 |
+| `SUPABASE_SERVICE_ROLE_KEY` | RLS 우회용 service_role 키 | **서버 전용** · 승인된 비밀 관리자에서 런타임 환경 변수로 주입하고 파일·메신저·문서에 실값을 남기지 않음 |
 | `JWT_SECRET` | 자체 JWT 서명 시크릿 | 필수 |
 | `JWT_EXPIRES_IN` | JWT 만료 (기본 `7d`) | |
 | `TOSS_SECRET_KEY` | Toss Payments 시크릿 키 | 테스트는 `test_sk_...` |
@@ -168,7 +168,10 @@ flutter analyze                                # 에러 0건이어야 정상
 | `NODE_ENV` | `production` 설정 시 에러 메시지 마스킹 + CORS 화이트리스트 적용 | |
 | `RECO_V3_ENABLED` | 추천 v3 (친구 가중치 등) on/off | `'true'` 일 때 활성 |
 
-> `.env.example` 에 누락된 키(`SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_*`, `FIREBASE_*`, `CORS_*`, `RECO_V3_*`)는 팀 노션 / 팀원 공유 채널에서 받아 직접 추가해야 합니다.
+> `.env.example` 에 누락된 키(`GEMINI_*`, `FIREBASE_*`, `CORS_*`, `RECO_V3_*`)는
+> 환경별 설정 절차에 따라 추가합니다. `SUPABASE_SERVICE_ROLE_KEY` 실값은 승인된
+> 비밀 관리자 또는 배포 플랫폼의 보호된 환경 변수에서 서버 런타임에만 주입하며,
+> Notion·메신저·공유 문서·Git에는 복사하지 않습니다.
 
 Flutter 측 키(카카오 앱 키, Toss 클라이언트 키)는 `lib/core/config/app_config.dart` 에 하드코딩되어 있고 이 파일은 `.gitignore` 처리 상태입니다.
 
@@ -180,16 +183,54 @@ Flutter 측 키(카카오 앱 키, Toss 클라이언트 키)는 `lib/core/config
 
 배포 원칙은 memory 의 `feedback_aws_deploy.md` 에 정리된 대로 **로컬에서 빌드 성공 + 핵심 흐름 검증이 끝난 코드만 배포**합니다.
 
-대략적인 절차 (구체 명령은 운영자만 사용):
+대략적인 절차 (구체 명령은 승인된 운영자만 사용):
 
-1. `main` (또는 머지 대상 브랜치)에 push → CI 빌드 확인
-2. EC2 에 SSH 접속 → `git pull` → `npm ci` → `npx nest build`
-3. 새 마이그레이션이 있다면 Supabase 대시보드에서 `backend/scripts/migrations/<날짜>-*.sql` 수동 실행
-4. `pm2 restart <프로세스명>` (혹은 동등 명령)
-5. Flutter 앱(또는 LSPOS) 빌드는 dart-define `BACKEND_URL=https://<DuckDNS>/api` 로 재빌드
-6. 손님 / 사장 두 흐름을 실기기에서 한 번씩 검증 (홈 → 세션 → 투표 → 주문 → 결제)
+1. 머지 대상 브랜치의 CI와 로컬 검증 결과를 확인
+2. 비운영 PostgreSQL 리허설 환경에
+   `backend/scripts/migrations/2026-07-27-create-order-with-items-v2.sql` 적용
+3. 이어서
+   `backend/scripts/migrations/2026-07-29-schema-introspection-function-signatures.sql`
+   적용
+4. 비운영 환경에서 정확한 6-인자 주문 RPC, `SECURITY INVOKER`, 최소 실행 ACL과
+   스키마 introspection 응답을 검사
+5. 리허설이 통과한 뒤 승인된 운영자가 실제 백엔드가 연결할 대상 PostgreSQL에
+   검토된 두 마이그레이션을 2026-07-27 → 2026-07-29 순서로 적용
+6. 같은 대상 DB에서 정확한 함수 시그니처, `PUBLIC`/`anon`/`authenticated`
+   실행 권한 회수, `service_role` 실행 권한과 `check_schema_resources()`
+   introspection 응답을 다시 확인
+7. 대상 DB 검증이 끝난 뒤에만 EC2 백엔드 코드 갱신 → `npm ci` →
+   `npx nest build` →
+   `pm2 restart <프로세스명>`(또는 동등 명령)
+8. Flutter 앱(또는 LSPOS)은
+   `BACKEND_URL=https://<DuckDNS>/api`로 빌드
+9. 손님 / 사장 흐름과 `SIMULATE`/`CASH`, Toss·`CARD`의 `PENDING` → 외부 승인
+   흐름을 비운영 환경에서 확인
 
-> `<DuckDNS-도메인>` 실값과 PM2 프로세스 이름, 키 보관 경로는 팀 운영 채널에 별도 공유합니다.
+6-인자 RPC를 호출하는 백엔드를 두 마이그레이션보다 먼저 배포하지 않습니다.
+실제 대상 DB 마이그레이션과 백엔드 배포는 승인된 운영자의 남은 작업이며, 이
+변경 작성·검증 과정에서는 실행하지 않았습니다.
+`<DuckDNS-도메인>`과 PM2 프로세스 이름은 승인된 운영 런북에서 확인하고, 비밀
+값은 승인된 비밀 관리자나 배포 플랫폼의 보호된 환경 변수로만 주입합니다.
+
+주문 생성·스키마 헬스체크 변경의 핵심 확인 파일:
+
+- `backend/scripts/migrations/2026-07-27-create-order-with-items-v2.sql`
+- `backend/scripts/migrations/2026-07-29-schema-introspection-function-signatures.sql`
+- `backend/src/orders/orders.controller.ts`
+- `backend/src/orders/orders.service.ts`
+- `backend/src/orders/orders.consistency.spec.ts`
+- `backend/src/app.module.ts`
+- `backend/src/supabase/schema-healthcheck.service.ts`
+- `backend/src/supabase/schema-healthcheck.service.spec.ts`
+- `backend/package.json`
+- `backend/test/jest-postgres.json`
+- `backend/test/orders.postgres-spec.ts`
+- `backend/test/support/disposable-postgres.ts`
+
+2026-07-29 현재 체크포인트에서 기본 Jest는 **6개 스위트·30개 테스트**, 실제
+PostgreSQL 계약 검사는 **1개 스위트·4개 테스트**, NestJS 빌드는 통과했습니다.
+이는 비운영 일회용 PostgreSQL 검증 결과이며 운영 DB 마이그레이션이나 라이브 결제
+검증을 뜻하지 않습니다.
 
 ---
 

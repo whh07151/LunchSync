@@ -1,6 +1,6 @@
 # LunchSync 소프트웨어 명세서
-**작성일:** 2026-04-08
-**버전:** 1.2 (orders.restaurant_id 추가)
+**작성일:** 2026-04-08 / **주문 생성 계약 갱신:** 2026-07-29
+**버전:** 1.3 (주문 헤더·항목 원자성 및 결제 경계 명시)
 
 **구현 진행도:** [`LUNCHSYNC_PROGRESS.md`](./LUNCHSYNC_PROGRESS.md) 참조 (이 파일과 분리 운영)
 
@@ -271,6 +271,7 @@ CREATE TABLE orders (
   -- 투표 winner_restaurant_id와 일치 여부는 NestJS에서 소프트 검증
   status order_status DEFAULT 'PENDING',
   total_price INTEGER NOT NULL,
+  payment_method payment_method_type, -- 서버가 정규화한 결제 방식
   payment_key TEXT, -- Toss Payments 결제 키
   created_at TIMESTAMP DEFAULT NOW(),
   updated_at TIMESTAMP DEFAULT NOW()
@@ -340,6 +341,15 @@ CREATE TYPE order_status AS ENUM (
   -- 아래 두 값은 초기 설계 잔재. 현재 코드에서 미사용, 삭제 불가 (PG ENUM 제약)
   'ACCEPTED',
   'DONE'
+);
+
+CREATE TYPE payment_method_type AS ENUM (
+  'TOSS',
+  'CARD',
+  'CASH',
+  'SIMULATE',
+  'POS_TOSS',
+  'POS_CASH'
 );
 
 CREATE TYPE user_role AS ENUM (
@@ -473,11 +483,35 @@ DELETE /cart/:id          항목 삭제
 
 ### 주문
 ```
-POST   /orders                주문 생성 (트랜잭션: orders + order_items + cart 비우기)
+POST   /orders                주문 생성 (트랜잭션: orders + order_items만)
 GET    /orders/:id            주문 상세/상태 (폴링)
 GET    /orders/session/:id    세션의 전체 주문 목록
 PATCH  /orders/:id/status     주문 상태 변경 (점주 수락/거절, POS 완료)
 ```
+
+`POST /orders`의 현재 요청 계약은 `sessionId`, `items[]`의 `menuItemId`·`quantity`,
+선택 `paymentMethod`다. 사용자 ID는 JWT에서 가져오고 식당 ID, 메뉴 단가,
+`totalPrice`는 서버가 `menu_items`를 조회해 계산한다. 데이터베이스 쓰기 계약은
+다음 정확한 함수 시그니처다.
+
+```text
+public.create_order_with_items(
+  uuid, uuid, uuid, integer, text, json
+)
+```
+
+이 함수가 한 트랜잭션으로 보장하는 범위는 `orders` 헤더와 `order_items` 항목
+생성뿐이다. `cart_items` 삭제, 결제 승인, `PAID`·`payment_key` 갱신, 알림 발송은
+이 RPC 계약에 포함되지 않는다. 함수는 `SECURITY INVOKER`이고
+`PUBLIC`/`anon`/`authenticated`의 실행 권한은 회수하며 서버의 `service_role`만
+애플리케이션 호출 권한을 갖는다.
+
+운영 적용 전에는 두 마이그레이션을 비운영 PostgreSQL에서 순서대로 리허설한다.
+리허설 통과 후 승인된 운영자가 실제 백엔드 대상 DB에 2026-07-27 주문 RPC
+마이그레이션과 2026-07-29 introspection 마이그레이션을 같은 순서로 적용하고,
+그 대상 DB에서 정확한 시그니처·ACL·`check_schema_resources()` 응답을 검증한
+뒤에만 백엔드를 배포한다. 이 명세 갱신 과정에서는 실제 대상 DB 마이그레이션이나
+백엔드 배포를 실행하지 않았다.
 
 ### 결제
 ```
@@ -600,25 +634,46 @@ View (MenuScreen)
 ```
 [버튼 탭] "주문하기"
 
-View
-  → 다이얼로그 표시
-    ├── 개인 결제 선택
-    │     → Toss Payments SDK 결제창
-    │     → 결제 완료 callback
-    │     → NestJS POST /orders
-    │         body: { session_id, cart_items[] }
-    │
-    │       Controller [트랜잭션]
-    │         ① Toss Payments 결제 검증
-    │         ② orders INSERT { session_id, user_id, status: 'PENDING' }
-    │         ③ order_items INSERT × 장바구니 항목 수
-    │         ④ cart_items DELETE (장바구니 비우기)
-    │         [트랜잭션 커밋]
-    │         ⑤ notifications INSERT + FCM 발송 (점주에게)
-    │
-    └── N분의 1 선택
-          → "개발 중입니다 🚧" 안내
+View → NestJS POST /orders
+  body: {
+    sessionId,
+    items: [{ menuItemId, quantity }],
+    paymentMethod?
+  }
+
+NestJS
+  ① JWT에서 userId 획득
+  ② menu_items 재조회
+  ③ 같은 식당 여부 검증
+  ④ restaurantId, 주문 시점 단가, totalPrice 계산
+  ⑤ PostgreSQL RPC 호출 [트랜잭션 시작]
+     ├─ orders INSERT { ..., status: 'PENDING' }
+     ├─ order_items INSERT × 요청 항목 수
+     └─ 모두 성공 시 커밋 / 하나라도 실패 시 전체 롤백
+
+후속 결제 처리 [RPC 트랜잭션 밖]
+  ├─ SIMULATE/CASH
+  │   └─ 별도 orders UPDATE로 PAID와 payment_key 기록
+  ├─ TOSS
+  │   ├─ 주문은 PENDING 유지
+  │   └─ 결제위젯 이후 POST /payments/confirm에서 승인 및 별도 DB UPDATE
+  └─ CARD
+      ├─ 입력을 CARD로 정규화해 저장·응답
+      └─ 외부 승인 결과가 기록될 때까지 PENDING 유지
 ```
+
+현재 `POST /orders`는 `cart_items`를 읽거나 비우지 않는다. Flutter의 장바구니는
+요청 항목을 만드는 UI 상태이며, 주문 성공 뒤 장바구니 정리는 별도 클라이언트/API
+흐름으로 다뤄야 한다. `SIMULATE`/`CASH`의 후속 UPDATE 오류를 감지해 성공 응답으로
+이어지지 않도록 500으로 처리하며, 저장·결제 분기·응답에는 같은
+정규화 값을 사용한다. 다만 이때 이미 생성된 `PENDING` 주문의 안전한 재시도와
+복구는 아직 정의되지 않았다. Toss 승인 성공 뒤 DB UPDATE 실패도 별도 조정
+경계이므로, 두 경우 모두 idempotency·탐지·재시도·운영 reconciliation 절차가
+남은 reliability 위험이다.
+
+`CARD`는 정규화된 결제 방식 이름이지 주문 생성 시점의 결제 완료 증거가 아니다.
+서버는 `CARD`를 저장·응답하되 외부 승인 결과가 명시적으로 기록되기 전까지 해당
+주문을 `PENDING`으로 유지한다.
 
 ### 점주 주문 수락
 
@@ -663,7 +718,8 @@ View (손님 OrderTrackScreen)
 
 ### 트랜잭션 필수 처리
 - 세션 생성: sessions + session_members (방장 포함) 묶음
-- 주문 생성: orders + order_items + cart 비우기 묶음
+- 주문 생성: 정확한 6-인자 PostgreSQL RPC에서 orders + order_items만 묶음
+- 장바구니 정리와 결제 상태 변경: 주문 생성 RPC 밖의 별도 실패 경계
 
 ### 보안 참고 메모 (후순위)
 - SQL Injection 대비
@@ -682,5 +738,6 @@ View (손님 OrderTrackScreen)
 
 ---
 
-*본 명세서는 2026-04-08 기준 확정된 설계를 반영합니다.*
+*본 명세서의 초기 기준은 2026-04-08이며 주문 생성·결제 실패 경계는
+2026-07-29 현재 구현 계약으로 갱신했습니다.*
 *변경 사항은 project_decisions.md에 과정·이유와 함께 기록합니다.*

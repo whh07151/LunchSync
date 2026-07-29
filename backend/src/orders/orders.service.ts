@@ -4,6 +4,7 @@ import {
   ForbiddenException,
   BadRequestException,
   InternalServerErrorException,
+  Logger,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
@@ -28,8 +29,12 @@ export interface UpdateOrderStatusDto {
   status: string;
 }
 
+type NormalizedPaymentMethod = 'TOSS' | 'CARD' | 'CASH' | 'SIMULATE';
+
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(private readonly supabase: SupabaseService) {}
 
   // ── POST /orders — 주문 생성 (CU-17 + CORE-09) ────────
@@ -50,7 +55,9 @@ export class OrdersService {
     const restaurantIds = new Set(menuItems.map((m) => m.restaurant_id));
     if (restaurantIds.size > 1) {
       // BadRequestException: 클라이언트 입력 오류 → 400 응답
-      throw new BadRequestException('서로 다른 식당의 메뉴를 동시에 주문할 수 없습니다.');
+      throw new BadRequestException(
+        '서로 다른 식당의 메뉴를 동시에 주문할 수 없습니다.',
+      );
     }
     // orders.restaurant_id 컬럼에 들어갈 단일 값
     const restaurantId = menuItems[0].restaurant_id as string;
@@ -77,12 +84,18 @@ export class OrdersService {
     // 2. 총 금액 계산
     const menuMap = new Map(menuItems.map((m) => [m.id, m]));
     let totalPrice = 0;
-    const orderItems: { menuItemId: string; quantity: number; price: number }[] = [];
+    const orderItems: {
+      menuItemId: string;
+      quantity: number;
+      price: number;
+    }[] = [];
 
     for (const item of dto.items) {
       const menu = menuMap.get(item.menuItemId);
       if (!menu) {
-        throw new NotFoundException(`메뉴 아이템(${item.menuItemId})을 찾을 수 없습니다.`);
+        throw new NotFoundException(
+          `메뉴 아이템(${item.menuItemId})을 찾을 수 없습니다.`,
+        );
       }
       const itemPrice = menu.price * item.quantity;
       totalPrice += itemPrice;
@@ -107,10 +120,10 @@ export class OrdersService {
       });
 
     if (orderError || !orderRaw) {
-      // InternalServerErrorException: DB 쓰기 실패 → 500 응답 (운영 모니터링 대상)
-      throw new InternalServerErrorException(
-        `주문 생성 실패: ${orderError?.message}`,
+      this.logger.error(
+        `Order creation RPC failed: ${orderError?.message ?? 'empty response'}`,
       );
+      throw new InternalServerErrorException('주문을 생성할 수 없습니다.');
     }
 
     // RPC 응답은 JSON 객체이므로 필요한 공개 응답 필드만 좁혀 사용한다.
@@ -124,7 +137,7 @@ export class OrdersService {
     const paymentResult = await this.processPayment(
       order.id,
       totalPrice,
-      dto.paymentMethod,
+      paymentMethod,
     );
 
     return {
@@ -132,7 +145,7 @@ export class OrdersService {
       sessionId: dto.sessionId,
       status: paymentResult.paid ? 'PAID' : 'PENDING',
       totalPrice,
-      paymentMethod: dto.paymentMethod,
+      paymentMethod,
       paymentKey: paymentResult.paymentKey,
       items: orderItems,
       createdAt: order.createdAt ?? order.created_at,
@@ -142,9 +155,10 @@ export class OrdersService {
   // ── 결제수단 정규화 ────────────────────────────────
   // 클라이언트가 보낸 다양한 표기를 DB ENUM(TOSS/CARD/CASH/SIMULATE) 으로 매핑.
   // 모르는 값은 SIMULATE 로 기본 처리 (캡스톤 시연 안전 폴백).
-  private normalizePaymentMethod(raw?: string): 'TOSS' | 'CARD' | 'CASH' | 'SIMULATE' {
+  private normalizePaymentMethod(raw?: string): NormalizedPaymentMethod {
     const v = (raw ?? '').toUpperCase();
-    if (v === 'TOSS' || v === 'TRANSFER' || v === 'KAKAOPAY' || v === 'BANK') return 'TOSS';
+    if (v === 'TOSS' || v === 'TRANSFER' || v === 'KAKAOPAY' || v === 'BANK')
+      return 'TOSS';
     if (v === 'CARD') return 'CARD';
     if (v === 'CASH') return 'CASH';
     return 'SIMULATE';
@@ -158,16 +172,36 @@ export class OrdersService {
   private async processPayment(
     orderId: string,
     _amount: number,
-    method: string,
+    method: NormalizedPaymentMethod,
   ): Promise<{ paid: boolean; paymentKey: string | null }> {
     if (method === 'SIMULATE' || method === 'CASH') {
       // 가상 결제: 즉시 성공 처리
       const paymentKey = `sim_${orderId}_${Date.now()}`;
 
-      await this.supabase.client
-        .from('orders')
-        .update({ status: 'PAID', payment_key: paymentKey })
-        .eq('id', orderId);
+      const { data: paidOrder, error: paymentUpdateError } =
+        await this.supabase.client
+          .from('orders')
+          .update({ status: 'PAID', payment_key: paymentKey })
+          .eq('id', orderId)
+          .eq('status', 'PENDING')
+          .select('id, status, payment_key')
+          .single();
+
+      if (
+        paymentUpdateError ||
+        !paidOrder ||
+        paidOrder.status !== 'PAID' ||
+        paidOrder.payment_key !== paymentKey
+      ) {
+        this.logger.error(
+          `Payment status update failed: ${
+            paymentUpdateError?.message ?? 'updated row did not match'
+          }`,
+        );
+        throw new InternalServerErrorException(
+          '결제 상태를 저장할 수 없습니다.',
+        );
+      }
 
       return { paid: true, paymentKey };
     }
@@ -280,7 +314,9 @@ export class OrdersService {
     // 주문 아이템 조회 — 2026-05-16: menu_items.prep_time_minutes 도 함께 가져와 ETA 계산
     const { data: items } = await this.supabase.client
       .from('order_items')
-      .select('id, menu_item_id, quantity, price, menu_items(name, prep_time_minutes)')
+      .select(
+        'id, menu_item_id, quantity, price, menu_items(name, prep_time_minutes)',
+      )
       .eq('order_id', orderId);
 
     // 2026-05-16 배민 패턴 — 예상 픽업 시각 계산
@@ -322,8 +358,10 @@ export class OrdersService {
       // 2026-05-15 별점/리뷰 — 손님 어플이 "이미 작성된 리뷰" 인지 판단해
       // 별점 카드 노출 여부를 결정하기 위해 함께 내려보낸다.
       restaurantId: (order as { restaurant_id?: string }).restaurant_id ?? null,
-      reviewScore: (order as { review_score?: number | null }).review_score ?? null,
-      reviewText: (order as { review_text?: string | null }).review_text ?? null,
+      reviewScore:
+        (order as { review_score?: number | null }).review_score ?? null,
+      reviewText:
+        (order as { review_text?: string | null }).review_text ?? null,
       reviewAt: (order as { review_at?: string | null }).review_at ?? null,
       // 2026-05-31 WOW2 — 사장 라이브 카메라 사진 URL (null = 미첨부)
       completionPhotoUrl:
@@ -461,9 +499,7 @@ export class OrdersService {
       throw new ForbiddenException('본인 주문에만 리뷰 작성 가능해요.');
     }
     if (order.status !== 'COMPLETED' && order.status !== 'DONE') {
-      throw new BadRequestException(
-        '주문이 완료된 후에 리뷰 작성 가능해요.',
-      );
+      throw new BadRequestException('주문이 완료된 후에 리뷰 작성 가능해요.');
     }
 
     // 리뷰 INSERT/UPDATE (단일 컬럼 update)
