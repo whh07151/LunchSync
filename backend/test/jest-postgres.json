@@ -2,7 +2,7 @@
   "moduleFileExtensions": ["js", "json", "ts"],
   "rootDir": ".",
   "testEnvironment": "node",
-  "testRegex": "orders\\.postgres-spec\\.ts$",
+  "testRegex": ".*\\.postgres-spec\\.ts$",
   "transform": {
     "^.+\\.(t|j)s$": "ts-jest"
   }

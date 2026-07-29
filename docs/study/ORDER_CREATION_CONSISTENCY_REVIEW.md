@@ -173,8 +173,8 @@ PostgreSQL을 사용하는 별도 Jest 설정을 실행한다. Docker Engine이 
 
 2026-07-29 현재 체크포인트에서 실제 실행한 결과는 다음과 같다.
 
-- 기본 Jest: 6개 스위트·30개 테스트 통과
-- PostgreSQL 전용 Jest: 1개 스위트·4개 테스트 통과
+- 기본 Jest: 7개 스위트·47개 테스트 통과
+- PostgreSQL 전용 Jest: 2개 스위트·5개 테스트 통과
 - NestJS 빌드: 통과
 
 PostgreSQL 전용 검사는 일회용 `postgres:16-alpine`에 v2 주문 마이그레이션과

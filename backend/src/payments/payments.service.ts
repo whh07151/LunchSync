@@ -1,9 +1,12 @@
 import {
+  BadGatewayException,
   BadRequestException,
+  ConflictException,
   ForbiddenException,
   Injectable,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
@@ -25,8 +28,8 @@ import { SupabaseService } from '../supabase/supabase.service';
 
 export interface ConfirmPaymentDto {
   paymentKey: string; // 토스가 발급한 결제 고유 키
-  orderId: string;    // 우리 서버가 발급한 주문 UUID (위젯에 넘긴 값과 동일)
-  amount: number;     // 결제 금액 (위변조 검증용)
+  orderId: string; // 우리 서버가 발급한 주문 UUID (위젯에 넘긴 값과 동일)
+  amount: number; // 결제 금액 (위변조 검증용)
 }
 
 @Injectable()
@@ -51,7 +54,7 @@ export class PaymentsService {
     // 프론트에서 amount를 조작해도 DB의 total_price와 다르면 거부
     const { data: order, error: orderError } = await this.supabase.client
       .from('orders')
-      .select('id, status, total_price, session_id, user_id')
+      .select('id, status, total_price, session_id, user_id, payment_key')
       .eq('id', dto.orderId)
       .single();
 
@@ -75,12 +78,35 @@ export class PaymentsService {
     }
 
     if (order.status === 'PAID') {
+      if (order.payment_key !== dto.paymentKey) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'PAYMENT_KEY_MISMATCH',
+          message:
+            '이미 결제된 주문의 결제 키가 요청과 일치하지 않습니다. 결제 내역을 확인해주세요.',
+          retryable: false,
+          orderId: order.id,
+        });
+      }
+
       // 이미 승인된 주문 — 중복 호출은 조용히 성공 처리
       return {
         alreadyPaid: true,
+        reconciled: true,
         orderId: order.id,
         status: 'PAID',
+        paymentKey: order.payment_key,
       };
+    }
+
+    if (order.status !== 'PENDING') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_NOT_PAYABLE',
+        message: '결제할 수 없는 주문 상태입니다. 주문 상태를 확인해주세요.',
+        retryable: false,
+        orderId: order.id,
+      });
     }
 
     // ── 2. 토스 결제 승인 API 호출 ─────────────────────────
@@ -88,11 +114,21 @@ export class PaymentsService {
     const apiBase =
       this.configService.get<string>('TOSS_API_BASE_URL') ??
       'https://api.tosspayments.com';
+    const configuredTimeoutMs = Number(
+      this.configService.get<string>('TOSS_API_TIMEOUT_MS'),
+    );
+    const timeoutMs =
+      Number.isInteger(configuredTimeoutMs) &&
+      configuredTimeoutMs >= 100 &&
+      configuredTimeoutMs <= 60_000
+        ? configuredTimeoutMs
+        : 10_000;
 
     // 토스 Basic Auth: base64(secretKey + ":")
     // 콜론 뒤에 암호가 없지만 콜론 자체는 반드시 포함해야 함
     const authHeader =
       'Basic ' + Buffer.from(secretKey + ':').toString('base64');
+    const idempotencyKey = `lunchsync-confirm:${dto.orderId}`;
 
     let tossResponse: any;
     try {
@@ -101,43 +137,164 @@ export class PaymentsService {
         headers: {
           Authorization: authHeader,
           'Content-Type': 'application/json',
+          'Idempotency-Key': idempotencyKey,
         },
         body: JSON.stringify({
           paymentKey: dto.paymentKey,
           orderId: dto.orderId,
           amount: dto.amount,
         }),
+        signal: AbortSignal.timeout(timeoutMs),
       });
 
-      tossResponse = await res.json();
-
       if (!res.ok) {
-        // 토스가 에러를 반환한 경우 — message/code를 그대로 올려보냄
+        try {
+          tossResponse = await res.json();
+        } catch {
+          tossResponse = undefined;
+        }
+
+        if (tossResponse?.code === 'IDEMPOTENT_REQUEST_PROCESSING') {
+          throw new ConflictException({
+            statusCode: 409,
+            code: 'IDEMPOTENT_REQUEST_PROCESSING',
+            message:
+              '같은 결제 요청이 처리 중입니다. 잠시 후 같은 정보로 다시 시도해주세요.',
+            retryable: true,
+            orderId: dto.orderId,
+            paymentKey: dto.paymentKey,
+          });
+        }
+
+        // 결제키나 응답 본문 전체를 로그에 남기지 않는다.
         this.logger.error(
-          `토스 승인 실패: ${JSON.stringify(tossResponse)}`,
+          `토스 승인 실패: order=${dto.orderId}, ` +
+            `httpStatus=${res.status}, code=${String(tossResponse?.code)}`,
         );
+        if (res.status >= 500) {
+          throw new ServiceUnavailableException({
+            statusCode: 503,
+            code: 'TOSS_SERVICE_UNAVAILABLE',
+            message:
+              '결제 승인 서버가 일시적으로 응답하지 않습니다. 같은 결제 정보로 다시 시도해주세요.',
+            retryable: true,
+            orderId: dto.orderId,
+          });
+        }
         throw new BadRequestException(
           tossResponse?.message ?? '토스 결제 승인에 실패했습니다.',
         );
       }
+
+      tossResponse = await res.json();
     } catch (err: any) {
-      if (err instanceof BadRequestException) throw err;
-      this.logger.error(`토스 API 호출 오류: ${err?.message}`);
-      throw new BadRequestException('토스 결제 서버와 통신에 실패했습니다.');
+      if (
+        err instanceof BadRequestException ||
+        err instanceof ConflictException ||
+        err instanceof ServiceUnavailableException
+      ) {
+        throw err;
+      }
+      this.logger.error(
+        `토스 API 통신 오류: order=${dto.orderId}, responseReceived=false`,
+      );
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'TOSS_COMMUNICATION_FAILED',
+        message:
+          '결제 승인 서버와 통신하지 못했습니다. 같은 결제 정보로 다시 시도해주세요.',
+        retryable: true,
+        orderId: dto.orderId,
+      });
+    }
+
+    const paymentKeyMatches = tossResponse?.paymentKey === dto.paymentKey;
+    const orderIdMatches = tossResponse?.orderId === dto.orderId;
+    const amountMatches =
+      Number(tossResponse?.totalAmount) === Number(dto.amount);
+    const statusIsDone = tossResponse?.status === 'DONE';
+    if (
+      !paymentKeyMatches ||
+      !orderIdMatches ||
+      !amountMatches ||
+      !statusIsDone
+    ) {
+      this.logger.error(
+        '토스 승인 응답 불일치: ' +
+          `order=${dto.orderId}, ` +
+          `paymentKeyMatch=${paymentKeyMatches}, ` +
+          `orderIdMatch=${orderIdMatches}, ` +
+          `amountMatch=${amountMatches}, ` +
+          `status=${String(tossResponse?.status)}`,
+      );
+      throw new BadGatewayException({
+        statusCode: 502,
+        code: 'TOSS_PAYMENT_MISMATCH',
+        message:
+          '결제 승인 응답이 주문 정보와 일치하지 않습니다. 결제 내역을 확인해주세요.',
+        retryable: false,
+        orderId: dto.orderId,
+      });
     }
 
     // ── 3. 주문 상태를 PAID로 변경 + paymentKey 저장 ──────
-    const { error: updateError } = await this.supabase.client
-      .from('orders')
-      .update({
-        status: 'PAID',
-        payment_key: dto.paymentKey,
-      })
-      .eq('id', dto.orderId);
+    const { data: updatedOrder, error: updateError } =
+      await this.supabase.client
+        .from('orders')
+        .update({
+          status: 'PAID',
+          payment_key: dto.paymentKey,
+        })
+        .eq('id', dto.orderId)
+        .eq('status', 'PENDING')
+        .select('id, status, payment_key')
+        .maybeSingle();
 
-    if (updateError) {
-      // 토스 승인은 성공했는데 DB 업데이트 실패 — 로그 남기고 경고
-      this.logger.error(`주문 상태 업데이트 실패: ${updateError.message}`);
+    if (
+      updateError ||
+      !updatedOrder ||
+      updatedOrder.status !== 'PAID' ||
+      updatedOrder.payment_key !== dto.paymentKey
+    ) {
+      const { data: reconciledOrder } = await this.supabase.client
+        .from('orders')
+        .select('id, status, payment_key')
+        .eq('id', dto.orderId)
+        .single();
+
+      if (
+        reconciledOrder?.status === 'PAID' &&
+        reconciledOrder.payment_key === dto.paymentKey
+      ) {
+        this.logger.warn(
+          `결제 상태가 다른 요청에서 이미 동기화됨: order=${dto.orderId}`,
+        );
+        return {
+          alreadyPaid: true,
+          reconciled: true,
+          orderId: dto.orderId,
+          status: 'PAID',
+          paymentKey: dto.paymentKey,
+          method: tossResponse?.method,
+          approvedAt: tossResponse?.approvedAt,
+          totalAmount: tossResponse?.totalAmount,
+        };
+      }
+
+      this.logger.error(
+        `주문 상태 업데이트 실패: ${
+          updateError?.message ?? 'pending order update matched no row'
+        }`,
+      );
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'PAYMENT_APPROVED_DB_SYNC_PENDING',
+        message:
+          '결제는 승인됐지만 주문 상태 저장을 확인하지 못했습니다. 같은 결제 정보로 다시 시도해주세요.',
+        retryable: true,
+        orderId: dto.orderId,
+        paymentKey: dto.paymentKey,
+      });
     }
 
     return {
@@ -200,9 +357,7 @@ export class PaymentsService {
       tossResponse = await res.json();
 
       if (!res.ok) {
-        this.logger.error(
-          `토스 환불 실패: ${JSON.stringify(tossResponse)}`,
-        );
+        this.logger.error(`토스 환불 실패: ${JSON.stringify(tossResponse)}`);
         throw new BadRequestException(
           tossResponse?.message ?? '환불에 실패했습니다.',
         );
@@ -210,9 +365,7 @@ export class PaymentsService {
     } catch (err: any) {
       if (err instanceof BadRequestException) throw err;
       this.logger.error(`토스 환불 API 호출 오류: ${err?.message}`);
-      throw new BadRequestException(
-        '토스 결제 서버와 통신에 실패했습니다.',
-      );
+      throw new BadRequestException('토스 결제 서버와 통신에 실패했습니다.');
     }
 
     // 최신 cancel 정보 추출 — cancels 배열의 마지막 항목이 가장 최근 취소

@@ -1494,8 +1494,8 @@ class MenuItem {
 - `backend/test/orders.postgres-spec.ts`
 - `backend/test/support/disposable-postgres.ts`
 
-2026-07-29 현재 체크포인트의 실제 결과는 기본 Jest **6개 스위트·30개 테스트**,
-PostgreSQL 전용 Jest **1개 스위트·4개 테스트**, NestJS 빌드 통과다. PostgreSQL
+2026-07-29 현재 체크포인트의 실제 결과는 기본 Jest **7개 스위트·47개 테스트**,
+PostgreSQL 전용 Jest **2개 스위트·5개 테스트**, NestJS 빌드 통과다. PostgreSQL
 검사는 일회용 `postgres:16-alpine`에서 수행했으며 운영 DB 마이그레이션이나
 라이브 Toss 결제를 실행한 결과가 아니다. 이후 추가한 하드닝 테스트는 실제 실행
 결과가 생기기 전까지 통과로 기록하지 않는다.

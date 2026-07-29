@@ -158,6 +158,7 @@ flutter analyze                                # 에러 0건이어야 정상
 | `JWT_EXPIRES_IN` | JWT 만료 (기본 `7d`) | |
 | `TOSS_SECRET_KEY` | Toss Payments 시크릿 키 | 테스트는 `test_sk_...` |
 | `TOSS_API_BASE_URL` | Toss API 베이스 | 기본 `https://api.tosspayments.com` |
+| `TOSS_API_TIMEOUT_MS` | 결제 승인 응답 제한 시간(100~60000ms) | 기본 `10000` |
 | `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET` | 네이버 검색 API (식당 메타) | crawl 모듈에서 사용 |
 | `KAKAO_REST_API_KEY` | 카카오 로컬 API (좌표 / 식당) | crawl · recommendations 폴백 |
 | `GEMINI_API_KEY` | Gemini LLM API 키 | 미설정 시 AI 메뉴/식당 폴백 비활성 |
@@ -227,8 +228,8 @@ Flutter 측 키(카카오 앱 키, Toss 클라이언트 키)는 `lib/core/config
 - `backend/test/orders.postgres-spec.ts`
 - `backend/test/support/disposable-postgres.ts`
 
-2026-07-29 현재 체크포인트에서 기본 Jest는 **6개 스위트·30개 테스트**, 실제
-PostgreSQL 계약 검사는 **1개 스위트·4개 테스트**, NestJS 빌드는 통과했습니다.
+2026-07-29 현재 체크포인트에서 기본 Jest는 **7개 스위트·47개 테스트**, 실제
+PostgreSQL 계약 검사는 **2개 스위트·5개 테스트**, NestJS 빌드는 통과했습니다.
 이는 비운영 일회용 PostgreSQL 검증 결과이며 운영 DB 마이그레이션이나 라이브 결제
 검증을 뜻하지 않습니다.
 
