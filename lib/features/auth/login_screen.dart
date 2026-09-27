@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kDebugMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
@@ -5,6 +6,7 @@ import '../../core/debug/debug_toast.dart';
 import '../../services/kakao_auth_service.dart';
 import '../../services/auth_api_service.dart';
 import '../../providers/user_provider.dart';
+import 'email_otp_screen.dart';
 import 'phone_verify_screen.dart';
 import 'signup_screen.dart';
 
@@ -28,10 +30,7 @@ import 'signup_screen.dart';
 // ══════════════════════════════════════════════════════════
 
 class LoginScreen extends ConsumerStatefulWidget {
-  const LoginScreen({
-    super.key,
-    required this.onLoginSuccess,
-  });
+  const LoginScreen({super.key, required this.onLoginSuccess});
 
   /// 로그인 성공 콜백
   /// [nextStep]: 서버가 지정한 다음 화면 (main.dart에서 분기)
@@ -42,7 +41,6 @@ class LoginScreen extends ConsumerStatefulWidget {
 }
 
 class _LoginScreenState extends ConsumerState<LoginScreen> {
-
   // ── 서비스 인스턴스 ──────────────────────────────────────
   static const _kakaoAuthService = KakaoAuthService();
   static const _authApiService = AuthApiService();
@@ -85,22 +83,24 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
     if (!result.isSuccess) {
       setState(() => _isKakaoLoading = false);
+      if (result.isCancelled) return;
       _showError(result.errorMessage ?? '로그인에 실패했어요.');
       return;
     }
 
-    final authResponse = await _authApiService.loginWithKakao(
+    final authResult = await _authApiService.loginWithKakao(
       result.kakaoAccessToken!,
     );
 
     if (!mounted) return;
     setState(() => _isKakaoLoading = false);
 
-    if (authResponse == null) {
-      _showError('서버 연결에 실패했어요. 서버가 실행 중인지 확인해주세요.');
+    if (!authResult.isSuccess || authResult.response == null) {
+      _showError(authResult.errorMessage ?? '카카오 로그인에 실패했어요.');
       return;
     }
 
+    final authResponse = authResult.response!;
     // Riverpod + SharedPreferences에 저장 → 자동로그인 가능
     await ref.read(userProvider.notifier).setUser(authResponse);
     if (!mounted) return;
@@ -135,6 +135,23 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     setState(() => _isEmailLoading = false);
 
     if (!result.isSuccess) {
+      if (result.requiresEmailVerification) {
+        final verificationToken = result.verificationToken;
+        if (verificationToken == null || verificationToken.isEmpty) {
+          _showError('이메일 인증 세션을 시작하지 못했습니다. 다시 로그인해주세요.');
+          return;
+        }
+        Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => EmailOtpScreen(
+              email: email,
+              verificationToken: verificationToken,
+              onComplete: widget.onLoginSuccess,
+            ),
+          ),
+        );
+        return;
+      }
       _showError(result.errorMessage ?? '로그인에 실패했습니다.');
       return;
     }
@@ -165,8 +182,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PhoneVerifyScreen(
-          nextStep: 'HOME',          // 백엔드가 응답으로 덮어쓸 기본값
-          allowSkip: false,           // 단독 로그인 흐름이므로 건너뛰기 비활성
+          nextStep: 'HOME', // 백엔드가 응답으로 덮어쓸 기본값
+          allowSkip: false, // 단독 로그인 흐름이므로 건너뛰기 비활성
           onComplete: ({required String nextStep}) {
             widget.onLoginSuccess(nextStep: nextStep);
           },
@@ -196,14 +213,15 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
       backgroundColor: AppColors.background,
       // 키보드 올라올 때 화면이 자동으로 줄어들어 입력창이 가려지지 않게
       resizeToAvoidBottomInset: true,
-      // 시연용 시드 로그인 — DEV_PROMOTE_ENABLED 가드가 백엔드에 있어
-      // 운영 EC2 에서는 자동으로 403. 시연 시에만 의미 있음.
-      floatingActionButton: FloatingActionButton.small(
-        onPressed: _openSeedLoginDialog,
-        backgroundColor: Colors.deepPurple,
-        tooltip: '시연용 시드 로그인',
-        child: const Icon(Icons.science_outlined, color: Colors.white),
-      ),
+      // 시연용 계정 선택은 개발 빌드에서만 노출한다.
+      floatingActionButton: kDebugMode
+          ? FloatingActionButton.small(
+              onPressed: _openSeedLoginDialog,
+              backgroundColor: Colors.deepPurple,
+              tooltip: '시연용 시드 로그인',
+              child: const Icon(Icons.science_outlined, color: Colors.white),
+            )
+          : null,
       body: SafeArea(
         child: SingleChildScrollView(
           padding: const EdgeInsets.symmetric(
@@ -211,7 +229,8 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
           ),
           child: ConstrainedBox(
             constraints: BoxConstraints(
-              minHeight: MediaQuery.of(context).size.height -
+              minHeight:
+                  MediaQuery.of(context).size.height -
                   MediaQuery.of(context).padding.top -
                   MediaQuery.of(context).padding.bottom,
             ),
@@ -487,47 +506,33 @@ class _LoginScreenState extends ConsumerState<LoginScreen> {
 
   Widget _buildKakaoButton() {
     final isLoading = _isKakaoLoading || _isEmailLoading;
-    return GestureDetector(
-      onTap: isLoading ? null : _handleKakaoLogin,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 150),
-        width: double.infinity,
-        height: 52,
-        decoration: BoxDecoration(
-          // 카카오 공식 로그인 버튼 색상: #FEE500
-          color: isLoading
-              ? const Color(0xFFFEE500).withAlpha(160)
-              : const Color(0xFFFEE500),
-          borderRadius: BorderRadius.circular(AppRadius.button),
+    return SizedBox(
+      width: double.infinity,
+      height: 52,
+      child: ElevatedButton.icon(
+        onPressed: isLoading ? null : _handleKakaoLogin,
+        style: ElevatedButton.styleFrom(
+          backgroundColor: const Color(0xFFFEE500),
+          foregroundColor: const Color(0xFF3C1E1E),
+          disabledBackgroundColor: const Color(0xFFFEE500).withAlpha(160),
+          elevation: 0,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppRadius.button),
+          ),
         ),
-        child: Row(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(
-              Icons.chat_bubble_rounded,
-              size: 22,
-              color: Colors.black.withAlpha(210),
-            ),
-            const SizedBox(width: 8),
-            if (_isKakaoLoading)
-              SizedBox(
+        icon: const Icon(Icons.chat_bubble_rounded, size: 22),
+        label: _isKakaoLoading
+            ? const SizedBox(
                 width: 20,
                 height: 20,
-                child: CircularProgressIndicator(
-                  strokeWidth: 2.5,
-                  color: Colors.black.withAlpha(180),
-                ),
+                child: CircularProgressIndicator(strokeWidth: 2.5),
               )
-            else
-              Text(
+            : Text(
                 '카카오로 시작하기',
                 style: AppTextStyles.bodyMedium.copyWith(
-                  color: Colors.black.withAlpha(217),
                   fontWeight: FontWeight.w700,
                 ),
               ),
-          ],
-        ),
       ),
     );
   }

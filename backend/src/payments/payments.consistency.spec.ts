@@ -20,6 +20,7 @@ type StoredPaymentOrder = {
   session_id: string;
   user_id: string;
   payment_key: string | null;
+  payment_method: string;
 };
 
 class PaymentTestDatabase {
@@ -30,6 +31,7 @@ class PaymentTestDatabase {
     session_id: '33333333-3333-4333-8333-333333333333',
     user_id: USER_ID,
     payment_key: null,
+    payment_method: 'TOSS',
   };
 
   constructor(
@@ -37,6 +39,7 @@ class PaymentTestDatabase {
     private readonly updateShouldMiss = false,
     private readonly concurrentPaymentOnMiss = false,
     private readonly updateReturnsMismatchedRow = false,
+    private readonly concurrentCancellationOnMiss = false,
   ) {}
 
   readonly client = {
@@ -76,6 +79,10 @@ class PaymentTestDatabase {
                 if (this.concurrentPaymentOnMiss) {
                   this.order.status = 'PAID';
                   this.order.payment_key = PAYMENT_KEY;
+                }
+                if (this.concurrentCancellationOnMiss) {
+                  this.order.status = 'CANCELLED';
+                  this.order.payment_key = null;
                 }
                 return { data: null, error: null };
               }
@@ -360,6 +367,103 @@ describe('Payment confirmation consistency (HTTP acceptance)', () => {
     });
   });
 
+  it('immediately refunds when cancellation wins after Toss approval', async () => {
+    await app.close();
+    database = new PaymentTestDatabase(0, true, false, false, true);
+    app = await createTestApplication(database);
+
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          paymentKey: PAYMENT_KEY,
+          orderId: ORDER_ID,
+          status: 'DONE',
+          totalAmount: AMOUNT,
+          method: '카드',
+          approvedAt: '2026-08-05T16:00:00+09:00',
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          paymentKey: PAYMENT_KEY,
+          orderId: ORDER_ID,
+          status: 'CANCELED',
+          cancels: [
+            {
+              cancelStatus: 'DONE',
+              cancelAmount: AMOUNT,
+              canceledAt: '2026-08-05T16:00:01+09:00',
+            },
+          ],
+        }),
+      }) as unknown as typeof fetch;
+
+    const response = await request(app.getHttpServer())
+      .post('/api/payments/confirm')
+      .send({ paymentKey: PAYMENT_KEY, orderId: ORDER_ID, amount: AMOUNT });
+
+    const fetchMock = global.fetch as jest.MockedFunction<typeof fetch>;
+    const [, cancelInit] = fetchMock.mock.calls[1];
+    expect({
+      httpStatus: response.status,
+      code: response.body.code,
+      compensated: response.body.compensated,
+      retryable: response.body.retryable,
+      storedStatus: database.order.status,
+      tossCalls: fetchMock.mock.calls.length,
+      cancelIdempotencyKey: (
+        cancelInit?.headers as Record<string, string>
+      )['Idempotency-Key'],
+    }).toEqual({
+      httpStatus: 409,
+      code: 'PAYMENT_APPROVED_AFTER_CANCELLATION_REFUNDED',
+      compensated: true,
+      retryable: false,
+      storedStatus: 'CANCELLED',
+      tossCalls: 2,
+      cancelIdempotencyKey: `lunchsync-cancel:${ORDER_ID}`,
+    });
+  });
+
+  it('reports reconciliation required when the race compensation cannot be confirmed', async () => {
+    await app.close();
+    database = new PaymentTestDatabase(0, true, false, false, true);
+    app = await createTestApplication(database);
+
+    global.fetch = jest
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        status: 200,
+        json: async () => ({
+          paymentKey: PAYMENT_KEY,
+          orderId: ORDER_ID,
+          status: 'DONE',
+          totalAmount: AMOUNT,
+        }),
+      })
+      .mockRejectedValueOnce(
+        new Error('refund provider connection reset'),
+      ) as unknown as typeof fetch;
+
+    const response = await request(app.getHttpServer())
+      .post('/api/payments/confirm')
+      .send({ paymentKey: PAYMENT_KEY, orderId: ORDER_ID, amount: AMOUNT });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      code: 'PAYMENT_APPROVED_CANCEL_RECONCILIATION_REQUIRED',
+      retryable: true,
+      reconciliationRequired: true,
+      orderId: ORDER_ID,
+    });
+  });
+
   it('does not trust an updated row whose stored values do not match the payment', async () => {
     await app.close();
     database = new PaymentTestDatabase(0, false, false, true);
@@ -441,6 +545,23 @@ describe('Payment confirmation consistency (HTTP acceptance)', () => {
       orderId: ORDER_ID,
       tossCalls: 0,
     });
+  });
+
+  it('does not approve a cash order through the Toss confirmation route', async () => {
+    database.order.payment_method = 'CASH';
+
+    const response = await request(app.getHttpServer())
+      .post('/api/payments/confirm')
+      .send({ paymentKey: PAYMENT_KEY, orderId: ORDER_ID, amount: AMOUNT });
+
+    expect(response.status).toBe(409);
+    expect(response.body).toMatchObject({
+      code: 'PAYMENT_METHOD_NOT_TOSS',
+      retryable: false,
+      orderId: ORDER_ID,
+    });
+    expect(global.fetch).not.toHaveBeenCalled();
+    expect(database.order.status).toBe('PENDING');
   });
 
   it.each([

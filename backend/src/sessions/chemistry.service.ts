@@ -77,7 +77,7 @@ export class ChemistryService {
     // 1) 캐시 hit 우선 확인.
     const cached = this.cache.get(sessionId);
     if (cached && cached.expiresAt > Date.now()) {
-      this.logger.debug(`[Chemistry] 캐시 hit session=${sessionId}`);
+      this.logger.debug('CHEMISTRY_CACHE_HIT');
       return cached.result;
     }
 
@@ -163,10 +163,8 @@ export class ChemistryService {
           freq.set(c, (freq.get(c) ?? 0) + 1);
         }
       }
-    } catch (err) {
-      this.logger.warn(
-        `[Chemistry] orders 카테고리 수집 실패: ${(err as Error).message}`,
-      );
+    } catch {
+      this.logger.warn('CHEMISTRY_ORDER_CATEGORY_LOOKUP_FAILED');
     }
 
     // (b) votes → 멤버가 투표한 식당의 카테고리도 가산.
@@ -190,10 +188,8 @@ export class ChemistryService {
           freq.set(c, (freq.get(c) ?? 0) + 0.5);
         }
       }
-    } catch (err) {
-      this.logger.warn(
-        `[Chemistry] votes 카테고리 수집 실패: ${(err as Error).message}`,
-      );
+    } catch {
+      this.logger.warn('CHEMISTRY_VOTE_CATEGORY_LOOKUP_FAILED');
     }
 
     // (c) 이 세션의 winner 식당 카테고리도 +1 — "오늘 우리가 고른 식당" 강조.
@@ -208,14 +204,12 @@ export class ChemistryService {
         for (const c of cats) {
           freq.set(c, (freq.get(c) ?? 0) + 1);
         }
-      } catch (err) {
+      } catch {
         // 미사용 — 디버그 로그만.
-        this.logger.debug(
-          `[Chemistry] winner 카테고리 조회 실패(무시): ${(err as Error).message}`,
-        );
+        this.logger.debug('CHEMISTRY_WINNER_CATEGORY_LOOKUP_FAILED');
       }
       // sessionId 는 로그 컨텍스트 용도 — 디버그.
-      this.logger.debug(`[Chemistry] winner 가산 session=${sessionId}`);
+      this.logger.debug('CHEMISTRY_WINNER_CATEGORY_APPLIED');
     }
 
     return freq;
@@ -324,8 +318,8 @@ export class ChemistryService {
       if (!text) return null;
 
       return this.parseGeminiResponse(text);
-    } catch (err) {
-      this.logger.warn(`[Chemistry] Gemini 예외: ${(err as Error).message}`);
+    } catch {
+      this.logger.warn('CHEMISTRY_GEMINI_REQUEST_FAILED');
       return null;
     }
   }
@@ -383,10 +377,8 @@ JSON 객체만 반환:`;
         : [];
 
       return { score, label, tone, topCategories };
-    } catch (err) {
-      this.logger.warn(
-        `[Chemistry] Gemini JSON 파싱 실패: ${(err as Error).message}`,
-      );
+    } catch {
+      this.logger.warn('CHEMISTRY_GEMINI_RESPONSE_PARSE_FAILED');
       return null;
     }
   }

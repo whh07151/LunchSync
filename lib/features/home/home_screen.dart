@@ -33,6 +33,130 @@ import '../../services/tournaments_api_service.dart';
 import '../../models/session.dart';
 import '../my_info/favorites_list_screen.dart';
 import '../tournament/tournament_screen.dart';
+import 'widgets/home_primary_layout.dart';
+
+/// 홈 앱바의 알림 진입점.
+///
+/// 화면에 보이는 배지는 10개부터 `9+`로 줄여 쓰되, 보조 기술에는 실제
+/// 미읽음 개수를 전달한다.
+class HomeNotificationButton extends StatelessWidget {
+  const HomeNotificationButton({
+    super.key,
+    required this.unreadCount,
+    required this.onPressed,
+  });
+
+  final int unreadCount;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    final normalizedCount = unreadCount < 0 ? 0 : unreadCount;
+    final semanticLabel = '알림, 읽지 않음 $normalizedCount개';
+
+    return Semantics(
+      label: semanticLabel,
+      button: true,
+      onTap: onPressed,
+      excludeSemantics: true,
+      child: IconButton(
+        tooltip: semanticLabel,
+        onPressed: onPressed,
+        icon: Stack(
+          clipBehavior: Clip.none,
+          children: [
+            const Icon(
+              Icons.notifications_outlined,
+              color: AppColors.textPrimary,
+            ),
+            if (normalizedCount > 0)
+              Positioned(
+                top: -4,
+                right: -4,
+                child: Container(
+                  constraints: const BoxConstraints(
+                    minWidth: 14,
+                    minHeight: 14,
+                  ),
+                  padding: const EdgeInsets.symmetric(horizontal: 3),
+                  decoration: BoxDecoration(
+                    color: AppColors.error,
+                    borderRadius: BorderRadius.circular(8),
+                    border: Border.all(color: Colors.white, width: 1.5),
+                  ),
+                  alignment: Alignment.center,
+                  child: Text(
+                    normalizedCount > 9 ? '9+' : '$normalizedCount',
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontSize: 9,
+                      fontWeight: FontWeight.w700,
+                      height: 1.0,
+                    ),
+                  ),
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// 오늘의 세션 조회가 실패했을 때 빈 상태 대신 표시하는 재시도 카드.
+class HomeTodaySessionsErrorCard extends StatelessWidget {
+  const HomeTodaySessionsErrorCard({
+    super.key,
+    required this.message,
+    required this.onRetry,
+  });
+
+  final String message;
+  final VoidCallback onRetry;
+
+  @override
+  Widget build(BuildContext context) {
+    return Semantics(
+      container: true,
+      liveRegion: true,
+      label: '오늘의 세션 조회 오류. $message',
+      child: AppHighlightCard(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                const Icon(
+                  Icons.cloud_off_rounded,
+                  color: AppColors.error,
+                  semanticLabel: '조회 오류',
+                ),
+                const SizedBox(width: AppSpacing.sm),
+                Expanded(
+                  child: Text(
+                    '오늘의 세션을 불러오지 못했어요',
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: AppSpacing.sm),
+            Text(
+              message,
+              style: AppTextStyles.bodySmall.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+            const SizedBox(height: AppSpacing.sm + 4),
+            AppOutlinedButton(label: '다시 시도', height: 44, onPressed: onRetry),
+          ],
+        ),
+      ),
+    );
+  }
+}
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-06 홈 대시보드 화면
@@ -78,11 +202,19 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // 로딩 중에는 null, 조회 완료 후 실제 값으로 채움
   // Session 리스트 첫 번째 항목을 "오늘의 세션"으로 사용
   List<Session>? _todaySessions;
+  String? _sessionsLoadError;
   List<RestaurantDto>? _recommendedRestaurants;
 
   // 각 섹션 로딩 상태 — UI에서 스켈레톤/스피너 표시용
   bool _isSessionsLoading = true;
   bool _isRestaurantsLoading = true;
+
+  // 조회 성공이 확인되기 전에는 기존 세션 유무를 알 수 없으므로 새 세션 생성
+  // CTA를 노출하지 않는다. 실패를 "세션 없음"으로 오인해 중복 생성하는 것을 방지.
+  bool get _canCreateSession =>
+      !_isSessionsLoading &&
+      _sessionsLoadError == null &&
+      _todaySessions != null;
 
   // ── 내 즐겨찾기 위젯 상태 (배민 패턴) ─────────────────
   // 홈에서 가로 스크롤 칩으로 즐겨찾기한 식당 미리보기.
@@ -111,10 +243,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // 앱 진입 + 이동 감지 기반으로 카카오 로컬 API에서 주변 식당을 DB에 동기화.
   // 쿨다운으로 API 쿼터 과다 소모를 방지한다(카카오는 1일 10k 호출 제한).
   StreamSubscription<Position>? _positionSub;
-  DateTime? _lastCrawlAt;       // 마지막 크롤링 성공 시각 — 쿨다운 계산용
-  static const _kCrawlCooldown   = Duration(minutes: 5);   // 동일 위치라도 5분 대기
-  static const _kCrawlRadiusM    = 1000;                   // 크롤 반경(미터)
-  static const _kCrawlMoveFilter = 500;                    // 재크롤 기준 이동 거리(미터)
+  DateTime? _lastCrawlAt; // 마지막 크롤링 성공 시각 — 쿨다운 계산용
+  static const _kCrawlCooldown = Duration(minutes: 5); // 동일 위치라도 5분 대기
+  static const _kCrawlRadiusM = 1000; // 크롤 반경(미터)
+  static const _kCrawlMoveFilter = 500; // 재크롤 기준 이동 거리(미터)
 
   // ── 사용자 현재 위치(거리 표시용) ──────────────────────
   // 자동 크롤 스트림에서 받은 좌표를 그대로 재사용 — Geolocator 권한이 없거나
@@ -200,9 +332,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             // selectedMembers는 이미 sessionProvider에 저장된 상태이므로
             // SessionCreateScreen에서 ref.watch(sessionProvider).selectedMembers 로 읽음
             Navigator.of(context).push(
-              MaterialPageRoute(
-                builder: (_) => const SessionCreateScreen(),
-              ),
+              MaterialPageRoute(builder: (_) => const SessionCreateScreen()),
             );
           },
         ),
@@ -242,18 +372,30 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // 첫 번째 항목을 홈 화면 "오늘의 세션" 카드로 노출.
   // 세션이 없으면 null로 두고 "시작하기" 유도 상태를 표시.
   Future<void> _loadTodaySessions() async {
+    if (mounted && !_isSessionsLoading) {
+      setState(() => _isSessionsLoading = true);
+    }
+
     final token = ref.read(userProvider).accessToken;
     if (token == null) {
-      if (mounted) setState(() => _isSessionsLoading = false);
+      if (mounted) {
+        setState(() {
+          _todaySessions = null;
+          _sessionsLoadError = '로그인 정보가 없어 오늘의 세션을 불러올 수 없어요.';
+          _isSessionsLoading = false;
+        });
+      }
       return;
     }
 
-    final sessions = await const SessionsApiService()
-        .getTodaySessions(accessToken: token);
+    final result = await const SessionsApiService().getTodaySessionsResult(
+      accessToken: token,
+    );
 
     if (!mounted) return;
     setState(() {
-      _todaySessions = sessions;
+      _todaySessions = result.sessions;
+      _sessionsLoadError = result.message;
       _isSessionsLoading = false;
     });
   }
@@ -277,7 +419,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       // 권한 상태 플래그 갱신 — 빈 상태 카피 분기에 사용.
       setState(() => _hasLocationPermission = pos != null);
       if (pos != null) {
-        _updateUserCoord(pos);            // 거리 표기용 좌표 갱신
+        _updateUserCoord(pos); // 거리 표기용 좌표 갱신
         await _triggerCrawlIfCooled(pos);
       }
     }();
@@ -287,7 +429,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         .positionStream(distanceFilterMeters: _kCrawlMoveFilter)
         .listen(
           (pos) {
-            _updateUserCoord(pos);  // 이동 시마다 거리 표기용 좌표도 갱신
+            _updateUserCoord(pos); // 이동 시마다 거리 표기용 좌표도 갱신
             // async 함수를 await 없이 호출해 스트림 콜백은 즉시 반환
             _triggerCrawlIfCooled(pos);
           },
@@ -348,8 +490,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final token = ref.read(userProvider).accessToken;
     if (token == null) return;
 
-    final list = await const NotificationsApiService()
-        .getMyNotifications(accessToken: token);
+    final list = await const NotificationsApiService().getMyNotifications(
+      accessToken: token,
+    );
     if (!mounted) return;
     setState(() {
       _unreadNotifications = list.where((n) => !n.isRead).length;
@@ -358,9 +501,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   // 알림함 진입 → 닫고 돌아오면 미읽음 수 재조회 (서버에서 read 처리됐을 수 있음)
   Future<void> _openNotifications() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const NotificationScreen()),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const NotificationScreen()));
     if (!mounted) return;
     _loadUnreadNotifications();
   }
@@ -375,8 +518,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       return;
     }
 
-    final list = await const RestaurantsApiService()
-        .getRestaurants(accessToken: token, limit: 10);
+    final list = await const RestaurantsApiService().getRestaurants(
+      accessToken: token,
+      limit: 10,
+    );
 
     if (!mounted) return;
     setState(() {
@@ -396,8 +541,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       if (mounted) setState(() => _isFavoritesLoading = false);
       return;
     }
-    final list =
-        await const FavoritesApiService().list(accessToken: token);
+    final list = await const FavoritesApiService().list(accessToken: token);
     if (!mounted) return;
     setState(() {
       _myFavorites = list;
@@ -434,9 +578,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // 사용자가 직접 우승을 만든 직후에는 가장 신선한 트렌딩을 보고 싶어할 가능성이
   // 높아 복귀 시점에 한 번 더 호출. 백엔드는 우승 INSERT 1건이 즉시 반영됨.
   Future<void> _openTournament() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const TournamentScreen()),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const TournamentScreen()));
     if (!mounted) return;
     _loadTrendingRestaurants();
   }
@@ -445,9 +589,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // 사용자가 목록에서 항목을 탭해 식당 상세로 들어가 하트 해제 후
   // 두 번 pop 으로 홈에 돌아오면, 홈 위젯도 즉시 반영되어야 함.
   Future<void> _openFavoritesList() async {
-    await Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const FavoritesListScreen()),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const FavoritesListScreen()));
     if (!mounted) return;
     _loadMyFavorites();
   }
@@ -488,45 +632,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
       // ── 오른쪽: 알림 아이콘 버튼 ─────────────────────
       actions: [
-        IconButton(
-          // CU-22 알림함 화면으로 이동 (push: 뒤로가기로 홈 복귀)
+        HomeNotificationButton(
+          unreadCount: _unreadNotifications,
           onPressed: _openNotifications,
-          icon: Stack(
-            // Stack: 알림 배지(빨간 점)를 아이콘 위에 겹쳐서 표시하기 위해 사용
-            clipBehavior: Clip.none,
-            children: [
-              const Icon(
-                Icons.notifications_outlined,
-                color: AppColors.textPrimary,
-              ),
-              // ── 알림 배지 — 미읽음 알림이 1개 이상일 때만 표시 ──
-              // _unreadNotifications 가 9 이하면 숫자 표기, 10 이상이면 9+로.
-              if (_unreadNotifications > 0)
-                Positioned(
-                  top: -4,
-                  right: -4,
-                  child: Container(
-                    constraints: const BoxConstraints(minWidth: 14, minHeight: 14),
-                    padding: const EdgeInsets.symmetric(horizontal: 3),
-                    decoration: BoxDecoration(
-                      color: AppColors.error,
-                      borderRadius: BorderRadius.circular(8),
-                      border: Border.all(color: Colors.white, width: 1.5),
-                    ),
-                    alignment: Alignment.center,
-                    child: Text(
-                      _unreadNotifications > 9 ? '9+' : '$_unreadNotifications',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 9,
-                        fontWeight: FontWeight.w700,
-                        height: 1.0,
-                      ),
-                    ),
-                  ),
-                ),
-            ],
-          ),
         ),
         // 오른쪽 끝 여백
         const SizedBox(width: 4),
@@ -599,33 +707,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-
           // ── 인사말 헤더 섹션 ────────────────────────────
           _buildGreetingHeader(),
 
-          const SizedBox(height: AppSpacing.md),
+          const SizedBox(height: AppSpacing.lg),
 
-          // ── 빠른 실행 CTA 4개 ───────────────────────────
+          // 오늘 해야 할 일을 먼저, 보조 동작은 그다음에 보여 준다.
+          // 같은 콘텐츠를 모바일에서는 세로로, 넓은 웹에서는 나란히 배치한다.
           Padding(
             padding: const EdgeInsets.symmetric(
               horizontal: AppSpacing.screenHorizontal,
             ),
-            child: _buildQuickActions(),
-          ),
-
-          const SizedBox(height: AppSpacing.lg),
-
-          // ── 오늘의 세션 섹션 ────────────────────────────
-          _buildSectionTitle('오늘의 세션'),
-          const SizedBox(height: AppSpacing.sm),
-          Padding(
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.screenHorizontal,
+            child: HomePrimaryLayout(
+              todaySession: _buildTodaySession(),
+              quickActions: _buildQuickActions(),
             ),
-            child: _buildTodaySession(),
           ),
 
-          const SizedBox(height: AppSpacing.lg),
+          const SizedBox(height: AppSpacing.xl),
 
           // ── 내 즐겨찾기 섹션 (배민 "찜한 가게" 패턴, 2026-05-15 추가) ─
           // AI 추천 위에 두는 이유:
@@ -650,6 +749,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           _buildRecommendationSectionHeader(),
           const SizedBox(height: AppSpacing.sm),
 
+          const Padding(
+            padding: EdgeInsets.symmetric(
+              horizontal: AppSpacing.screenHorizontal,
+            ),
+            child: RestaurantDataNotice(),
+          ),
+          const SizedBox(height: AppSpacing.sm),
+
           // 가로 스크롤 식당 카드 목록
           // (와이어프레임: 홈에는 지도 X. 지도는 CU-15 "지도/리스트 토글"에서만)
           _buildRestaurantList(),
@@ -662,7 +769,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   // ── 인사말 헤더 위젯 ────────────────────────────────────
-  // 주황 그라디언트 배경 + 사용자 이름 + 소속
+  // 주황 단색 배경 + 사용자 이름 + 현재 해야 할 일
   // DB에서 조회한 실제 이름/소속을 userProvider를 통해 표시
   Widget _buildGreetingHeader() {
     final primary = Theme.of(context).colorScheme.primary;
@@ -670,56 +777,72 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // userProvider에서 실제 이름/소속 읽기
     // _loadUserProfile()이 완료되면 자동으로 리빌드됨
     final user = ref.watch(userProvider);
-    final userName = user.name ?? '...';       // 로딩 중이면 '...' 표시
-    final userOrg = user.org ?? '';            // 소속 미설정 시 빈 문자열
+    final userName = user.name ?? '...'; // 로딩 중이면 '...' 표시
+    final userOrg = user.org ?? ''; // 소속 미설정 시 빈 문자열
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.fromLTRB(
-        AppSpacing.screenHorizontal,
-        AppSpacing.md,
-        AppSpacing.screenHorizontal,
-        AppSpacing.xl,
-      ),
-      decoration: BoxDecoration(
-        // 그라디언트 배경: 주황 → 연한 주황으로 자연스럽게 변함
-        gradient: LinearGradient(
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-          colors: [
-            primary,
-            primary.withAlpha(180), // 오른쪽 아래로 갈수록 연해짐
+    return Semantics(
+      header: true,
+      label: userOrg.isNotEmpty
+          ? '$userName님, $userOrg의 오늘 점심'
+          : '$userName님의 오늘 점심',
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(
+          AppSpacing.screenHorizontal,
+          AppSpacing.md,
+          AppSpacing.screenHorizontal,
+          AppSpacing.xl,
+        ),
+        decoration: BoxDecoration(
+          color: primary,
+          // 헤더 하단 모서리만 둥글게 처리 (카드처럼 보이도록)
+          borderRadius: const BorderRadius.only(
+            bottomLeft: Radius.circular(AppRadius.bottomSheet),
+            bottomRight: Radius.circular(AppRadius.bottomSheet),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '$userName님, 오늘도 반가워요',
+                    style: AppTextStyles.heading2.copyWith(color: Colors.white),
+                  ),
+                ),
+                Container(
+                  width: 40,
+                  height: 40,
+                  decoration: BoxDecoration(
+                    color: Colors.white.withAlpha(34),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white.withAlpha(72)),
+                  ),
+                  child: const Icon(
+                    Icons.lunch_dining_rounded,
+                    color: Colors.white,
+                    semanticLabel: '점심',
+                  ),
+                ),
+              ],
+            ),
+
+            const SizedBox(height: AppSpacing.xs),
+
+            // 소속 + 문구
+            // userOrg가 비어 있으면 소속 부분 없이 문구만 표시
+            Text(
+              userOrg.isNotEmpty
+                  ? '$userOrg · 지금 참여할 세션부터 확인해 보세요'
+                  : '지금 참여할 세션부터 확인해 보세요',
+              style: AppTextStyles.bodyMedium.copyWith(
+                color: Colors.white.withAlpha(224),
+              ),
+            ),
           ],
         ),
-        // 헤더 하단 모서리만 둥글게 처리 (카드처럼 보이도록)
-        borderRadius: const BorderRadius.only(
-          bottomLeft: Radius.circular(AppRadius.bottomSheet),
-          bottomRight: Radius.circular(AppRadius.bottomSheet),
-        ),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-
-          // 인사말 문구: DB에서 조회한 실제 이름 표시
-          Text(
-            '안녕하세요, $userName님! 👋',
-            style: AppTextStyles.heading2.copyWith(
-              color: Colors.white,
-            ),
-          ),
-
-          const SizedBox(height: 4),
-
-          // 소속 + 문구
-          // userOrg가 비어 있으면 소속 부분 없이 문구만 표시
-          Text(
-            userOrg.isNotEmpty ? '$userOrg · 오늘 점심은 어디로?' : '오늘 점심은 어디로?',
-            style: AppTextStyles.bodyMedium.copyWith(
-              color: Colors.white.withAlpha(200),
-            ),
-          ),
-        ],
       ),
     );
   }
@@ -730,21 +853,24 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // CTA 버튼 데이터를 리스트로 관리
     // 새로운 버튼 추가 시 이 리스트에만 추가하면 됨
     final actions = [
-      _QuickAction(
-        icon: Icons.add_circle_rounded,
-        label: '점심 만들기',
-        // CU-08 멤버 선택 화면 진입 (세션 생성의 첫 단계)
-        // CU-09(세션 생성, 우현호) 완성 후 onNext에서 CU-09로 이동하도록 교체
-        onTap: () => _goToMemberSelect(),
-      ),
+      if (_canCreateSession)
+        _QuickAction(
+          icon: Icons.add_circle_rounded,
+          label: '점심 만들기',
+          emphasized: true,
+          // CU-08 멤버 선택 화면 진입 (세션 생성의 첫 단계)
+          // CU-09(세션 생성, 우현호) 완성 후 onNext에서 CU-09로 이동하도록 교체
+          onTap: () => _goToMemberSelect(),
+        ),
       _QuickAction(
         icon: Icons.person_add_rounded,
         label: '코드로 참가',
+        emphasized: true,
         // 초대 코드를 입력해 다른 사람의 세션에 참가하는 화면으로 이동
         onTap: () {
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const JoinSessionScreen()),
-          );
+          Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => const JoinSessionScreen()));
         },
       ),
       _QuickAction(
@@ -763,13 +889,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       ),
     ];
 
-    return GridView.count(
-      // GridView.count: 열 개수를 고정한 그리드 레이아웃
-      crossAxisCount: 4,      // 가로 4칸 (버튼 4개가 한 줄에 나란히)
-      shrinkWrap: true,       // 그리드가 내용물 크기만큼만 차지 (스크롤 안에 있으므로 필수)
-      physics: const NeverScrollableScrollPhysics(), // 그리드 자체는 스크롤 불가 (부모 스크롤 사용)
-      childAspectRatio: 0.9,
-      children: actions.map(_buildQuickActionItem).toList(),
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        final columns = constraints.maxWidth >= 620 ? 4 : 2;
+        return GridView.builder(
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: columns,
+            mainAxisExtent: 92,
+            crossAxisSpacing: AppSpacing.sm,
+            mainAxisSpacing: AppSpacing.sm,
+          ),
+          itemCount: actions.length,
+          shrinkWrap: true,
+          physics: const NeverScrollableScrollPhysics(),
+          itemBuilder: (context, index) =>
+              _buildQuickActionItem(actions[index]),
+        );
+      },
     );
   }
 
@@ -777,53 +913,53 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget _buildQuickActionItem(_QuickAction action) {
     final primary = Theme.of(context).colorScheme.primary;
 
-    return GestureDetector(
-      onTap: action.onTap,
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // ── 아이콘 원형 배경 ─────────────────────────
-          Container(
-            width: 52,
-            height: 52,
-            decoration: BoxDecoration(
-              // 연한 주황 배경 (primarySurface)
-              color: primary.withAlpha(20),
-              shape: BoxShape.circle,
+    final background = action.emphasized
+        ? CustomerColors.primarySurface
+        : AppColors.surface;
+
+    return Semantics(
+      button: true,
+      label: action.label,
+      child: Material(
+        color: background,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          side: BorderSide(
+            color: action.emphasized
+                ? primary.withAlpha(62)
+                : AppColors.divider,
+          ),
+        ),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          onTap: action.onTap,
+          borderRadius: BorderRadius.circular(AppRadius.card),
+          child: Padding(
+            padding: const EdgeInsets.symmetric(
+              horizontal: AppSpacing.sm,
+              vertical: AppSpacing.sm,
             ),
-            child: Icon(
-              action.icon,
-              color: primary,
-              size: 26,
+            child: Column(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                Icon(action.icon, color: primary, size: 28),
+                const SizedBox(height: AppSpacing.xs),
+                Text(
+                  action.label,
+                  style: AppTextStyles.label.copyWith(
+                    color: AppColors.textPrimary,
+                    fontWeight: action.emphasized
+                        ? FontWeight.w700
+                        : FontWeight.w600,
+                  ),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.center,
+                ),
+              ],
             ),
           ),
-
-          const SizedBox(height: 6),
-
-          // ── 버튼 레이블 ──────────────────────────────
-          Text(
-            action.label,
-            style: AppTextStyles.label.copyWith(
-              color: AppColors.textPrimary,
-              fontWeight: FontWeight.w500,
-            ),
-            textAlign: TextAlign.center,
-          ),
-        ],
-      ),
-    );
-  }
-
-  // ── 섹션 제목 위젯 (공통) ────────────────────────────────
-  // "오늘의 세션", "AI 추천 식당" 등의 섹션 헤더
-  Widget _buildSectionTitle(String title) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(
-        horizontal: AppSpacing.screenHorizontal,
-      ),
-      child: Text(
-        title,
-        style: AppTextStyles.heading3,
+        ),
       ),
     );
   }
@@ -843,10 +979,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           if (count > 0) ...[
             const SizedBox(width: AppSpacing.sm),
             Container(
-              padding: const EdgeInsets.symmetric(
-                horizontal: 8,
-                vertical: 3,
-              ),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
               decoration: BoxDecoration(
                 color: AppColors.backgroundGrey,
                 borderRadius: BorderRadius.circular(999),
@@ -1098,17 +1231,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             children: [
               const Text('🏆', style: TextStyle(fontSize: 18)),
               const SizedBox(width: 4),
-              Text(
-                '이번 주 토너먼트 인기 식당',
-                style: AppTextStyles.heading3,
-              ),
+              Text('이번 주 토너먼트 인기 식당', style: AppTextStyles.heading3),
               const SizedBox(width: AppSpacing.sm),
               // 개수 칩 — 즐겨찾기 헤더와 같은 톤(backgroundGrey + caption).
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 3,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: AppColors.backgroundGrey,
                   borderRadius: BorderRadius.circular(999),
@@ -1277,10 +1404,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               const SizedBox(width: AppSpacing.sm),
               // 기준 안내 칩 — 작고 부드러운 회색 톤.
               Container(
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 8,
-                  vertical: 3,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                 decoration: BoxDecoration(
                   color: AppColors.backgroundGrey,
                   borderRadius: BorderRadius.circular(999),
@@ -1399,9 +1523,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final token = ref.read(userProvider).accessToken;
     if (token == null) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('로그인이 풀렸어요. 다시 로그인해봐요')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(const SnackBar(content: Text('로그인이 풀렸어요. 다시 로그인해봐요')));
       }
       return;
     }
@@ -1415,9 +1539,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
     if (result.isSuccess) {
       // 성공 — 친근한 완료 안내 + 목록 새로고침
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('"${session.name}" 세션을 삭제했어요')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('"${session.name}" 세션을 삭제했어요')));
       // 화면 상의 세션 카드가 사라지도록 즉시 목록 재조회
       await _loadTodaySessions();
     } else {
@@ -1441,6 +1565,14 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           height: 100,
           child: Center(child: CircularProgressIndicator()),
         ),
+      );
+    }
+
+    final loadError = _sessionsLoadError;
+    if (loadError != null) {
+      return HomeTodaySessionsErrorCard(
+        message: loadError,
+        onRetry: _loadTodaySessions,
       );
     }
 
@@ -1504,7 +1636,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-
           // ── 세션 상태 배지 + 세션 이름 + (호스트 한정) 삭제 메뉴 ──
           Row(
             children: [
@@ -1531,8 +1662,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               // 호스트면 항상 더보기 메뉴 노출 — 진행 중이면 비활성+안내로 표시.
               // 사장님 피드백(2026-05-14): "어떤 건 메뉴가 보이고 어떤 건
               // 안 보여 헷갈렸다" 해소. 메뉴 자체는 일관적으로 노출.
-              if (_isSessionHost(session))
-                _buildSessionMoreMenu(session),
+              if (_isSessionHost(session)) _buildSessionMoreMenu(session),
             ],
           ),
 
@@ -1557,9 +1687,10 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               Navigator.of(context).push(
                 MaterialPageRoute(
                   builder: (_) => SessionLobbyScreen(
-              sessionId: session.id,
-              initialSession: session, // 재조회 실패 회피 — sessions/today 응답 그대로 사용
-            ),
+                    sessionId: session.id,
+                    initialSession:
+                        session, // 재조회 실패 회피 — sessions/today 응답 그대로 사용
+                  ),
                 ),
               );
             },
@@ -1645,9 +1776,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               // "왜 안 되는지" 가 한 번의 액션으로 즉시 노출됨.
               Text(
                 '세션 삭제',
-                style: AppTextStyles.bodyMedium.copyWith(
-                  color: itemColor,
-                ),
+                style: AppTextStyles.bodyMedium.copyWith(color: itemColor),
               ),
             ],
           ),
@@ -1661,16 +1790,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     return Row(
       mainAxisSize: MainAxisSize.min, // Row가 내용물 크기만큼만 차지
       children: [
-        Icon(
-          icon,
-          size: 14,
-          color: AppColors.textSecondary,
-        ),
+        Icon(icon, size: 14, color: AppColors.textSecondary),
         const SizedBox(width: 4),
-        Text(
-          text,
-          style: AppTextStyles.bodySmall,
-        ),
+        Text(text, style: AppTextStyles.bodySmall),
       ],
     );
   }
@@ -1693,8 +1815,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
             horizontal: AppSpacing.screenHorizontal,
           ),
           itemCount: 3,
-          separatorBuilder: (_, _) =>
-              const SizedBox(width: AppSpacing.sm + 4),
+          separatorBuilder: (_, _) => const SizedBox(width: AppSpacing.sm + 4),
           // 회색 박스 스켈레톤 카드 — 데이터 로드 완료 시 실제 카드로 자동 교체.
           // 위젯 정의는 lib/core/widgets/skeleton_card.dart (재사용 위해 분리).
           itemBuilder: (_, _) => const RestaurantSkeletonCard(),
@@ -1715,8 +1836,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       final IconData icon;
       final String title;
       final String subtitle;
-      final bool showSpinner;       // 권한 OK 일 때만 스피너 노출
-      final bool showRetry;         // 권한 거부 시 강조 버튼 1개로 단순화
+      final bool showSpinner; // 권한 OK 일 때만 스피너 노출
+      final bool showRetry; // 권한 거부 시 강조 버튼 1개로 단순화
       if (hasPerm == true) {
         icon = Icons.location_searching_rounded;
         title = '주변 식당을 찾고 있어요';
@@ -1753,11 +1874,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           ),
           child: Column(
             children: [
-              Icon(
-                icon,
-                size: 40,
-                color: AppColors.iconInactive,
-              ),
+              Icon(icon, size: 40, color: AppColors.iconInactive),
               const SizedBox(height: AppSpacing.sm),
               Text(
                 title,
@@ -1821,7 +1938,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           horizontal: AppSpacing.screenHorizontal,
         ),
         itemCount: restaurants.length,
-        separatorBuilder: (context, index) => const SizedBox(width: AppSpacing.sm + 4),
+        separatorBuilder: (context, index) =>
+            const SizedBox(width: AppSpacing.sm + 4),
         itemBuilder: (context, index) {
           return _buildRestaurantCard(restaurants[index]);
         },
@@ -1837,8 +1955,6 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   // 거리(distance)는 사용자 위치(_userLat/_userLng) 가 있을 때만 한 줄 추가.
   // rating, 리뷰 수는 백엔드에 아직 없어서 카드 레이아웃 간소화.
   Widget _buildRestaurantCard(RestaurantDto restaurant) {
-    final primary = Theme.of(context).colorScheme.primary;
-
     // 가격 레이블은 공통 헬퍼로 통일.
     // price_range 값이 시드/크롤/Gemini 출처별로 의미가 달라
     // ("5500원" vs "13" vs "2") 단순 출력 시 "13원~", "2원~" 같은
@@ -1878,15 +1994,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-
             // ── 사장님 한 줄 (있을 때만) ────────────────────
             if (todaysNote != null) ...[
               Container(
                 width: double.infinity,
-                padding: const EdgeInsets.symmetric(
-                  horizontal: 6,
-                  vertical: 4,
-                ),
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
                 decoration: BoxDecoration(
                   // 디자인 명세: #FFF3CD 배경 + 살짝 어두운 노란 테두리.
                   color: const Color(0xFFFFF3CD),
@@ -1921,20 +2033,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               const SizedBox(height: 4),
             ],
 
-            // ── 식당 이미지 영역 (placeholder) ─────────────
-            Container(
+            // 등록 사진이 있으면 표시하고, 없거나 로드에 실패하면 음식 아이콘으로 대체.
+            FoodImage(
+              imageUrl: restaurant.imageUrl,
+              categoryLabel: restaurant.category,
+              width: 150,
               height: 72,
-              decoration: BoxDecoration(
-                color: primary.withAlpha(15),
-                borderRadius: BorderRadius.circular(AppRadius.small),
-              ),
-              child: Center(
-                child: Icon(
-                  Icons.restaurant_rounded,
-                  color: primary.withAlpha(100),
-                  size: 32,
-                ),
-              ),
+              emojiSize: 30,
+              borderRadius: BorderRadius.circular(AppRadius.small),
+              semanticLabel: '${restaurant.name} 사진',
             ),
 
             const SizedBox(height: AppSpacing.sm),
@@ -1995,11 +2102,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     // 탭 항목 데이터 목록
     // 순서 = 탭 인덱스 (0~4). _currentTabIndex와 순서가 반드시 일치해야 함
     final tabs = [
-      _NavTab(icon: Icons.home_rounded,             label: '홈'),
-      _NavTab(icon: Icons.restaurant_menu_rounded,  label: '점심세션'),
-      _NavTab(icon: Icons.receipt_long_rounded,     label: '주문현황'),
-      _NavTab(icon: Icons.history_rounded,          label: '내역'),
-      _NavTab(icon: Icons.person_rounded,           label: '내정보'),
+      _NavTab(icon: Icons.home_rounded, label: '홈'),
+      _NavTab(icon: Icons.restaurant_menu_rounded, label: '점심세션'),
+      _NavTab(icon: Icons.receipt_long_rounded, label: '주문현황'),
+      _NavTab(icon: Icons.history_rounded, label: '내역'),
+      _NavTab(icon: Icons.person_rounded, label: '내정보'),
     ];
 
     return BottomNavigationBar(
@@ -2022,10 +2129,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       backgroundColor: AppColors.surface,
 
       items: tabs.map((tab) {
-        return BottomNavigationBarItem(
-          icon: Icon(tab.icon),
-          label: tab.label,
-        );
+        return BottomNavigationBarItem(icon: Icon(tab.icon), label: tab.label);
       }).toList(),
     );
   }
@@ -2036,23 +2140,29 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Widget _buildSessionsTab() {
     final primary = Theme.of(context).colorScheme.primary;
     final sessions = _todaySessions ?? const <Session>[];
+    final loadError = _sessionsLoadError;
 
     return RefreshIndicator(
       onRefresh: _loadTodaySessions,
       child: ListView(
-        physics: const AlwaysScrollableScrollPhysics(parent: BouncingScrollPhysics()),
+        physics: const AlwaysScrollableScrollPhysics(
+          parent: BouncingScrollPhysics(),
+        ),
         padding: const EdgeInsets.all(AppSpacing.screenHorizontal),
         children: [
           // 헤더
           Text('점심 세션', style: AppTextStyles.heading2),
           const SizedBox(height: 4),
           Text(
-            sessions.isEmpty
+            loadError != null
+                ? '세션 목록을 확인하지 못했어요. 다시 시도해 주세요'
+                : sessions.isEmpty
                 // 빈 상태 — 두 가지 다음 액션(만들기/참가)을 자연스럽게 안내
                 ? '아직 비어있어요. 새로 만들거나 초대 코드로 참가해봐요'
                 : '오늘 ${sessions.length}개 세션에 참여 중',
-            style: AppTextStyles.bodySmall
-                .copyWith(color: AppColors.textSecondary),
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+            ),
           ),
 
           const SizedBox(height: AppSpacing.lg),
@@ -2060,24 +2170,28 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           // 액션 버튼 2종 (만들기 / 코드로 참가)
           Row(
             children: [
-              Expanded(
-                child: ElevatedButton.icon(
-                  onPressed: _goToMemberSelect,
-                  icon: const Icon(Icons.add_rounded, size: 20),
-                  label: const Text('점심 만들기'),
-                  style: ElevatedButton.styleFrom(
-                    backgroundColor: primary,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size.fromHeight(48),
+              if (_canCreateSession) ...[
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _goToMemberSelect,
+                    icon: const Icon(Icons.add_rounded, size: 20),
+                    label: const Text('점심 만들기'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: primary,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size.fromHeight(48),
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: AppSpacing.sm),
+                const SizedBox(width: AppSpacing.sm),
+              ],
               Expanded(
                 child: OutlinedButton.icon(
                   onPressed: () {
                     Navigator.of(context).push(
-                      MaterialPageRoute(builder: (_) => const JoinSessionScreen()),
+                      MaterialPageRoute(
+                        builder: (_) => const JoinSessionScreen(),
+                      ),
                     );
                   },
                   icon: const Icon(Icons.qr_code_scanner_rounded, size: 20),
@@ -2101,6 +2215,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
               padding: EdgeInsets.symmetric(vertical: 40),
               child: Center(child: CircularProgressIndicator()),
             )
+          else if (loadError != null)
+            HomeTodaySessionsErrorCard(
+              message: loadError,
+              onRetry: _loadTodaySessions,
+            )
           else if (sessions.isEmpty)
             Container(
               padding: const EdgeInsets.all(AppSpacing.lg),
@@ -2120,75 +2239,77 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   Text(
                     // 빈 상태 — 위의 액션 버튼(만들기/코드로 참가)을 자연 연결
                     '오늘 점심, 위 버튼으로 시작해봐요',
-                    style: AppTextStyles.bodySmall
-                        .copyWith(color: AppColors.textSecondary),
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
                   ),
                 ],
               ),
             )
           else
-            ...sessions.map((s) => Padding(
-                  padding: const EdgeInsets.only(bottom: AppSpacing.sm),
-                  child: AppCard(
-                    onTap: () {
-                      Navigator.of(context).push(
-                        MaterialPageRoute(
-                          builder: (_) => SessionLobbyScreen(
-                            sessionId: s.id,
-                            initialSession: s, // 재조회 실패 회피
-                          ),
+            ...sessions.map(
+              (s) => Padding(
+                padding: const EdgeInsets.only(bottom: AppSpacing.sm),
+                child: AppCard(
+                  onTap: () {
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) => SessionLobbyScreen(
+                          sessionId: s.id,
+                          initialSession: s, // 재조회 실패 회피
                         ),
-                      );
-                    },
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.lunch_dining_rounded,
-                          color: primary,
-                          size: 28,
-                        ),
-                        const SizedBox(width: AppSpacing.sm),
-                        Expanded(
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Text(
-                                s.name,
-                                style: AppTextStyles.bodyMedium.copyWith(
-                                  fontWeight: FontWeight.w600,
-                                ),
-                                overflow: TextOverflow.ellipsis,
+                      ),
+                    );
+                  },
+                  child: Row(
+                    children: [
+                      Icon(
+                        Icons.lunch_dining_rounded,
+                        color: primary,
+                        size: 28,
+                      ),
+                      const SizedBox(width: AppSpacing.sm),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text(
+                              s.name,
+                              style: AppTextStyles.bodyMedium.copyWith(
+                                fontWeight: FontWeight.w600,
                               ),
-                              const SizedBox(height: 2),
-                              Text(
-                                '${s.statusLabel ?? s.status} · '
-                                '${_formatScheduledTime(s.scheduledAt)}',
-                                style: AppTextStyles.bodySmall.copyWith(
-                                  color: AppColors.textSecondary,
-                                ),
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            const SizedBox(height: 2),
+                            Text(
+                              '${s.statusLabel ?? s.status} · '
+                              '${_formatScheduledTime(s.scheduledAt)}',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: AppColors.textSecondary,
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
-                        // 호스트면 항상 더보기 메뉴(삭제 불가 상태는 비활성+안내),
-                        // 호스트가 아니면 기존 chevron 표시. 색상 토큰 동일.
-                        if (_isSessionHost(s))
-                          _buildSessionMoreMenu(s)
-                        else
-                          const Icon(
-                            Icons.chevron_right_rounded,
-                            color: AppColors.iconInactive,
-                          ),
-                      ],
-                    ),
+                      ),
+                      // 호스트면 항상 더보기 메뉴(삭제 불가 상태는 비활성+안내),
+                      // 호스트가 아니면 기존 chevron 표시. 색상 토큰 동일.
+                      if (_isSessionHost(s))
+                        _buildSessionMoreMenu(s)
+                      else
+                        const Icon(
+                          Icons.chevron_right_rounded,
+                          color: AppColors.iconInactive,
+                        ),
+                    ],
                   ),
-                )),
+                ),
+              ),
+            ),
         ],
       ),
     );
   }
 }
-
 
 // ══════════════════════════════════════════════════════════
 // 내부 데이터 모델 클래스들 (이 파일 안에서만 사용하는 Mock 구조체)
@@ -2202,22 +2323,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 // 빠른 실행 CTA 버튼 하나의 데이터
 class _QuickAction {
   const _QuickAction({
-    required this.icon,   // 버튼 아이콘
-    required this.label,  // 버튼 레이블 텍스트
-    required this.onTap,  // 탭 시 실행할 함수
+    required this.icon, // 버튼 아이콘
+    required this.label, // 버튼 레이블 텍스트
+    required this.onTap, // 탭 시 실행할 함수
+    this.emphasized = false,
   });
   final IconData icon;
   final String label;
   final VoidCallback onTap;
+  final bool emphasized;
 }
 
 // 하단 탭바 항목 하나의 데이터
 class _NavTab {
   const _NavTab({
-    required this.icon,  // 탭 아이콘
+    required this.icon, // 탭 아이콘
     required this.label, // 탭 레이블
   });
   final IconData icon;
   final String label;
 }
-

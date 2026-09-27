@@ -8,6 +8,7 @@ import {
 import { randomBytes } from 'crypto';
 import { SupabaseService } from '../supabase/supabase.service';
 import { SessionsService } from '../sessions/sessions.service';
+import { SessionAccessService } from '../auth/session-access.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 초대 링크 비즈니스 로직
@@ -28,11 +29,13 @@ export class InvitationsService {
   constructor(
     private readonly supabase: SupabaseService,
     private readonly sessionsService: SessionsService,
+    private readonly sessionAccess: SessionAccessService,
   ) {}
 
   // ── POST /invitations ─────────────────────────────────
   // 8자리 랜덤 초대 코드 생성
   async createInvitation(userId: string, dto: CreateInvitationDto) {
+    await this.sessionAccess.assertMember(dto.sessionId, userId);
     const inviteCode = randomBytes(4).toString('hex'); // 8자리 hex
 
     // 만료 시각: 생성 시점으로부터 24시간 후
@@ -50,9 +53,7 @@ export class InvitationsService {
 
     if (error || !data) {
       // 500: 초대 토큰 INSERT 실패 (예: 유니크 충돌 등)
-      throw new InternalServerErrorException(
-        `초대 생성 실패: ${error?.message}`,
-      );
+      throw new InternalServerErrorException('초대 링크를 만들지 못했어요.');
     }
 
     return {

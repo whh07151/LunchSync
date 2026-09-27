@@ -1,5 +1,11 @@
 # 0414-1 머지 내용 정리
 
+> 이 문서는 2026-04-14 머지 당시의 역사적 스냅샷이다. 현재 인증·주문·POS·환불
+> 계약은 `LUNCHSYNC_SPECIFICATION.md`, `LUNCHSYNC_DTO.md`와
+> `study/SECURITY_PAYMENT_BOUNDARY_REVIEW_2026-08-05.md`,
+> `study/ORDER_SESSION_INTEGRITY_REVIEW_2026-08-05.md`를 따른다. 아래의
+> `Toss 환불 미연결`, `CASH 즉시 PAID`, 수동 SQL 안내는 현재 구현 지침이 아니다.
+
 **날짜:** 2026-04-14
 **브렌치:** `feat/hyunho` → `feat/jihyo` (fast-forward merge) + 버그수정/DTO정렬 추가
 **작업자:** 우현호(백엔드/결제) + 김지효(버그수정/DTO정렬)

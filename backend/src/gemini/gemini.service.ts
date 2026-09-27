@@ -96,10 +96,7 @@ export class GeminiService {
       });
 
       if (!res.ok) {
-        const errText = await res.text().catch(() => '');
-        this.logger.warn(
-          `Gemini API 응답 실패 ${res.status}: ${errText.slice(0, 200)}`,
-        );
+        this.logger.warn(`GEMINI_MENU_REQUEST_FAILED status=${res.status}`);
         return [];
       }
 
@@ -114,10 +111,8 @@ export class GeminiService {
       }
 
       return this.parseMenuResponse(text);
-    } catch (err) {
-      this.logger.warn(
-        `Gemini 호출 예외: ${(err as Error).message}`,
-      );
+    } catch {
+      this.logger.warn('GEMINI_MENU_REQUEST_EXCEPTION');
       return [];
     }
   }
@@ -167,9 +162,8 @@ export class GeminiService {
       });
 
       if (!res.ok) {
-        const errText = await res.text().catch(() => '');
         this.logger.warn(
-          `Gemini 식당생성 API 응답 실패 ${res.status}: ${errText.slice(0, 200)}`,
+          `GEMINI_RESTAURANT_REQUEST_FAILED status=${res.status}`,
         );
         return [];
       }
@@ -182,10 +176,8 @@ export class GeminiService {
       }
 
       return this.parseRestaurantResponse(text);
-    } catch (err) {
-      this.logger.warn(
-        `Gemini 식당생성 호출 예외: ${(err as Error).message}`,
-      );
+    } catch {
+      this.logger.warn('GEMINI_RESTAURANT_REQUEST_EXCEPTION');
       return [];
     }
   }
@@ -310,10 +302,8 @@ JSON 배열만 반환:`;
           };
         })
         .filter((r) => r.name.length > 0 && r.menus.length > 0);
-    } catch (err) {
-      this.logger.warn(
-        `Gemini 식당생성 JSON 파싱 실패: ${(err as Error).message}`,
-      );
+    } catch {
+      this.logger.warn('GEMINI_RESTAURANT_RESPONSE_PARSE_FAILED');
       return [];
     }
   }
@@ -398,10 +388,8 @@ JSON 배열만 반환:`;
             : [],
         }))
         .filter((m) => m.name.length > 0 && m.price > 0);
-    } catch (err) {
-      this.logger.warn(
-        `Gemini JSON 파싱 실패: ${(err as Error).message}`,
-      );
+    } catch {
+      this.logger.warn('GEMINI_MENU_RESPONSE_PARSE_FAILED');
       return [];
     }
   }

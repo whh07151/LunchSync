@@ -129,7 +129,7 @@ class UsersApiService {
 
       return null;
     } catch (e) {
-      debugPrint('[UsersApiService] getMe 에러: $e');
+      debugPrint('[UsersApiService] GET_ME_FAILED');
       return null;
     }
   }
@@ -241,7 +241,7 @@ class UsersApiService {
                 const [],
       };
     } catch (e) {
-      debugPrint('[UsersApiService] updatePreferences 에러: $e');
+      debugPrint('[UsersApiService] UPDATE_PREFERENCES_FAILED');
       return null;
     }
   }

@@ -21,6 +21,7 @@ type PaymentOrderRow = {
   id: string;
   status: string;
   total_price: number;
+  payment_method: string;
   session_id: string;
   user_id: string;
   payment_key: string | null;
@@ -70,7 +71,7 @@ class PaymentPostgresClient {
     try {
       const result = await this.pool.query<PaymentOrderRow>(
         `
-          SELECT id, status, total_price, session_id, user_id, payment_key
+          SELECT id, status, total_price, payment_method, session_id, user_id, payment_key
           FROM public.orders
           WHERE id = $1::UUID
         `,
@@ -102,7 +103,7 @@ class PaymentPostgresClient {
               payment_key = $4::TEXT
           WHERE id = $1::UUID
             AND status = $2::TEXT
-          RETURNING id, status, total_price, session_id, user_id, payment_key
+          RETURNING id, status, total_price, payment_method, session_id, user_id, payment_key
         `,
         [
           filters.get('id'),
@@ -236,7 +237,7 @@ describe('Payment reconciliation PostgreSQL acceptance', () => {
       .send(paymentRequest);
     const pendingRow = await database.pool.query<PaymentOrderRow>(
       `
-        SELECT id, status, total_price, session_id, user_id, payment_key
+        SELECT id, status, total_price, payment_method, session_id, user_id, payment_key
         FROM public.orders
         WHERE id = $1::UUID
       `,
@@ -251,7 +252,7 @@ describe('Payment reconciliation PostgreSQL acceptance', () => {
       .send(paymentRequest);
     const paidRow = await database.pool.query<PaymentOrderRow>(
       `
-        SELECT id, status, total_price, session_id, user_id, payment_key
+        SELECT id, status, total_price, payment_method, session_id, user_id, payment_key
         FROM public.orders
         WHERE id = $1::UUID
       `,

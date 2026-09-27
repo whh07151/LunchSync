@@ -75,7 +75,9 @@ D:\LunchSyncFr\
 
 ### 사전 준비
 
-- Node.js 20+, npm
+- Node.js 22+, npm
+- 백엔드는 Firebase Auth/FCM만 사용하므로 `backend/.npmrc`에서 사용하지 않는
+  Firebase Firestore/Cloud Storage 선택 의존성을 설치하지 않습니다.
 - Flutter 3.x 안정 채널 (Dart 3+)
 - `backend/.env.example`을 기준으로 한 로컬 설정과 승인된 비밀 관리자 또는
   런타임 환경 변수 주입 경로
@@ -154,6 +156,7 @@ flutter analyze                                # 에러 0건이어야 정상
 | `PORT` | NestJS 리스닝 포트 | 기본 3000 |
 | `SUPABASE_URL` | Supabase 프로젝트 URL | 필수 |
 | `SUPABASE_SERVICE_ROLE_KEY` | RLS 우회용 service_role 키 | **서버 전용** · 승인된 비밀 관리자에서 런타임 환경 변수로 주입하고 파일·메신저·문서에 실값을 남기지 않음 |
+| `SUPABASE_ANON_KEY` | sessionless OTP Auth client 키 | 권장 · 미설정 호환 경로는 service-role 사용 |
 | `JWT_SECRET` | 자체 JWT 서명 시크릿 | 필수 |
 | `JWT_EXPIRES_IN` | JWT 만료 (기본 `7d`) | |
 | `TOSS_SECRET_KEY` | Toss Payments 시크릿 키 | 테스트는 `test_sk_...` |
@@ -167,6 +170,10 @@ flutter analyze                                # 에러 0건이어야 정상
 | `FIREBASE_ADMIN_KEY_PATH` | Firebase Admin 서비스 계정 JSON 경로 | 미설정 시 Phone Auth / FCM 푸시 비활성 |
 | `CORS_ALLOWED_ORIGINS` | 운영 모드 CORS 허용 origin (쉼표) | `NODE_ENV=production` 일 때만 활성 |
 | `NODE_ENV` | `production` 설정 시 에러 메시지 마스킹 + CORS 화이트리스트 적용 | |
+| `POS_SHARED_PIN_LOGIN_ENABLED` / `POS_PIN` | 공용 PIN POS 시연 | 비운영에서 명시적으로 켠 경우만 허용 |
+| `ALLOW_SIMULATED_PAYMENTS` | 고객 모의 결제 | 비운영에서 정확히 `true`인 경우만 허용 |
+| `ALLOW_REFUND_SIMULATION` | 모의 결제 환불 시연 | 실제 결제키에는 적용 불가 |
+| `ALLOW_POS_CARD_SIMULATION` | POS CARD 수납 시연 | 비운영에서 정확히 `true`인 경우만 허용 |
 | `RECO_V3_ENABLED` | 추천 v3 (친구 가중치 등) on/off | `'true'` 일 때 활성 |
 
 > `.env.example` 에 누락된 키(`GEMINI_*`, `FIREBASE_*`, `CORS_*`, `RECO_V3_*`)는
@@ -233,16 +240,22 @@ PostgreSQL 계약 검사는 **2개 스위트·5개 테스트**, NestJS 빌드는
 이는 비운영 일회용 PostgreSQL 검증 결과이며 운영 DB 마이그레이션이나 라이브 결제
 검증을 뜻하지 않습니다.
 
+2026-08-05 인증·POS·결제 하드닝 체크포인트는 기본 Jest **26개 스위트·152개
+테스트**, NestJS build, Flutter **12개 테스트**, Dart analyze를 통과했습니다.
+Docker Desktop Linux 엔진이 꺼져 있어 변경된 PostgreSQL 전용 검사는 재실행하지
+않았으며, 실제 Toss 호출·원격 DB 변경·배포는 수행하지 않았습니다.
+
 ---
 
 ## DB 스키마 변경 규칙 (silent failure 방지)
 
 `CLAUDE.md` 의 핵심 규칙이며 위반 시 PostgREST 가 누락 컬럼을 silent 하게 무시해 "코드는 정상인데 DB 는 비어있는" 사고가 발생합니다 (2026-05-13 `image_url` 사고 사례).
 
-- 새 컬럼 / 테이블을 `select` 또는 `insert` 에 추가할 때는 **반드시 같은 PR 에 DDL 마이그레이션을 동봉**합니다.
-- 마이그레이션 위치: `backend/scripts/migrations/YYYY-MM-DD-<설명>.sql`
-- 모든 DDL 은 멱등 패턴 — `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`
-- 마이그레이션 추가 시 `backend/scripts/migrations/2026-05-14-verify-schema.sql` 검증 쿼리도 갱신
+- 새 Supabase 컬럼·테이블·함수는 먼저 `supabase/schemas/` 선언형 스키마에 반영합니다.
+- Docker가 준비된 비운영 환경에서 Supabase CLI diff로 migration을 생성하고,
+  reset·pgTAP·schema diff 없음까지 확인합니다. migration을 손으로 작성하지 않습니다.
+- `backend/scripts/migrations/`는 기존 legacy 이력의 참고 위치이며 새 선언형 변경의
+  source of truth가 아닙니다.
 - 운영 적용: Supabase 대시보드에서 수동 실행 → verify-schema 한 번 더 돌려 확인
 
 ---

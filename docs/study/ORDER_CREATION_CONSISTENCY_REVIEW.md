@@ -82,16 +82,17 @@ INSERT 하나라도 예외를 발생시키면 함수 호출 전체가 실패하�
 RPC 트랜잭션은 `orders`와 `order_items` 생성까지만 보호하며 주문은 `PENDING`으로
 생성한다.
 
-- `SIMULATE`/`CASH`: RPC가 커밋된 뒤 별도 Supabase UPDATE로 `PAID`와
-  `payment_key`를 기록한다.
+- `SIMULATE`: 비운영이면서 `ALLOW_SIMULATED_PAYMENTS=true`일 때만 RPC가
+  커밋된 뒤 별도 Supabase UPDATE로 `PAID`와 `payment_key`를 기록한다. 플래그가
+  없거나 production이면 RPC 전에 거절한다.
 - `TOSS`: 생성 단계에서는 `PENDING`을 유지하고 `/api/payments/confirm`에서
   승인 후 상태를 별도로 갱신한다.
-- `CARD`: 입력을 `CARD`로 정규화해 저장·응답하되, 외부 승인 결과가 명시적으로
-  기록될 때까지 `PENDING`을 유지한다.
+- `CARD`/`CASH`: 정규화해 저장·응답하되, 외부 승인 또는 POS 수납 결과가
+  명시적으로 기록될 때까지 `PENDING`을 유지한다.
 
 따라서 결제 후 상태 UPDATE가 실패하는 경우는 이번 원자적 생성 트랜잭션의 보호
 범위 밖이다. 주문 생성 경로는 저장·결제 분기·응답에 같은 정규화 결제 방식을
-사용하고, `SIMULATE`/`CASH` 상태 UPDATE 오류를 500으로 반환해 거짓 `PAID`
+사용하고, 비운영 `SIMULATE` 상태 UPDATE 오류를 500으로 반환해 거짓 `PAID`
 응답을 막는다. 다만 이 시점에는 이미 `PENDING` 주문이 생성됐으므로 안전한
 재시도·중복 방지·복구가 필요하다. Toss confirm 경로의 외부 승인 성공 뒤 DB
 UPDATE 실패도 별도 조정 경계다. 이 두 불일치를 탐지·재시도하는 idempotency와
@@ -156,8 +157,8 @@ PostgreSQL을 사용하는 별도 Jest 설정을 실행한다. Docker Engine이 
 하며, 테스트는 다음을 자동 검증한다.
 
 1. 필요한 최소 스키마와 v2 마이그레이션을 실제 PostgreSQL에 적용한다.
-2. NestJS HTTP 요청의 수량 11이 실제 PostgreSQL `CHECK (quantity BETWEEN 1 AND
-   10)`에서 실패하도록 6-인자 RPC를 호출한다.
+2. service-role로 6-인자 RPC를 직접 호출하고 존재하지 않는 메뉴 FK를 항목
+   INSERT에 전달해 실제 PostgreSQL 제약 실패를 유도한다.
 3. 호출 실패 후 실제 PostgreSQL row count와 `GET /api/orders/today` 빈 목록을
    함께 확인해 주문 헤더·항목 롤백을 증명한다.
 4. 알려진 구형 5-인자 함수가 제거되고 기대한 6-인자 함수가 존재하는지 확인한다.
@@ -214,8 +215,8 @@ PostgREST 계약 보고를 확인했다. 운영 데이터베이스 마이그레�
 7. 같은 대상 DB에서 정확한 6-인자 시그니처, `SECURITY INVOKER`, 축소된 ACL과
    `check_schema_resources()` 응답을 다시 검사한다.
 8. 대상 DB 검증이 끝난 뒤에만 6-인자 RPC를 호출하는 백엔드를 배포한다.
-9. 정상 `SIMULATE`/`CASH` 후속 UPDATE와 Toss·`CARD`의 `PENDING` → 외부 승인
-   흐름을 사람 손으로 확인한다.
+9. 명시적으로 허용한 비운영 `SIMULATE` 후속 UPDATE와 Toss·`CARD`·`CASH`의
+   `PENDING` → 외부 승인/수납 흐름을 사람 손으로 확인한다.
 
 백엔드를 두 마이그레이션보다 먼저 배포하면 PostgREST가 일치하는 함수
 시그니처를 찾지 못해 주문 생성이 실패하거나 부트 헬스체크가 현재 RPC 계약을
@@ -249,10 +250,11 @@ AI는 코드·SQL 검사, HTTP 수용 테스트와 실제 PostgreSQL 계약의 �
 - 알려진 5-인자 함수가 제거되고 기대한 정확한 6-인자 함수가 해석되는지 확인한다.
 - 함수의 `prosecdef = false`와 실행 ACL을 직접 확인한다.
 - 강제 항목 제약조건 실패 뒤 주문 헤더가 남지 않는지 DB에서 직접 확인한다.
-- 정상 `SIMULATE`/`CASH` 주문의 `PENDING` → `PAID` 후속 업데이트를 확인한다.
+- 명시적으로 허용한 비운영 `SIMULATE` 주문의 `PENDING` → `PAID` 후속 업데이트와
+  플래그 누락·production 거절을 확인한다.
 - 정상 Toss 주문의 생성 `PENDING`과 승인 후 상태 변경을 확인한다.
-- `CARD` 입력이 `CARD`로 정규화되고 외부 승인 결과가 기록되기 전까지
-  `PENDING`을 유지하는지 확인한다.
+- `CARD`/`CASH` 입력이 정규화되고 외부 승인 또는 POS 수납 결과가 기록되기
+  전까지 `PENDING`을 유지하는지 확인한다.
 - 상태 UPDATE 실패를 강제로 재현해 현재 reconciliation 공백을 별도 이슈로
   추적한다.
 - 서버 로그에는 원인 진단 정보가 남되 클라이언트와 PR 산출물에 비밀 정보나 실제

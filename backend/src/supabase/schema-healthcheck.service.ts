@@ -54,6 +54,18 @@ interface SchemaFunctionContract {
   returnType: string;
 }
 
+export interface SchemaReadinessStatus {
+  ready: boolean;
+  checked: boolean;
+  missingCount: number;
+  reason?:
+    | 'not_checked'
+    | 'missing_resources'
+    | 'rpc_failed'
+    | 'empty_response'
+    | 'exception';
+}
+
 const CREATE_ORDER_WITH_ITEMS_PARAMETERS: SchemaFunctionParameter[] = [
   { name: 'p_session_id', type: 'uuid' },
   { name: 'p_user_id', type: 'uuid' },
@@ -93,8 +105,7 @@ function hasExpectedOrderContract(
   );
 }
 
-// 누락된 자원과 해당 마이그레이션 파일을 매핑
-// → warn 로그에 "이 SQL 을 실행하세요" 안내를 같이 출력하기 위함
+// Fixed repository filenames only; no database response text is logged.
 const MIGRATION_HINTS: Record<string, string> = {
   'restaurants.image_url': '2026-05-14-fill-empty-image-urls.sql',
   'restaurants.rating': '2026-05-14-add-rating-column.sql',
@@ -115,7 +126,18 @@ const MIGRATION_HINTS: Record<string, string> = {
 
 @Injectable()
 export class SchemaHealthcheckService implements OnModuleInit {
+  private status: SchemaReadinessStatus = {
+    ready: false,
+    checked: false,
+    missingCount: 0,
+    reason: 'not_checked',
+  };
+
   constructor(private readonly supabase: SupabaseService) {}
+
+  getReadinessStatus(): SchemaReadinessStatus {
+    return { ...this.status };
+  }
 
   /**
    * NestJS 부트 사이클: 모든 모듈 의존성 주입이 완료된 직후 1회 호출.
@@ -132,14 +154,25 @@ export class SchemaHealthcheckService implements OnModuleInit {
         // RPC 가 아예 배포되지 않은 환경(=초기 셋업) 도 여기에 해당.
         // 부팅을 막지 않고 안내만 출력.
         console.warn(
-          `[SchemaHealthcheck] introspection RPC 호출 실패: ${error.message} ` +
-            `→ 2026-07-29-schema-introspection-function-signatures.sql 을 Supabase Dashboard 에서 실행하세요.`,
+          '[SchemaHealthcheck] SCHEMA_INTROSPECTION_RPC_FAILED; apply 2026-07-29-schema-introspection-function-signatures.sql',
         );
+        this.status = {
+          ready: false,
+          checked: true,
+          missingCount: 0,
+          reason: 'rpc_failed',
+        };
         return;
       }
 
       // RPC 가 정상 응답이지만 페이로드가 비어있는 비정상 케이스
       if (!data) {
+        this.status = {
+          ready: false,
+          checked: true,
+          missingCount: 0,
+          reason: 'empty_response',
+        };
         console.warn(
           '[SchemaHealthcheck] introspection RPC 응답이 비어있습니다.',
         );
@@ -181,28 +214,44 @@ export class SchemaHealthcheckService implements OnModuleInit {
         }
       }
 
+      this.status =
+        missing.length === 0
+          ? {
+              ready: true,
+              checked: true,
+              missingCount: 0,
+            }
+          : {
+              ready: false,
+              checked: true,
+              missingCount: missing.length,
+              reason: 'missing_resources',
+            };
+
       if (missing.length === 0) {
         // 시연 환경 noise 최소화 — 정상은 단 1줄
         console.log('[SchemaHealthcheck] 스키마 무결성 확인 완료');
         return;
       }
 
-      // 누락된 자원 + 적용해야 할 마이그레이션 안내
-      // 각 항목을 보기 좋게 들여쓴 형태로 묶어서 출력
       const lines = missing.map((key) => {
-        const hint =
-          MIGRATION_HINTS[key] ?? '(마이그레이션 파일 미정 — 사장님 확인 필요)';
-        return `    - ${key}  →  ${hint}`;
+        const hint = MIGRATION_HINTS[key] ?? 'migration-not-mapped';
+        return `    - ${key} -> ${hint}`;
       });
 
       console.warn(
-        `[SchemaHealthcheck] 누락된 자원 ${missing.length}건 — Supabase Dashboard 에서 아래 SQL 실행 필요:\n` +
+        `[SchemaHealthcheck] SCHEMA_RESOURCES_MISSING count=${missing.length}\n` +
           lines.join('\n'),
       );
-    } catch (e) {
+    } catch {
       // 네트워크 오류 등 예기치 못한 실패에도 부트는 계속.
-      const msg = e instanceof Error ? e.message : String(e);
-      console.warn(`[SchemaHealthcheck] 헬스체크 실행 중 예외 발생: ${msg}`);
+      console.warn('[SchemaHealthcheck] SCHEMA_HEALTHCHECK_EXCEPTION');
+      this.status = {
+        ready: false,
+        checked: true,
+        missingCount: 0,
+        reason: 'exception',
+      };
     }
   }
 }

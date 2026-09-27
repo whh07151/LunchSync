@@ -3,6 +3,7 @@ import { randomUUID } from 'crypto';
 import { NextFunction, Request, Response } from 'express';
 
 const REQUEST_ID_HEADER = 'x-request-id';
+const SAFE_REQUEST_ID = /^[A-Za-z0-9._:-]{1,128}$/;
 
 @Injectable()
 export class RequestLoggingMiddleware implements NestMiddleware {
@@ -19,7 +20,7 @@ export class RequestLoggingMiddleware implements NestMiddleware {
       const payload = {
         requestId,
         method: req.method,
-        path: req.originalUrl ?? req.url,
+        route: this.resolveRoute(req),
         statusCode: res.statusCode,
         durationMs: Number(durationMs.toFixed(1)),
       };
@@ -39,10 +40,24 @@ export class RequestLoggingMiddleware implements NestMiddleware {
 
   private resolveRequestId(req: Request): string {
     const incoming = req.header(REQUEST_ID_HEADER);
-    if (incoming && incoming.trim().length > 0) {
-      return incoming.trim().slice(0, 128);
+    if (incoming) {
+      const candidate = incoming.trim();
+      if (SAFE_REQUEST_ID.test(candidate)) {
+        return candidate;
+      }
     }
 
     return randomUUID();
+  }
+
+  private resolveRoute(req: Request): string {
+    const routePath = req.route?.path as unknown;
+    if (typeof routePath === 'string') {
+      return `${req.baseUrl ?? ''}${routePath}`;
+    }
+
+    // Unmatched paths have no safe route template. Never log their raw path:
+    // capability URLs such as invite links can still carry secrets in segments.
+    return 'unmatched';
   }
 }

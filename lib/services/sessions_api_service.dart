@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -70,13 +70,33 @@ class SessionsApiService {
       }
       return null;
     } catch (e) {
-      debugPrint('[SessionsApiService] createSession 에러: $e');
+      debugPrint('[SessionsApiService] CREATE_SESSION_FAILED');
       return null;
     }
   }
 
   // ── GET /api/sessions/today ───────────────────────────
-  Future<List<Session>> getTodaySessions({
+  //
+  // 기존 호출부 호환용 목록 반환 메서드.
+  // 실패를 빈 목록으로 바꾸면 "오늘 세션이 없음"과 구분할 수 없으므로,
+  // 실패 시에는 명시적인 TodaySessionsFetchException을 던진다.
+  Future<List<Session>> getTodaySessions({required String accessToken}) async {
+    final result = await getTodaySessionsResult(accessToken: accessToken);
+    final sessions = result.sessions;
+    if (sessions != null) return sessions;
+
+    throw TodaySessionsFetchException(
+      type: result.failureType!,
+      statusCode: result.statusCode,
+      message: result.message!,
+    );
+  }
+
+  /// 오늘의 세션 조회 결과를 성공(빈 목록 포함)과 실패로 구분해 반환한다.
+  ///
+  /// 정상적인 `data: []`는 [TodaySessionsResult.isSuccess]가 true이고,
+  /// 네트워크·인증·비정상 HTTP·응답 파싱 오류는 false다.
+  Future<TodaySessionsResult> getTodaySessionsResult({
     required String accessToken,
   }) async {
     try {
@@ -87,17 +107,47 @@ class SessionsApiService {
       );
       ApiAuthHooks.check(response.statusCode);
 
-      if (response.statusCode == 200) {
-        final json = jsonDecode(response.body) as Map<String, dynamic>;
-        final list = json['data'] as List<dynamic>;
-        return list
-            .map((e) => Session.fromJson(e as Map<String, dynamic>))
-            .toList();
+      if (response.statusCode != 200) {
+        final isUnauthorized = response.statusCode == 401;
+        return TodaySessionsResult.failure(
+          failureType: isUnauthorized
+              ? TodaySessionsFailureType.unauthorized
+              : TodaySessionsFailureType.http,
+          statusCode: response.statusCode,
+          message: isUnauthorized
+              ? '로그인이 만료됐어요. 다시 로그인한 뒤 시도해 주세요.'
+              : '오늘의 세션을 불러오지 못했어요. 잠시 후 다시 시도해 주세요.',
+        );
       }
-      return [];
-    } catch (e) {
-      debugPrint('[SessionsApiService] getTodaySessions 에러: $e');
-      return [];
+
+      final json = jsonDecode(response.body);
+      if (json is! Map<String, dynamic> || json['data'] is! List<dynamic>) {
+        throw const FormatException('sessions/today 응답 형식이 올바르지 않음');
+      }
+
+      final sessions = (json['data'] as List<dynamic>)
+          .map((entry) {
+            if (entry is! Map<String, dynamic>) {
+              throw const FormatException('sessions/today 항목 형식이 올바르지 않음');
+            }
+            return Session.fromJson(entry);
+          })
+          .toList(growable: false);
+      return TodaySessionsResult.success(sessions);
+    } on ApiNetworkException {
+      debugPrint('[SessionsApiService] GET_TODAY_SESSIONS_NETWORK_FAILED');
+      return const TodaySessionsResult.failure(
+        failureType: TodaySessionsFailureType.network,
+        statusCode: 0,
+        message: '서버에 연결하지 못했어요. 인터넷 연결을 확인하고 다시 시도해 주세요.',
+      );
+    } catch (_) {
+      debugPrint('[SessionsApiService] GET_TODAY_SESSIONS_PARSE_FAILED');
+      return const TodaySessionsResult.failure(
+        failureType: TodaySessionsFailureType.invalidResponse,
+        statusCode: 0,
+        message: '세션 정보를 확인하지 못했어요. 잠시 후 다시 시도해 주세요.',
+      );
     }
   }
 
@@ -120,7 +170,7 @@ class SessionsApiService {
       }
       return null;
     } catch (e) {
-      debugPrint('[SessionsApiService] getSessionById 에러: $e');
+      debugPrint('[SessionsApiService] GET_SESSION_FAILED');
       return null;
     }
   }
@@ -195,15 +245,14 @@ class SessionsApiService {
       }
 
       debugPrint(
-        '[SessionsApiService] updateSessionStatus 실패: '
-        '${response.statusCode} body=${response.body}',
+        '[SessionsApiService] UPDATE_SESSION_STATUS_HTTP_${response.statusCode}',
       );
       return SessionStatusUpdateResult.failure(
         statusCode: response.statusCode,
         message: message,
       );
     } catch (e) {
-      debugPrint('[SessionsApiService] updateSessionStatus 예외: $e');
+      debugPrint('[SessionsApiService] UPDATE_SESSION_STATUS_FAILED');
       // 네트워크 오류 — 인터넷 점검이라는 다음 액션 안내
       return const SessionStatusUpdateResult.failure(
         statusCode: 0,
@@ -264,15 +313,14 @@ class SessionsApiService {
       }
 
       debugPrint(
-        '[SessionsApiService] deleteSession 실패: '
-        '${response.statusCode} body=${response.body}',
+        '[SessionsApiService] DELETE_SESSION_HTTP_${response.statusCode}',
       );
       return SessionDeleteResult.failure(
         statusCode: response.statusCode,
         message: message,
       );
     } catch (e) {
-      debugPrint('[SessionsApiService] deleteSession 예외: $e');
+      debugPrint('[SessionsApiService] DELETE_SESSION_FAILED');
       return const SessionDeleteResult.failure(
         statusCode: 0,
         message: '서버에 닿지 못했어요. 인터넷 연결을 확인해봐요',
@@ -303,7 +351,7 @@ class SessionsApiService {
       }
       return null;
     } catch (e) {
-      debugPrint('[SessionsApiService] getSessionMembers 에러: $e');
+      debugPrint('[SessionsApiService] GET_SESSION_MEMBERS_FAILED');
       return null;
     }
   }
@@ -354,7 +402,8 @@ class SessionsApiService {
 
       if (response.statusCode != 200) {
         debugPrint(
-            '[SessionsApiService] getChemistry ${response.statusCode} body=${response.body}');
+          '[SessionsApiService] GET_CHEMISTRY_HTTP_${response.statusCode}',
+        );
         return null;
       }
       final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -362,7 +411,7 @@ class SessionsApiService {
       if (data is! Map<String, dynamic>) return null; // null 이면 카드 미노출.
       return ChemistryResult.fromJson(data);
     } catch (e) {
-      debugPrint('[SessionsApiService] getChemistry 예외: $e');
+      debugPrint('[SessionsApiService] GET_CHEMISTRY_FAILED');
       return null;
     }
   }
@@ -410,7 +459,8 @@ class SessionsApiService {
 
       if (response.statusCode != 200) {
         debugPrint(
-            '[SessionsApiService] getInviteInfo ${response.statusCode} body=${response.body}');
+          '[SessionsApiService] GET_INVITE_INFO_HTTP_${response.statusCode}',
+        );
         return null;
       }
       final json = jsonDecode(response.body) as Map<String, dynamic>;
@@ -418,7 +468,7 @@ class SessionsApiService {
       if (data is! Map<String, dynamic>) return null;
       return InviteInfo.fromJson(data);
     } catch (e) {
-      debugPrint('[SessionsApiService] getInviteInfo 예외: $e');
+      debugPrint('[SessionsApiService] GET_INVITE_INFO_FAILED');
       return null;
     }
   }
@@ -459,6 +509,49 @@ class InviteInfo {
   }
 }
 
+// ══════════════════════════════════════════════════════════
+// TodaySessionsResult — GET /sessions/today 성공/실패 구분
+//
+// sessions == []  : 정상 조회됐지만 오늘 세션이 없음
+// sessions == null: 조회 자체가 실패함 (failureType/message 확인)
+// ══════════════════════════════════════════════════════════
+enum TodaySessionsFailureType { unauthorized, network, http, invalidResponse }
+
+class TodaySessionsResult {
+  const TodaySessionsResult.success(this.sessions)
+    : failureType = null,
+      statusCode = 200,
+      message = null;
+
+  const TodaySessionsResult.failure({
+    required this.failureType,
+    required this.statusCode,
+    required this.message,
+  }) : sessions = null;
+
+  final List<Session>? sessions;
+  final TodaySessionsFailureType? failureType;
+  final int statusCode;
+  final String? message;
+
+  bool get isSuccess => sessions != null;
+}
+
+/// 목록만 필요하던 기존 호출부가 조회 실패를 빈 상태로 오인하지 않게 하는 예외.
+class TodaySessionsFetchException implements Exception {
+  const TodaySessionsFetchException({
+    required this.type,
+    required this.statusCode,
+    required this.message,
+  });
+
+  final TodaySessionsFailureType type;
+  final int statusCode;
+  final String message;
+
+  @override
+  String toString() => 'TodaySessionsFetchException($statusCode): $message';
+}
 
 // ══════════════════════════════════════════════════════════
 // SessionStatusUpdateResult — updateSessionStatusDetailed() 응답 래퍼

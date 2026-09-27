@@ -27,6 +27,13 @@ CREATE TYPE public.payment_method_type AS ENUM (
   'SIMULATE'
 );
 
+CREATE TYPE public.session_status AS ENUM (
+  'WAITING',
+  'VOTING',
+  'ORDERED',
+  'DONE'
+);
+
 CREATE TABLE public.restaurants (
   id UUID PRIMARY KEY
 );
@@ -37,15 +44,28 @@ CREATE TABLE public.users (
   restaurant_id UUID REFERENCES public.restaurants(id)
 );
 
+ALTER TABLE public.restaurants
+  ADD COLUMN owner_user_id UUID REFERENCES public.users(id);
+
 CREATE TABLE public.sessions (
-  id UUID PRIMARY KEY
+  id UUID PRIMARY KEY,
+  status public.session_status NOT NULL DEFAULT 'WAITING',
+  winner_restaurant_id UUID REFERENCES public.restaurants(id)
+);
+
+CREATE TABLE public.session_members (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  session_id UUID NOT NULL REFERENCES public.sessions(id) ON DELETE CASCADE,
+  user_id UUID NOT NULL REFERENCES public.users(id) ON DELETE CASCADE,
+  UNIQUE (session_id, user_id)
 );
 
 CREATE TABLE public.menu_items (
   id UUID PRIMARY KEY,
   name TEXT NOT NULL,
   price INT NOT NULL,
-  restaurant_id UUID NOT NULL REFERENCES public.restaurants(id)
+  restaurant_id UUID NOT NULL REFERENCES public.restaurants(id),
+  is_available BOOLEAN NOT NULL DEFAULT TRUE
 );
 
 CREATE TABLE public.orders (
@@ -64,7 +84,7 @@ CREATE TABLE public.order_items (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   order_id UUID NOT NULL REFERENCES public.orders(id),
   menu_item_id UUID NOT NULL REFERENCES public.menu_items(id),
-  quantity INT NOT NULL CHECK (quantity BETWEEN 1 AND 10),
+  quantity INT NOT NULL CHECK (quantity > 0),
   price INT NOT NULL
 );
 
@@ -235,7 +255,7 @@ export class DisposablePostgres {
         ],
         remainingStartupTime(
           startupDeadline,
-          DOCKER_COMMAND_TIMEOUT_MS,
+          30_000,
           'Docker container creation',
         ),
       );
@@ -393,6 +413,63 @@ export class PostgresSupabaseClient {
   };
 
   from(table: string): any {
+    if (table === 'session_members') {
+      const filters: EqualityFilter[] = [];
+      const builder = {
+        eq: (column: string, value: unknown) => {
+          filters.push({ column, value });
+          return builder;
+        },
+        maybeSingle: async () => {
+          const sessionId = filters.find(
+            ({ column }) => column === 'session_id',
+          )?.value;
+          const userId = filters.find(
+            ({ column }) => column === 'user_id',
+          )?.value;
+          try {
+            const result = await this.pool.query(
+              `
+                SELECT user_id
+                FROM public.session_members
+                WHERE session_id = $1::UUID
+                  AND user_id = $2::UUID
+              `,
+              [sessionId, userId],
+            );
+            return { data: result.rows[0] ?? null, error: null };
+          } catch (error) {
+            return this.failure(error);
+          }
+        },
+      };
+      return { select: () => builder };
+    }
+
+    if (table === 'sessions') {
+      return {
+        select: () => ({
+          eq: (_column: string, sessionId: string) => ({
+            maybeSingle: async () => {
+              try {
+                const result = await this.pool.query(
+                  `
+                    SELECT status, winner_restaurant_id
+                    FROM public.sessions
+                    WHERE id = $1::UUID
+                  `,
+                  [sessionId],
+                );
+                return { data: result.rows[0] ?? null, error: null };
+              } catch (error) {
+                return this.failure(error);
+              }
+            },
+          }),
+        }),
+      };
+    }
+
     if (table === 'menu_items') {
       return {
         select: () => ({
@@ -437,6 +514,39 @@ export class PostgresSupabaseClient {
           }),
         }),
       };
+    }
+
+    if (table === 'restaurants') {
+      const filters: EqualityFilter[] = [];
+      const builder = {
+        eq: (column: string, value: unknown) => {
+          filters.push({ column, value });
+          return builder;
+        },
+        maybeSingle: async () => {
+          const restaurantId = filters.find(
+            ({ column }) => column === 'id',
+          )?.value;
+          const ownerUserId = filters.find(
+            ({ column }) => column === 'owner_user_id',
+          )?.value;
+          try {
+            const result = await this.pool.query(
+              `
+                SELECT id
+                FROM public.restaurants
+                WHERE id = $1::UUID
+                  AND owner_user_id = $2::UUID
+              `,
+              [restaurantId, ownerUserId],
+            );
+            return { data: result.rows[0] ?? null, error: null };
+          } catch (error) {
+            return this.failure(error);
+          }
+        },
+      };
+      return { select: () => builder };
     }
 
     if (table === 'orders') {

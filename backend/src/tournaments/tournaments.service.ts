@@ -91,11 +91,7 @@ export class TournamentsService {
       .single();
 
     if (error || !data) {
-      // PostgREST 에러 메시지 + 코드까지 함께 로깅 — silent 실패 차단.
-      this.logger.error(
-        `tournament_results INSERT 실패: ${error?.message ?? 'no data'} ` +
-          `(code=${error?.code ?? 'n/a'})`,
-      );
+      this.logger.error('TOURNAMENT_RESULT_CREATE_PERSIST_FAILED');
       throw new InternalServerErrorException(
         '토너먼트 결과를 저장하지 못했어요.',
       );
@@ -131,9 +127,7 @@ export class TournamentsService {
       .not('winner_restaurant_id', 'is', null);
 
     if (error) {
-      this.logger.error(
-        `tournament_results 조회 실패: ${error.message} (code=${error.code ?? 'n/a'})`,
-      );
+      this.logger.error('TOURNAMENT_RESULT_LIST_PERSIST_FAILED');
       throw new InternalServerErrorException(
         '트렌딩 데이터를 불러오지 못했어요.',
       );
@@ -170,9 +164,7 @@ export class TournamentsService {
       .in('id', ids);
 
     if (rError) {
-      this.logger.error(
-        `restaurants 카드 정보 조회 실패: ${rError.message}`,
-      );
+      this.logger.error('TOURNAMENT_RESTAURANT_LOOKUP_FAILED');
       throw new InternalServerErrorException(
         '트렌딩 식당 정보를 불러오지 못했어요.',
       );

@@ -64,7 +64,7 @@ export class RestaurantsService {
     const { data, error } = await qb;
 
     if (error) {
-      throw new Error(`식당 목록 조회 실패: ${error.message}`);
+      throw new Error('RESTAURANT_LIST_LOOKUP_FAILED');
     }
 
     // 위치 기반 반경 필터 (2026-05-12 추가):
@@ -162,7 +162,7 @@ export class RestaurantsService {
       .order('price');
 
     if (error) {
-      throw new Error(`메뉴 조회 실패: ${error.message}`);
+      throw new Error('RESTAURANT_MENU_LOOKUP_FAILED');
     }
 
     // 2026-05-15: menu_items 의 image_url 이 null/empty 인 옛 레코드도
@@ -217,7 +217,7 @@ export class RestaurantsService {
       .eq('status', 'COMPLETED');
 
     if (error) {
-      throw new Error(`단골 카운트 조회 실패: ${error.message}`);
+      throw new Error('RESTAURANT_LOYALTY_COUNT_LOOKUP_FAILED');
     }
 
     const visitCount = count ?? 0;

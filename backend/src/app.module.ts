@@ -26,6 +26,7 @@ import { MenusModule } from './menus/menus.module';
 import { DevModule } from './dev/dev.module';
 import { ObservabilityModule } from './observability/observability.module';
 import { RequestLoggingMiddleware } from './observability/request-logging.middleware';
+import { validateEnvironment } from './config/env.validation';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: NestJS 루트 모듈
@@ -48,6 +49,8 @@ import { RequestLoggingMiddleware } from './observability/request-logging.middle
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      ignoreEnvFile: process.env.LUNCHSYNC_LOCAL_RUNTIME === 'true',
+      validate: validateEnvironment,
     }),
 
     // Rate Limiting

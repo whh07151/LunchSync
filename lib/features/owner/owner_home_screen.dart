@@ -287,22 +287,25 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
                                 user.businessName!.isNotEmpty)
                             ? user.businessName!
                             : (user.name ?? '사장님'),
-                        style: AppTextStyles.bodyLarge
-                            .copyWith(fontWeight: FontWeight.w700),
+                        style: AppTextStyles.bodyLarge.copyWith(
+                          fontWeight: FontWeight.w700,
+                        ),
                       ),
                       const SizedBox(height: 2),
                       Text(
                         '${user.name ?? "사장님"} · ${hasRestaurant ? "매장 연동됨" : "매장 매핑 대기"}',
-                        style: AppTextStyles.bodySmall
-                            .copyWith(color: AppColors.textSecondary),
+                        style: AppTextStyles.bodySmall.copyWith(
+                          color: AppColors.textSecondary,
+                        ),
                       ),
                       if (user.businessNumber != null &&
                           user.businessNumber!.isNotEmpty) ...[
                         const SizedBox(height: 2),
                         Text(
                           '사업자번호 ${user.businessNumber}',
-                          style: AppTextStyles.caption
-                              .copyWith(color: AppColors.textSecondary),
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
                         ),
                       ],
                     ],
@@ -331,9 +334,9 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
           _ownerInfoRow(
             icon: Icons.bar_chart_rounded,
             label: '매출 보기',
-            onTap: () => Navigator.of(context).push(
-              MaterialPageRoute(builder: (_) => const SalesScreen()),
-            ),
+            onTap: () => Navigator.of(
+              context,
+            ).push(MaterialPageRoute(builder: (_) => const SalesScreen())),
           ),
           // OW-10 (2026-05-31): 결제 내역 진입 — 빠른실행 그리드와 동일 화면.
           _ownerInfoRow(
@@ -371,8 +374,9 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
           Center(
             child: Text(
               'LunchSync 사장님 v1.0',
-              style: AppTextStyles.caption
-                  .copyWith(color: AppColors.textSecondary),
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.textSecondary,
+              ),
             ),
           ),
         ],
@@ -420,8 +424,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
     final hasData = r != null;
     final hasReviews = hasData && r.count > 0;
     final scoreLabel = hasReviews ? r.averageScore.toStringAsFixed(1) : '-';
-    final countLabel =
-        hasData ? '${r.count}개 리뷰' : '리뷰 불러오는 중';
+    final countLabel = hasData ? '${r.count}개 리뷰' : '리뷰 불러오는 중';
 
     return Material(
       color: Colors.transparent,
@@ -475,9 +478,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
                     Text(
                       hasReviews
                           ? '손님 후기 보기'
-                          : (hasData
-                              ? '첫 리뷰를 기다리고 있어요'
-                              : '잠시만 기다려주세요'),
+                          : (hasData ? '첫 리뷰를 기다리고 있어요' : '잠시만 기다려주세요'),
                       style: AppTextStyles.caption.copyWith(
                         color: AppColors.textSecondary,
                       ),
@@ -627,8 +628,11 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
         children: [
           Row(
             children: [
-              const Icon(Icons.info_outline_rounded,
-                  color: AppColors.warning, size: 20),
+              const Icon(
+                Icons.info_outline_rounded,
+                color: AppColors.warning,
+                size: 20,
+              ),
               const SizedBox(width: 6),
               Text(
                 '매장 매핑 대기 중',
@@ -719,9 +723,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
         ),
         Text(
           label,
-          style: AppTextStyles.caption.copyWith(
-            color: AppColors.textSecondary,
-          ),
+          style: AppTextStyles.caption.copyWith(color: AppColors.textSecondary),
         ),
       ],
     );
@@ -755,17 +757,17 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
       _OwnerAction(
         icon: Icons.bar_chart_rounded,
         label: '매출',
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const SalesScreen()),
-        ),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const SalesScreen())),
       ),
       // OW-10: 결제 내역 — 오늘/어제/주간/월간 칩 + 환불 시뮬.
       _OwnerAction(
         icon: Icons.account_balance_wallet_rounded,
         label: '결제 내역',
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(builder: (_) => const OwnerPaymentsScreen()),
-        ),
+        onTap: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute(builder: (_) => const OwnerPaymentsScreen())),
       ),
       _OwnerAction(
         icon: Icons.point_of_sale_rounded,
@@ -905,8 +907,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
           Row(
             children: [
               Container(
-                padding:
-                    const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 decoration: BoxDecoration(
                   color: statusColor.withAlpha(28),
                   borderRadius: BorderRadius.circular(8),
@@ -998,7 +999,8 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
                               child: CircularProgressIndicator(
                                 strokeWidth: 2,
                                 valueColor: AlwaysStoppedAnimation<Color>(
-                                    Colors.white),
+                                  Colors.white,
+                                ),
                               ),
                             )
                           : const Icon(Icons.arrow_forward_rounded, size: 16),
@@ -1128,8 +1130,11 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Icon(Icons.info_outline,
-                        color: AppColors.warning, size: 16),
+                    Icon(
+                      Icons.info_outline,
+                      color: AppColors.warning,
+                      size: 16,
+                    ),
                     const SizedBox(width: 6),
                     Expanded(
                       child: Text(
@@ -1148,12 +1153,14 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
                 spacing: 6,
                 runSpacing: 6,
                 children: presetReasons
-                    .map((r) => ActionChip(
-                          label: Text(r),
-                          onPressed: () {
-                            controller.text = r;
-                          },
-                        ))
+                    .map(
+                      (r) => ActionChip(
+                        label: Text(r),
+                        onPressed: () {
+                          controller.text = r;
+                        },
+                      ),
+                    )
                     .toList(),
               ),
               const SizedBox(height: 12),
@@ -1190,11 +1197,6 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
   // ── 상태 전이 규칙 (LSPOS src/lib/utils/status.ts 의 nextStatus 와 동일) ───
   String? _nextStatus(String current) {
     switch (current) {
-      // 2026-06-03: 결제 미완(Toss successUrl 리다이렉트 미완)으로 PENDING 에 갇힌
-      //   주문도 사장이 "주문 수락"하여 바로 조리(PREPARING)에 들어갈 수 있게 한다.
-      //   (수락 = 조리중, 별도 ACCEPTED 단계 없이 단순화)
-      case 'PENDING':
-        return 'PREPARING';
       case 'PAID':
         return 'PREPARING';
       case 'PREPARING':
@@ -1210,9 +1212,8 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
   /// 다음 단계 버튼에 표시할 라벨 ("조리 시작", "조리 완료", "픽업 완료")
   String _nextStatusLabel(String current) {
     switch (current) {
-      // 2026-06-03: 조리 시작 전(PENDING/PAID) 주문의 다음 액션은 "주문 수락" 으로 표기.
+      // 결제가 확인된 PAID 주문만 조리를 시작할 수 있다.
       //   사장이 들어온 주문을 받아 조리에 들어가는 행위이므로 '수락' 이 직관적이다.
-      case 'PENDING':
       case 'PAID':
         return '주문 수락';
       case 'PREPARING':
@@ -1296,13 +1297,13 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
       unselectedFontSize: 11,
       backgroundColor: AppColors.surface,
       items: tabs
-          .map((t) => BottomNavigationBarItem(icon: Icon(t.icon), label: t.label))
+          .map(
+            (t) => BottomNavigationBarItem(icon: Icon(t.icon), label: t.label),
+          )
           .toList(),
     );
   }
-
 }
-
 
 class _OwnerAction {
   const _OwnerAction({

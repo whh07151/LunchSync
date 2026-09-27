@@ -63,13 +63,10 @@ export class CrawlController {
         success: true,
         data: result,
       };
-    } catch (e) {
+    } catch (_) {
       // 예: Supabase 일시적 장애, 카카오/네이버/Gemini 호출 전부 실패 등.
       // 사용자에겐 친근하게, 운영 로그엔 원인 추적 정보 남김.
-      this.logger.error(
-        `크롤링 실패 lat=${dto.lat} lng=${dto.lng} radius=${radius}: ` +
-          `${(e as Error).message}`,
-      );
+      this.logger.error('CRAWL_REQUEST_FAILED');
       return {
         success: false,
         message:

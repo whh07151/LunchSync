@@ -74,9 +74,7 @@ export class CrawlService {
     lng: number,
     radiusMeters: number = 1000,
   ): Promise<CrawlResult> {
-    this.logger.log(
-      `크롤링 시작: 위도=${lat}, 경도=${lng}, 반경=${radiusMeters}m`,
-    );
+    this.logger.log('CRAWL_STARTED');
 
     // 1단계: 카카오 로컬 API로 식당 목록 검색
     const kakaoPlaces = await this.searchKakaoPlaces(lat, lng, radiusMeters);
@@ -116,7 +114,7 @@ export class CrawlService {
           });
           if (aiMenus.length > 0) {
             this.logger.log(
-              `Gemini AI 메뉴 폴백 (${place.place_name}): ${aiMenus.length}개`,
+              `CRAWL_AI_MENU_FALLBACK count=${aiMenus.length}`,
             );
             detail = {
               name: place.place_name,
@@ -154,7 +152,7 @@ export class CrawlService {
           const category = this.mapCategory(place.category_name);
           const libMenus = pickMenusForCategory(category, 5);
           this.logger.log(
-            `카테고리 라이브러리 폴백 (${place.place_name}, ${category}): ${libMenus.length}개`,
+            `CRAWL_CATEGORY_MENU_FALLBACK count=${libMenus.length}`,
           );
           detail = {
             name: place.place_name,
@@ -180,11 +178,9 @@ export class CrawlService {
         totalSaved++;
 
         results.push({ name: place.place_name, menuCount });
-        this.logger.log(
-          `저장 완료: ${place.place_name} (메뉴 ${menuCount}개)`,
-        );
-      } catch (e) {
-        this.logger.warn(`${place.place_name} 처리 실패: ${e}`);
+        this.logger.log(`CRAWL_RESTAURANT_SAVED menuCount=${menuCount}`);
+      } catch {
+        this.logger.warn('CRAWL_RESTAURANT_PROCESSING_FAILED');
       }
     }
 
@@ -256,20 +252,14 @@ export class CrawlService {
         res = await fetch(url.toString(), {
           headers: { Authorization: `KakaoAK ${apiKey}` },
         });
-      } catch (e) {
-        this.logger.error(
-          `카카오 API 네트워크 예외 (page=${page}): ${(e as Error).message}`,
-        );
+      } catch {
+        this.logger.error(`CRAWL_KAKAO_UNREACHABLE page=${page}`);
         break;
       }
 
       if (!res.ok) {
         // 401/403 인증 만료, 429 할당량 초과, 5xx 카카오 장애 모두 동일 처리.
-        // 응답 본문을 200자만 잘라 로그에 남겨 원인 추적 도움.
-        const body = await res.text().catch(() => '');
-        this.logger.error(
-          `카카오 API 에러: ${res.status} ${res.statusText} body=${body.slice(0, 200)}`,
-        );
+        this.logger.error(`CRAWL_KAKAO_REJECTED status=${res.status}`);
         break;
       }
 
@@ -335,8 +325,8 @@ export class CrawlService {
         businessHours: firstPlace.businessHours?.summary || null,
         imageUrl: firstPlace.thumUrl || firstPlace.imageUrl || null,
       };
-    } catch (e) {
-      this.logger.warn(`네이버 상세 조회 실패 (${placeName}): ${e}`);
+    } catch {
+      this.logger.warn('CRAWL_NAVER_DETAIL_FAILED');
       return null;
     }
   }
@@ -443,9 +433,7 @@ export class CrawlService {
         .single();
 
       if (error || !inserted) {
-        this.logger.error(
-          `식당 저장 실패 (${kakaoPlace.place_name}): ${error?.message}`,
-        );
+        this.logger.error('CRAWL_RESTAURANT_PERSIST_FAILED');
         return 0;
       }
       restaurantId = inserted.id;
@@ -477,7 +465,7 @@ export class CrawlService {
         .insert(menuRows);
 
       if (menuError) {
-        this.logger.warn(`메뉴 저장 실패: ${menuError.message}`);
+        this.logger.warn('CRAWL_MENU_PERSIST_FAILED');
         return 0;
       }
     }
@@ -622,9 +610,7 @@ export class CrawlService {
             .select('id')
             .single();
           if (error || !inserted) {
-            this.logger.error(
-              `Gemini 가상식당 저장 실패 (${r.name}): ${error?.message}`,
-            );
+            this.logger.error('CRAWL_AI_RESTAURANT_PERSIST_FAILED');
             continue;
           }
           restaurantId = inserted.id;
@@ -657,20 +643,16 @@ export class CrawlService {
           .insert(menuRows);
 
         if (menuError) {
-          this.logger.warn(
-            `Gemini 가상메뉴 저장 실패 (${r.name}): ${menuError.message}`,
-          );
+          this.logger.warn('CRAWL_AI_MENU_PERSIST_FAILED');
           continue;
         }
 
         totalMenus += r.menus.length;
         totalSaved++;
         results.push({ name: r.name, menuCount: r.menus.length });
-        this.logger.log(
-          `Gemini 가상식당 저장: ${r.name} (메뉴 ${r.menus.length}개)`,
-        );
-      } catch (e) {
-        this.logger.warn(`Gemini 가상식당 처리 예외 (${r.name}): ${e}`);
+        this.logger.log(`CRAWL_AI_RESTAURANT_SAVED menuCount=${r.menus.length}`);
+      } catch {
+        this.logger.warn('CRAWL_AI_RESTAURANT_PROCESSING_FAILED');
       }
     }
 

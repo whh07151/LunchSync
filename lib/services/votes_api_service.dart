@@ -200,12 +200,11 @@ class VotesApiService {
       }
 
       debugPrint(
-        '[VotesApiService] castVote 실패: '
-        '${response.statusCode} body=${response.body}',
+        '[VotesApiService] CAST_VOTE_HTTP_${response.statusCode}',
       );
       return CastVoteResult.failure(message);
     } catch (e) {
-      debugPrint('[VotesApiService] castVote 예외: $e');
+      debugPrint('[VotesApiService] CAST_VOTE_FAILED');
       return const CastVoteResult.failure(
           '서버에 닿지 못했어요. 인터넷 연결을 확인해봐요');
     }
@@ -242,8 +241,7 @@ class VotesApiService {
 
       if (response.statusCode != 200) {
         debugPrint(
-          '[VotesApiService] getVotes 실패: '
-          '${response.statusCode} body=${response.body}',
+          '[VotesApiService] GET_VOTES_HTTP_${response.statusCode}',
         );
         return null;
       }
@@ -318,7 +316,7 @@ class VotesApiService {
         votedUserIds: votedUserIds,
       );
     } catch (e) {
-      debugPrint('[VotesApiService] getVotes 예외: $e');
+      debugPrint('[VotesApiService] GET_VOTES_FAILED');
       return null;
     }
   }
@@ -358,12 +356,11 @@ class VotesApiService {
         );
       }
       debugPrint(
-        '[VotesApiService] decide 실패: '
-        '${response.statusCode} body=${response.body}',
+        '[VotesApiService] DECIDE_HTTP_${response.statusCode}',
       );
       return null;
     } catch (e) {
-      debugPrint('[VotesApiService] decide 예외: $e');
+      debugPrint('[VotesApiService] DECIDE_FAILED');
       return null;
     }
   }

@@ -84,7 +84,7 @@ class CrawlApiService {
       debugPrint('[CrawlApiService] 응답 실패: ${response.statusCode}');
       return null;
     } catch (e) {
-      debugPrint('[CrawlApiService] crawlRestaurants 에러: $e');
+      debugPrint('[CrawlApiService] CRAWL_RESTAURANTS_FAILED');
       return null;
     }
   }

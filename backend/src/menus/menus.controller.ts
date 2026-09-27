@@ -1,12 +1,13 @@
 import {
-  BadRequestException,
   Controller,
+  ForbiddenException,
   Get,
   Param,
-  Query,
+  Req,
   UseGuards,
 } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import {
   CheckAllergensResult,
   MenusService,
@@ -64,18 +65,15 @@ export class MenusController {
   //   - 500 : DB 조회 실패 시 일반 에러
   @Get('restaurant/:restaurantId/check-allergens')
   async checkAllergens(
+    @Req() req: { user: AuthedRequestUser },
     @Param('restaurantId') restaurantId: string,
-    @Query('userId') userId?: string,
   ): Promise<{ success: true; data: CheckAllergensResult }> {
-    // userId 가 비어있으면 어떤 사용자에 대해 검증할지 알 수 없음 → 400.
-    // (자기 자신을 검증하는 경우는 프론트에서 ref.read(userProvider).userId 로 채워서 보냄.)
-    if (!userId || userId.trim().length === 0) {
-      throw new BadRequestException('userId 쿼리 파라미터가 필요합니다.');
+    if (req.user.type !== 'USER' || !req.user.userId) {
+      throw new ForbiddenException('사용자 계정으로만 조회할 수 있습니다.');
     }
-
     const result = await this.menusService.checkAllergens(
       restaurantId,
-      userId.trim(),
+      req.user.userId,
     );
     return { success: true, data: result };
   }

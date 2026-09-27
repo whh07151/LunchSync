@@ -1,4 +1,4 @@
-﻿import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
@@ -23,18 +23,15 @@ import '../core/api/http_headers_helper.dart';
 
 /// 주문 생성 요청에 담는 한 개 메뉴 항목
 class CreateOrderItem {
-  const CreateOrderItem({
-    required this.menuItemId,
-    required this.quantity,
-  });
+  const CreateOrderItem({required this.menuItemId, required this.quantity});
 
   final String menuItemId; // Supabase menu_items.id (UUID)
-  final int quantity;      // 수량 (1 이상)
+  final int quantity; // 수량 (1 이상)
 
   Map<String, dynamic> toJson() => {
-        'menuItemId': menuItemId,
-        'quantity': quantity,
-      };
+    'menuItemId': menuItemId,
+    'quantity': quantity,
+  };
 }
 
 /// 주문 목록 항목 (GET /orders/today 응답)
@@ -51,7 +48,8 @@ class OrderSummaryDto {
 
   final String id;
   final String sessionId;
-  final String status;    // PENDING | PAID | PREPARING | READY | COMPLETED | CANCELLED
+  final String
+  status; // PENDING | PAID | PREPARING | READY | COMPLETED | CANCELLED
   final int totalPrice;
   final String createdAt; // ISO 8601 문자열
 
@@ -185,12 +183,12 @@ class CreateOrderResult {
     this.paymentKey,
   });
 
-  final String id;           // 생성된 주문 UUID — 토스 orderId 로 사용
+  final String id; // 생성된 주문 UUID — 토스 orderId 로 사용
   final String sessionId;
-  final String status;       // PENDING | PAID | ...
-  final int totalPrice;      // 총 금액 (KRW)
+  final String status; // PENDING | PAID | ...
+  final int totalPrice; // 총 금액 (KRW)
   final String paymentMethod;
-  final String? paymentKey;  // SIMULATE 모드에서만 값이 있음
+  final String? paymentKey; // SIMULATE 모드에서만 값이 있음
 
   factory CreateOrderResult.fromJson(Map<String, dynamic> json) {
     return CreateOrderResult(
@@ -202,6 +200,34 @@ class CreateOrderResult {
       paymentKey: json['paymentKey'] as String?,
     );
   }
+}
+
+/// 주문 생성 시 화면에서 별도로 안내할 수 있는 백엔드 거절 사유.
+///
+/// 이 목록에 없는 서버 오류는 기존 계약대로 [OrdersApiService.createOrder]가
+/// `null`을 반환한다. 응답 본문이나 임의의 서버 메시지를 UI까지 전달하지 않는다.
+enum CreateOrderFailureCode {
+  sessionNotFound('ORDER_SESSION_NOT_FOUND'),
+  sessionNotReady('ORDER_SESSION_NOT_READY'),
+  sessionRestaurantMismatch('ORDER_SESSION_RESTAURANT_MISMATCH');
+
+  const CreateOrderFailureCode(this.backendCode);
+
+  final String backendCode;
+
+  static CreateOrderFailureCode? fromBackendCode(Object? value) {
+    for (final code in values) {
+      if (value == code.backendCode) return code;
+    }
+    return null;
+  }
+}
+
+/// 사용자가 바로 수정할 수 있는 주문 세션 문제만 나타내는 통제된 예외.
+class CreateOrderException implements Exception {
+  const CreateOrderException(this.code);
+
+  final CreateOrderFailureCode code;
 }
 
 class OrdersApiService {
@@ -239,18 +265,30 @@ class OrdersApiService {
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
-        return CreateOrderResult.fromJson(
-          json['data'] as Map<String, dynamic>,
-        );
+        return CreateOrderResult.fromJson(json['data'] as Map<String, dynamic>);
       }
 
-      debugPrint(
-        '[OrdersApiService] createOrder 실패: '
-        '${response.statusCode} ${response.body}',
-      );
+      final failureCode = _createOrderFailureCode(response.body);
+      if (failureCode != null) {
+        throw CreateOrderException(failureCode);
+      }
+
+      debugPrint('[OrdersApiService] CREATE_ORDER_HTTP_${response.statusCode}');
       return null;
+    } on CreateOrderException {
+      rethrow;
     } catch (e) {
-      debugPrint('[OrdersApiService] createOrder 에러: $e');
+      debugPrint('[OrdersApiService] CREATE_ORDER_FAILED');
+      return null;
+    }
+  }
+
+  CreateOrderFailureCode? _createOrderFailureCode(String responseBody) {
+    try {
+      final decoded = jsonDecode(responseBody);
+      if (decoded is! Map<String, dynamic>) return null;
+      return CreateOrderFailureCode.fromBackendCode(decoded['code']);
+    } on FormatException {
       return null;
     }
   }
@@ -276,7 +314,7 @@ class OrdersApiService {
       }
       return [];
     } catch (e) {
-      debugPrint('[OrdersApiService] getTodayOrders 에러: $e');
+      debugPrint('[OrdersApiService] GET_TODAY_ORDERS_FAILED');
       return [];
     }
   }
@@ -301,7 +339,7 @@ class OrdersApiService {
       }
       return null;
     } catch (e) {
-      debugPrint('[OrdersApiService] getOrderById 에러: $e');
+      debugPrint('[OrdersApiService] GET_ORDER_FAILED');
       return null;
     }
   }
@@ -339,7 +377,7 @@ class OrdersApiService {
         }
       }
     } catch (e) {
-      debugPrint('[OrdersApiService] wrapped 전용 엔드포인트 실패: $e');
+      debugPrint('[OrdersApiService] GET_WRAPPED_FAILED');
     }
 
     // ── ② 월 단위 주문 목록 → 클라 집계 ────────────────
@@ -364,7 +402,7 @@ class OrdersApiService {
         }
       }
     } catch (e) {
-      debugPrint('[OrdersApiService] 월 단위 주문 폴백 실패: $e');
+      debugPrint('[OrdersApiService] GET_MONTHLY_ORDERS_FAILED');
     }
 
     // ── ③ 오늘 주문이라도 있으면 집계 ───────────────────
@@ -372,11 +410,13 @@ class OrdersApiService {
       final todays = await getTodayOrders(accessToken: accessToken);
       if (todays.isNotEmpty) {
         final wrapped = todays
-            .map((o) => _WrappedOrderDto(
-                  id: o.id,
-                  totalAmount: o.totalPrice,
-                  createdAt: DateTime.tryParse(o.createdAt),
-                ))
+            .map(
+              (o) => _WrappedOrderDto(
+                id: o.id,
+                totalAmount: o.totalPrice,
+                createdAt: DateTime.tryParse(o.createdAt),
+              ),
+            )
             .toList();
         return _aggregate(wrapped, year, month);
       }
@@ -394,7 +434,8 @@ class OrdersApiService {
     int year,
     int month,
   ) {
-    final ratioRaw = (data['categoryRatio'] as Map<String, dynamic>?) ??
+    final ratioRaw =
+        (data['categoryRatio'] as Map<String, dynamic>?) ??
         (data['category_ratio'] as Map<String, dynamic>?) ??
         const <String, dynamic>{};
     final ratio = <String, double>{};
@@ -406,14 +447,17 @@ class OrdersApiService {
       year: year,
       month: month,
       totalCount: (data['totalCount'] ?? data['total_count'] ?? 0) as int,
-      averagePrice:
-          (data['averagePrice'] ?? data['average_price'] ?? 0) as int,
-      topRestaurantName: (data['topRestaurantName'] ??
-              data['top_restaurant_name'] ??
-              '단골 식당 없음') as String,
-      topRestaurantCategory: (data['topRestaurantCategory'] ??
-              data['top_restaurant_category'] ??
-              '') as String,
+      averagePrice: (data['averagePrice'] ?? data['average_price'] ?? 0) as int,
+      topRestaurantName:
+          (data['topRestaurantName'] ??
+                  data['top_restaurant_name'] ??
+                  '단골 식당 없음')
+              as String,
+      topRestaurantCategory:
+          (data['topRestaurantCategory'] ??
+                  data['top_restaurant_category'] ??
+                  '')
+              as String,
       topVisitCount:
           (data['topVisitCount'] ?? data['top_visit_count'] ?? 0) as int,
       categoryRatio: ratio,
@@ -421,15 +465,12 @@ class OrdersApiService {
   }
 
   // ── 클라 집계 ──────────────────────────────────────────
-  WrappedStats _aggregate(
-    List<_WrappedOrderDto> orders,
-    int year,
-    int month,
-  ) {
+  WrappedStats _aggregate(List<_WrappedOrderDto> orders, int year, int month) {
     if (orders.isEmpty) return WrappedStats.empty(year, month);
     final totalCount = orders.length;
-    final priced =
-        orders.where((o) => o.totalAmount != null && o.totalAmount! > 0);
+    final priced = orders.where(
+      (o) => o.totalAmount != null && o.totalAmount! > 0,
+    );
     final sumPrice = priced.fold<int>(0, (acc, o) => acc + o.totalAmount!);
     final averagePrice = priced.isEmpty ? 0 : (sumPrice ~/ priced.length);
 
@@ -501,32 +542,32 @@ class WrappedStats {
   final Map<String, double> categoryRatio;
 
   factory WrappedStats.empty(int year, int month) => WrappedStats(
-        year: year,
-        month: month,
-        totalCount: 0,
-        averagePrice: 0,
-        topRestaurantName: '아직 기록이 없어요',
-        topRestaurantCategory: '',
-        topVisitCount: 0,
-        categoryRatio: const {},
-      );
+    year: year,
+    month: month,
+    totalCount: 0,
+    averagePrice: 0,
+    topRestaurantName: '아직 기록이 없어요',
+    topRestaurantCategory: '',
+    topVisitCount: 0,
+    categoryRatio: const {},
+  );
 
   factory WrappedStats.demo(int year, int month) => WrappedStats(
-        year: year,
-        month: month,
-        totalCount: 5,
-        averagePrice: 9200,
-        topRestaurantName: '백채김치찌개',
-        topRestaurantCategory: '한식',
-        topVisitCount: 2,
-        categoryRatio: const {
-          '한식': 0.45,
-          '일식': 0.22,
-          '양식': 0.18,
-          '중식': 0.10,
-          '카페': 0.05,
-        },
-      );
+    year: year,
+    month: month,
+    totalCount: 5,
+    averagePrice: 9200,
+    topRestaurantName: '백채김치찌개',
+    topRestaurantCategory: '한식',
+    topVisitCount: 2,
+    categoryRatio: const {
+      '한식': 0.45,
+      '일식': 0.22,
+      '양식': 0.18,
+      '중식': 0.10,
+      '카페': 0.05,
+    },
+  );
 }
 
 // 내부 집계용 — 백엔드 응답 매핑 방어 (snake_case/camelCase 혼재 대응)
@@ -551,18 +592,21 @@ class _WrappedOrderDto {
     final restaurant = json['restaurant'] as Map<String, dynamic>?;
     return _WrappedOrderDto(
       id: (json['id'] ?? json['order_id'] ?? '').toString(),
-      restaurantId: (json['restaurantId'] ??
-              json['restaurant_id'] ??
-              restaurant?['id'])
-          ?.toString(),
-      restaurantName: (json['restaurantName'] ??
-          json['restaurant_name'] ??
-          restaurant?['name']) as String?,
+      restaurantId:
+          (json['restaurantId'] ?? json['restaurant_id'] ?? restaurant?['id'])
+              ?.toString(),
+      restaurantName:
+          (json['restaurantName'] ??
+                  json['restaurant_name'] ??
+                  restaurant?['name'])
+              as String?,
       category: (json['category'] ?? restaurant?['category']) as String?,
-      totalAmount: (json['totalAmount'] ??
-          json['total_amount'] ??
-          json['totalPrice'] ??
-          json['amount']) as int?,
+      totalAmount:
+          (json['totalAmount'] ??
+                  json['total_amount'] ??
+                  json['totalPrice'] ??
+                  json['amount'])
+              as int?,
       createdAt: _parseDate(json['createdAt'] ?? json['created_at']),
     );
   }

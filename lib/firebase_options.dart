@@ -56,7 +56,7 @@ class DefaultFirebaseOptions {
   /// Android — google-services.json 값 그대로
   static const FirebaseOptions android = FirebaseOptions(
     apiKey: 'AIzaSyC_nKqFO8UHQDSTFxCiR05MvIPY9wJSnPw',
-    appId: '1:472348585865:android:b37aed822baa2f89367b58',
+    appId: '1:472348585865:android:f86ccbb62a2fa92c367b58',
     messagingSenderId: '472348585865',
     projectId: 'lunchsync-cf32f',
     storageBucket: 'lunchsync-cf32f.firebasestorage.app',

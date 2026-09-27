@@ -1,6 +1,6 @@
 # LunchSync DTO 명세서
-**작성일:** 2026-04-08 / **최종 수정:** 2026-04-14
-**버전:** 1.3
+**작성일:** 2026-04-08 / **최종 수정:** 2026-08-05
+**버전:** 1.4
 **기준:** 프론트 친화적 구조 (Flutter가 가공 없이 바로 사용 가능)
 **네이밍:** camelCase (Flutter Dart 컨벤션)
 
@@ -91,6 +91,64 @@
 > Flutter 처리:
 > - `isNewUser == true` → ProfileSetupScreen
 > - `isNewUser == false` → HomeScreen
+
+---
+
+### POST /auth/signup/email
+
+이메일 계정을 생성한다. 응답의 `accessToken`은 10분짜리
+`EMAIL_VERIFICATION` 목적 토큰이며 일반 API에는 사용할 수 없고 앱에 저장하지 않는다.
+
+```json
+{
+  "email": "user@example.com",
+  "password": "8자 이상 비밀번호",
+  "name": "홍길동",
+  "role": "CUSTOMER"
+}
+```
+
+가입 직후 `POST /auth/email/send-otp`로 인증 코드를 요청한다.
+
+### POST /auth/email/send-otp
+
+`Authorization: Bearer {EMAIL_VERIFICATION 목적 토큰}`이 필요하다. body의 이메일은
+토큰의 이메일과 대소문자를 무시하고 같아야 한다.
+
+```json
+{ "email": "user@example.com" }
+```
+
+### POST /auth/email/verify-otp
+
+send와 동일한 검증 목적 Bearer 토큰이 필요하다.
+
+```json
+{
+  "email": "user@example.com",
+  "code": "123456"
+}
+```
+
+Supabase OTP 검증과 `public.users.email_verified_at` 반영이 모두 성공하면
+`POST /auth/kakao`와 같은 일반 `AuthResult`를 반환한다. Flutter는 이 응답의
+JWT만 저장한다. DB 반영을 확인하지 못하면
+`EMAIL_VERIFICATION_SYNC_PENDING` 503을 반환한다.
+
+### POST /auth/login/email
+
+비밀번호가 맞아도 이메일 미인증 계정은 `EMAIL_VERIFICATION_REQUIRED` 401이다.
+일반 JWT 대신 OTP 흐름을 재개할 10분짜리 `verificationToken`만 오류 body에 담는다.
+
+### POST /auth/verify-phone
+
+공개 전화 로그인/가입 경로다. 요청은 Firebase `idToken`만 받으며 사용자가
+계정 ID를 지정할 수 없다.
+
+### POST /auth/verify-phone/attach
+
+로그인된 계정에 전화번호를 연결한다. `Authorization: Bearer {JWT}`가 필요하며
+대상 계정은 JWT의 `sub`에서만 파생한다.
 
 ---
 
@@ -419,7 +477,7 @@
 ### GET /restaurants
 AI 추천 식당 목록 (조건 필터링)
 
-**Query Params:**
+**쿼리 매개변수:**
 ```
 ?sessionId=session_uuid
 ```
@@ -504,7 +562,7 @@ AI 추천 식당 목록 (조건 필터링)
 ### GET /recommendations
 그룹 추천 (점수화, 최근 7일 중복 회피)
 
-**Query Params:**
+**쿼리 매개변수:**
 ```
 ?sessionId=session_uuid
 ```
@@ -727,8 +785,10 @@ AI 추천 식당 목록 (조건 필터링)
   "paymentMethod": "TOSS"
 }
 ```
-> `paymentMethod`: `TOSS` | `CARD` | `CASH` | `SIMULATE`
-> `SIMULATE` / `CASH` 는 서버에서 즉시 PAID 처리, `TOSS`는 결제위젯 흐름으로 진행
+> `paymentMethod`: `TOSS` | `CARD` | `CASH` | `SIMULATE`. 생략 시 `TOSS`다.
+> `TOSS`/`CARD`/`CASH`는 승인 또는 POS 수납 확인 전까지 `PENDING`이다.
+> `SIMULATE`는 비운영이면서 `ALLOW_SIMULATED_PAYMENTS=true`일 때만 즉시
+> `PAID`가 된다. 플래그가 없거나 production이면 RPC 호출 전 403이다.
 
 **Response:**
 ```json
@@ -737,10 +797,10 @@ AI 추천 식당 목록 (조건 필터링)
   "data": {
     "id": "order_uuid",
     "sessionId": "session_uuid",
-    "status": "PAID",
+    "status": "PENDING",
     "totalPrice": 13000,
-    "paymentMethod": "SIMULATE",
-    "paymentKey": "sim_order_uuid_timestamp",
+    "paymentMethod": "TOSS",
+    "paymentKey": null,
     "items": [
       { "menuItemId": "menu_uuid", "quantity": 2, "price": 6500 }
     ],
@@ -809,12 +869,12 @@ AI 추천 식당 목록 (조건 필터링)
 ---
 
 ### PATCH /orders/:id/status
-주문 상태 변경 (점주: ACCEPTED/CANCELLED, POS: PREPARING/DONE)
+고객 본인의 결제 전 주문 취소. `PENDING → CANCELLED`만 허용한다.
 
 **Request:**
 ```json
 {
-  "status": "ACCEPTED"
+  "status": "CANCELLED"
 }
 ```
 
@@ -824,8 +884,7 @@ AI 추천 식당 목록 (조건 필터링)
   "success": true,
   "data": {
     "id": "order_uuid",
-    "status": "ACCEPTED",
-    "statusLabel": "수락됨"
+    "status": "CANCELLED"
   }
 }
 ```
@@ -846,6 +905,9 @@ AI 추천 식당 목록 (조건 필터링)
 }
 ```
 > `amount` 위변조 검증: DB의 `total_price`와 다르면 400 반환
+> DB의 `payment_method`가 `TOSS`가 아니면 409다. Toss 승인은 성공했지만 고객
+> 취소가 먼저 반영된 경우 서버가 보상 환불하고 409를 반환하며, 보상 실패는
+> 재조정이 필요한 503이다.
 
 **Response (성공):**
 ```json
@@ -882,7 +944,7 @@ AI 추천 식당 목록 (조건 필터링)
 ### GET /pos/orders/:restaurantId
 점주용 주문 목록 (선택적 status 필터)
 
-**Query Params:**
+**쿼리 매개변수:**
 ```
 ?status=PAID
 ```
@@ -931,7 +993,8 @@ AI 추천 식당 목록 (조건 필터링)
 ---
 
 ### PATCH /pos/orders/:orderId/status
-점주 주문 상태 변경
+점주 주문 상태 변경. `PAID → PREPARING → READY → COMPLETED` 순서만 허용하며
+같은 목표 상태의 재요청은 멱등 성공이다.
 
 **Request:**
 ```json
@@ -953,8 +1016,9 @@ AI 추천 식당 목록 (조건 필터링)
 ---
 
 ### POST /pos/orders/:orderId/cancel
-취소/환불
-> ⚠️ Toss 실제 환불 API 미연결 (TODO: POS-13)
+취소/환불. 실제 Toss payment key가 있으면 결제사 취소 성공과 응답 일치를 확인한
+뒤 최초 status·payment key 스냅샷을 조건으로 `CANCELLED`를 저장한다. 이미 취소된
+주문 재요청은 멱등 성공이다.
 
 **Request:**
 ```json
@@ -965,9 +1029,18 @@ AI 추천 식당 목록 (조건 필터링)
 ```json
 {
   "success": true,
-  "data": { "success": true, "orderId": "order_uuid" }
+  "data": {
+    "id": "order_uuid",
+    "status": "CANCELLED",
+    "refundAmount": 13000,
+    "refundMethod": "TOSS_CANCEL",
+    "reason": "고객 요청"
+  }
 }
 ```
+
+환불 뒤 DB 상태가 수렴하지 않으면 성공으로 응답하지 않고
+`REFUND_COMPLETED_DB_SYNC_PENDING` 503과 `reconciliationRequired: true`를 반환한다.
 
 ---
 

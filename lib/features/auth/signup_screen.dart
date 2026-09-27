@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
 import '../../services/auth_api_service.dart';
-import '../../providers/user_provider.dart';
 import 'email_otp_screen.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -11,7 +10,7 @@ import 'email_otp_screen.dart';
 // 회원가입/인증 결정(2026-05-07) 반영:
 //   - 역할 선택(CUSTOMER / OWNER) 라디오 추가
 //   - OWNER 선택 시 가게 상호명 / 사업자등록번호 입력 필드 노출
-//   - 이메일 OTP·휴대폰 인증은 추후 단계에서 추가 (현재는 즉시 가입 완료)
+//   - 가입 직후 이메일 OTP 검증을 완료해야 로그인 세션을 저장
 //
 // 가입 성공 시 nextStep:
 //   CUSTOMER → PROFILE_SETUP (이어서 CU-03 온보딩)
@@ -28,10 +27,7 @@ import 'email_otp_screen.dart';
 // ══════════════════════════════════════════════════════════
 
 class SignupScreen extends ConsumerStatefulWidget {
-  const SignupScreen({
-    super.key,
-    required this.onSignupSuccess,
-  });
+  const SignupScreen({super.key, required this.onSignupSuccess});
 
   /// 가입 성공 후 다음 화면으로 이동시킬 콜백
   final void Function({required String nextStep}) onSignupSuccess;
@@ -118,17 +114,13 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
       return;
     }
 
-    // ── 성공: Riverpod 저장 후 OTP 화면으로 이동 ──
-    // OTP 화면이 검증 성공/건너뛰기 시점에 widget.onSignupSuccess 를 직접 호출 →
-    // main.dart 의 _handleLoginSuccess 가 nextStep 기준으로 라우팅.
-    await ref.read(userProvider.notifier).setUser(result.response!);
-    if (!mounted) return;
-
+    // ── 성공: 제한된 가입 토큰은 저장하지 않고 OTP 화면으로 이동 ──
+    // OTP 검증 응답으로 받은 일반 로그인 토큰만 EmailOtpScreen 에서 저장한다.
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
         builder: (_) => EmailOtpScreen(
           email: email,
-          nextStep: result.response!.nextStep,
+          verificationToken: result.response!.accessToken,
           onComplete: widget.onSignupSuccess,
         ),
       ),
@@ -245,8 +237,7 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                 ? Icons.visibility_off_rounded
                 : Icons.visibility_rounded,
           ),
-          onPressed: () =>
-              setState(() => _obscurePassword = !_obscurePassword),
+          onPressed: () => setState(() => _obscurePassword = !_obscurePassword),
         ),
       ),
     );
@@ -268,7 +259,8 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                 : Icons.visibility_rounded,
           ),
           onPressed: () => setState(
-              () => _obscurePasswordConfirm = !_obscurePasswordConfirm),
+            () => _obscurePasswordConfirm = !_obscurePasswordConfirm,
+          ),
         ),
       ),
     );
@@ -371,8 +363,10 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
                       child: Container(
                         width: 10,
                         height: 10,
-                        decoration:
-                            BoxDecoration(color: primary, shape: BoxShape.circle),
+                        decoration: BoxDecoration(
+                          color: primary,
+                          shape: BoxShape.circle,
+                        ),
                       ),
                     )
                   : null,
@@ -423,8 +417,11 @@ class _SignupScreenState extends ConsumerState<SignupScreen> {
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          const Icon(Icons.info_outline_rounded,
-              size: 18, color: AppColors.warning),
+          const Icon(
+            Icons.info_outline_rounded,
+            size: 18,
+            color: AppColors.warning,
+          ),
           const SizedBox(width: 8),
           Expanded(
             child: Text(

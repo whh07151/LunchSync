@@ -133,13 +133,12 @@ class TournamentsApiService {
 
       // 400/5xx — 분석용 로그만 남기고 false.
       debugPrint(
-        '[TournamentsApiService] postResult 실패: '
-        '${response.statusCode} ${response.body}',
+        '[TournamentsApiService] POST_RESULT_HTTP_${response.statusCode}',
       );
       return false;
     } catch (e) {
       // 네트워크/타임아웃/JSON encode 실패 — 모두 조용히 false.
-      debugPrint('[TournamentsApiService] postResult 에러: $e');
+      debugPrint('[TournamentsApiService] POST_RESULT_FAILED');
       return false;
     }
   }
@@ -187,7 +186,7 @@ class TournamentsApiService {
       );
       return const [];
     } catch (e) {
-      debugPrint('[TournamentsApiService] getTrending 에러: $e');
+      debugPrint('[TournamentsApiService] GET_TRENDING_FAILED');
       return const [];
     }
   }

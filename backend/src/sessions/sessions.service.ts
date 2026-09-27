@@ -111,11 +111,7 @@ export class SessionsService {
     const requesterId = String(userId).trim().toLowerCase();
 
     if (hostId !== requesterId) {
-      // 운영 로그에 host vs requester 노출 — 응답 본문엔 노출 X (보안).
-      this.logger.warn(
-        `[assertHost] 호스트 불일치 session=${sessionId} ` +
-          `host=${hostId || '(empty)'} requester=${requesterId}`,
-      );
+      this.logger.warn('SESSION_HOST_AUTHORIZATION_DENIED');
       throw new ForbiddenException('세션 호스트만 가능한 작업이에요.');
     }
   }
@@ -151,7 +147,7 @@ export class SessionsService {
     );
 
     if (error || !data) {
-      this.logger.error(`세션 생성 RPC 오류 user=${userId}: ${error?.message}`);
+      this.logger.error('SESSION_CREATE_PERSIST_FAILED');
       throw new InternalServerErrorException(
         '세션을 만들지 못했어요. 잠시 후 다시 시도해주세요.',
       );
@@ -305,7 +301,7 @@ export class SessionsService {
       .single();
 
     if (error || !data) {
-      this.logger.error(`세션 상태 변경 DB 오류 session=${sessionId}: ${error?.message}`);
+      this.logger.error('SESSION_STATUS_UPDATE_PERSIST_FAILED');
       throw new InternalServerErrorException('세션 상태를 변경하지 못했어요.');
     }
 
@@ -328,7 +324,7 @@ export class SessionsService {
       .eq('session_id', sessionId);
 
     if (error) {
-      this.logger.error(`멤버 조회 DB 오류 session=${sessionId}: ${error.message}`);
+      this.logger.error('SESSION_MEMBER_LIST_PERSIST_FAILED');
       throw new InternalServerErrorException('멤버를 불러오지 못했어요.');
     }
 
@@ -393,9 +389,7 @@ export class SessionsService {
       if (error.code === '23505') {
         throw new ConflictException('이미 세션에 참가한 멤버예요.');
       }
-      this.logger.error(
-        `멤버 추가 DB 오류 session=${sessionId}: ${error.message}`,
-      );
+      this.logger.error('SESSION_MEMBER_ADD_PERSIST_FAILED');
       throw new InternalServerErrorException('멤버를 추가하지 못했어요.');
     }
 
@@ -460,9 +454,7 @@ export class SessionsService {
           '투표/주문이 진행 중인 세션은 삭제할 수 없어요. 세션을 종료한 뒤 다시 시도해주세요.',
         );
       }
-      this.logger.error(
-        `세션 삭제 RPC 오류 session=${sessionId} requester=${requesterId}: ${message}`,
-      );
+      this.logger.error('SESSION_DELETE_PERSIST_FAILED');
       throw new InternalServerErrorException(
         '세션을 삭제하지 못했어요. 잠시 후 다시 시도해주세요.',
       );
@@ -473,9 +465,7 @@ export class SessionsService {
       throw new NotFoundException('세션이 이미 삭제되었거나 존재하지 않아요.');
     }
 
-    this.logger.log(
-      `세션 삭제 완료 session=${sessionId} requester=${requesterId}`,
-    );
+    this.logger.log('SESSION_DELETE_COMPLETED');
 
     // RPC 는 { deletedSessionId, deletedAt } 형태로 응답 (camelCase).
     return data as { deletedSessionId: string; deletedAt: string };
@@ -508,7 +498,7 @@ export class SessionsService {
       .eq('user_id', targetUserId);
 
     if (error) {
-      this.logger.error(`멤버 제거 DB 오류 session=${sessionId}: ${error.message}`);
+      this.logger.error('SESSION_MEMBER_REMOVE_PERSIST_FAILED');
       throw new InternalServerErrorException('멤버를 제거하지 못했어요.');
     }
 
@@ -586,9 +576,7 @@ export class SessionsService {
         });
       if (insertError) {
         // INSERT 실패는 운영 추적 필요 — 로그 + 500
-        this.logger.error(
-          `초대 코드 생성 실패 session=${sessionId}: ${insertError.message}`,
-        );
+        this.logger.error('SESSION_INVITE_CREATE_PERSIST_FAILED');
         throw new InternalServerErrorException(
           '초대 링크를 만들지 못했어요. 잠시 후 다시 시도해주세요.',
         );

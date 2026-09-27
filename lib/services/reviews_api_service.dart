@@ -147,12 +147,11 @@ class ReviewsApiService {
         return true;
       }
       debugPrint(
-        '[ReviewsApi] submitReview 실패: '
-        '${response.statusCode} ${response.body}',
+        '[ReviewsApi] SUBMIT_REVIEW_HTTP_${response.statusCode}',
       );
       return false;
     } catch (e) {
-      debugPrint('[ReviewsApi] submitReview 예외: $e');
+      debugPrint('[ReviewsApi] SUBMIT_REVIEW_FAILED');
       return false;
     }
   }
@@ -182,12 +181,11 @@ class ReviewsApiService {
         return RestaurantReviewsResult.fromJson(data);
       }
       debugPrint(
-        '[ReviewsApi] getReviewsByRestaurant 실패: '
-        '${response.statusCode} ${response.body}',
+        '[ReviewsApi] GET_REVIEWS_HTTP_${response.statusCode}',
       );
       return RestaurantReviewsResult.empty;
     } catch (e) {
-      debugPrint('[ReviewsApi] getReviewsByRestaurant 예외: $e');
+      debugPrint('[ReviewsApi] GET_REVIEWS_FAILED');
       return RestaurantReviewsResult.empty;
     }
   }

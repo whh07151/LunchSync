@@ -828,6 +828,28 @@ userProvider.setFromProfile() (홈 화면 인사말도 즉시 반영)
 4. AuthResult 반환
 ```
 
+**이메일 인증 경계**:
+
+- `emailSignup`은 응답 호환을 위해 token 필드를 유지하지만 10분짜리
+  `purpose: EMAIL_VERIFICATION` 제한 JWT만 발급한다.
+- 제한 JWT는 `JwtStrategy`에서 일반 보호 API 접근을 거절한다.
+- OTP 검증과 `email_verified_at` 1행 반영 후에만 일반 JWT를 교환 발급한다.
+- `emailLogin`은 미인증 이메일의 비밀번호가 맞아도 일반 JWT를 발급하지 않고,
+  OTP를 재개할 짧은 검증 목적 토큰만 오류 응답에 포함한다.
+- 이메일 조회는 wildcard를 escape한 `ILIKE`를 사용해 신규 소문자 계정과 기존
+  mixed-case 계정을 같은 규칙으로 찾는다.
+- OTP provider 호출은 DB용 service-role client와 분리된 sessionless Auth client를
+  매 작업마다 생성한다.
+- 변경 전 발급된 일반 이메일 JWT도 현재 계정의 인증 상태를 재조회한다. DB 장애는
+  401이 아닌 재시도 가능한 503으로 구분한다.
+- Flutter는 가입 토큰을 저장하지 않고 OTP 성공 응답의 일반 JWT만 저장한다.
+
+**휴대폰 계정 연결 경계**:
+
+- 공개 `/auth/verify-phone`은 검증된 전화번호로만 계정을 결정한다.
+- 기존 계정 연결 `/auth/verify-phone/attach`는 JWT가 필요하며 대상 ID를
+  `req.user.userId`에서만 가져온다.
+
 **`AuthResult` 인터페이스**:
 ```typescript
 {
@@ -888,10 +910,17 @@ userProvider.setFromProfile() (홈 화면 인사말도 즉시 반영)
 
 **추출 방식**: `Authorization: Bearer {token}` 헤더에서 추출
 
-**`validate()` 반환값**:
+**`validate()` 반환값과 목적 토큰 차단**:
 ```typescript
-{ userId: payload.sub }  // req.user에 주입됨
+{ type: 'USER', userId: payload.sub }       // 일반 사용자 JWT
+{ type: 'POS', restaurantId: payload.sub,
+  ownerUserId: payload.ownerUserId, authMode: payload.authMode } // POS JWT
 ```
+
+`purpose === 'EMAIL_VERIFICATION'`인 가입 제한 JWT는 401로 거절한다. 일반 USER
+JWT는 현재 계정의 이메일 인증 상태를 재조회하며, 조회 오류는
+`SESSION_ACCOUNT_LOOKUP_FAILED` 503이다. owner-backed POS JWT의 매장 권한은
+`PosAccessService`에서 승인 점주와 canonical 소유권을 요청마다 다시 확인한다.
 
 **사용 예**:
 ```typescript
@@ -1073,12 +1102,14 @@ const { data, error } = await this.supabase.client
    - `items`: 1~100개 배열
    - 각 항목의 `menuItemId`: 문자열
    - 각 항목의 `quantity`: 1~999 정수
-   - `paymentMethod`: 선택 문자열이며, 없으면 컨트롤러가 `SIMULATE`를 사용
+   - `paymentMethod`: 허용된 결제 방식이며, 없으면 컨트롤러가 `TOSS`를 사용
    - DTO에 없는 `restaurantId`, `totalPrice`, `price` 같은 필드는
      `forbidNonWhitelisted: true` 때문에 400으로 거절
 2. `OrdersService`는 JWT에서 `userId`를 얻고, `menu_items`를 다시 조회한다.
-   모든 메뉴가 한 식당에 속하는지 확인한 뒤 `restaurantId`, 주문 시점의
-   단가 스냅샷, `totalPrice`를 서버에서 계산한다. 클라이언트 금액은 신뢰하지 않는다.
+   모든 메뉴가 한 식당에 속하는지 확인한 뒤 legacy `users.restaurant_id`와
+   canonical `restaurants.owner_user_id`를 모두 확인해 자기 매장 주문을 차단한다.
+   이어서 `restaurantId`, 주문 시점의 단가 스냅샷, `totalPrice`를 서버에서
+   계산한다. 클라이언트 금액은 신뢰하지 않는다.
 3. 다음 6개 인자를 가진 PostgreSQL 함수가 `orders` 헤더와 `order_items`
    항목을 한 트랜잭션에서 생성한다.
 
@@ -1098,15 +1129,14 @@ public.create_order_with_items(
 부여한다. 함수 소유자/DB 관리자의 관리 권한은 별도다.
 
 > **결제 경계**: RPC가 보장하는 범위는 `orders` + `order_items` 생성까지다.
-> `SIMULATE`/`CASH`의 `PAID`·`payment_key` 업데이트는 RPC 성공 후 별도 요청이고,
-> Toss 승인은 `/api/payments/confirm`에서 별도로 상태를 갱신한다. 결제 승인 후
-> 상태 갱신 실패를 복구하는 reconciliation은 후속 reliability 작업이다.
+> 비운영 환경이면서 `ALLOW_SIMULATED_PAYMENTS=true`인 경우에만 RPC 성공 후
+> 별도 요청으로 `PAID`와 `payment_key`를 기록한다. 플래그가 없거나 production이면
+> `SIMULATE`는 RPC 전에 403이다.
+> `TOSS`, `CARD`, `CASH`는 승인 또는 POS 수납 확인 전까지 `PENDING`을 유지한다.
 > 주문 생성 경로는 정규화된 결제 방식을 저장·분기·응답에 일관되게 사용하고,
-> `SIMULATE`/`CASH` 상태 UPDATE 오류를 500으로 반환해 거짓 `PAID` 응답을 막는다.
-> `CARD` 입력은 `CARD`로 정규화해 저장·응답하되, 외부 승인 결과가 명시적으로
-> 기록될 때까지 주문을 `PENDING`으로 유지한다.
+> 알 수 없는 값은 400으로 거절해 `SIMULATE` 우회로 바뀌지 않게 한다.
 > 다만 이때 이미 생성된 `PENDING` 주문의 안전한 재시도·복구와 Toss 승인 후 DB
-> 갱신 실패 조정은 별도 idempotency/reconciliation 경계로 남아 있다.
+> 갱신 실패의 durable reconciliation queue는 별도 reliability 경계로 남아 있다.
 
 ---
 
@@ -1235,6 +1265,7 @@ Authorization: Bearer JWT
                          JWT에서 userId 획득
                          menu_items 조회
                          한 식당 여부 검증
+                         canonical/legacy 자기매장 여부 검증
                          restaurantId/단가/합계 계산
                          ↓
                          RPC create_order_with_items(6 args)
@@ -1244,8 +1275,8 @@ Authorization: Bearer JWT
                                                      ├─ 모두 성공: COMMIT
                                                      └─ 하나라도 실패: 전체 ROLLBACK
                          ↓
-                         SIMULATE/CASH이면 별도 PAID 업데이트
-                         TOSS/CARD이면 PENDING 유지, 외부 승인 단계로 이동
+                         명시적으로 허용한 비운영 SIMULATE만 별도 PAID 업데이트
+                         TOSS/CARD/CASH는 PENDING 유지, 승인·수납 단계로 이동
                          ↓
 응답
 ```
@@ -1352,7 +1383,7 @@ cartProvider.notifier.totalPrice  // 화면 표시용 합계; 서버 요청의 �
   "items": [
     { "menuItemId": "uuid", "quantity": 2 }
   ],
-  "paymentMethod": "SIMULATE"
+  "paymentMethod": "TOSS"
 }
 ```
 
@@ -1454,8 +1485,10 @@ class MenuItem {
   마이그레이션과 2026-07-29 introspection 마이그레이션을 이 순서로 적용
 - [ ] 같은 대상 DB에서 정확한 시그니처, 함수 보안 모드, 최소 ACL과
   `check_schema_resources()` 응답을 다시 확인한 뒤에만 백엔드를 배포
-- [ ] 정상 `SIMULATE`/`CASH` 주문과 Toss·`CARD`의 `PENDING` → 외부 승인 흐름을
-  각각 사람 손으로 확인
+- [ ] 비운영 `SIMULATE` 명시 opt-in과 기본 거절, Toss·`CARD`·`CASH`의
+  `PENDING` → 승인/수납 흐름을 각각 사람 손으로 확인
+- [ ] 외부 결제 작업 ledger/outbox, `REFUNDING` 선점 상태와 재시작 가능한
+  reconciliation worker를 선언형 Supabase 스키마부터 설계·검증
 - [ ] `origin: '*'` → 실제 도메인으로 제한 (`main.ts`)
 - [ ] `JWT_SECRET` 강력한 랜덤값으로 교체 (`.env`)
 - [ ] 에러 응답 포맷 통일 (DTO 명세서 기준)
@@ -1499,6 +1532,11 @@ PostgreSQL 전용 Jest **2개 스위트·5개 테스트**, NestJS 빌드 통과�
 검사는 일회용 `postgres:16-alpine`에서 수행했으며 운영 DB 마이그레이션이나
 라이브 Toss 결제를 실행한 결과가 아니다. 이후 추가한 하드닝 테스트는 실제 실행
 결과가 생기기 전까지 통과로 기록하지 않는다.
+
+2026-08-05 하드닝 체크포인트에서는 기본 Jest **26개 스위트·152개 테스트**,
+NestJS build, Flutter **12개 테스트**, Dart analyze가 통과했다. Docker Desktop
+Linux 엔진이 꺼져 있어 변경된 PostgreSQL 전용 검사는 재실행하지 않았고 통과로
+기록하지 않는다. 실제 Toss 요청, 원격 DB 변경과 배포도 수행하지 않았다.
 
 롤백은 반대로 **백엔드 호출자부터 이전 버전으로 되돌린 뒤** 검토된 유지보수
 작업에서 6-인자 함수와 ACL을 복원/제거한다. 실행 중인 백엔드가 참조하는

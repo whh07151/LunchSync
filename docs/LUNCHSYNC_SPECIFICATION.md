@@ -1,6 +1,6 @@
 # LunchSync 소프트웨어 명세서
 **작성일:** 2026-04-08 / **주문 생성 계약 갱신:** 2026-07-29
-**버전:** 1.3 (주문 헤더·항목 원자성 및 결제 경계 명시)
+**버전:** 1.4 (인증·POS 소유권·결제 조정 경계 명시)
 
 **구현 진행도:** [`LUNCHSYNC_PROGRESS.md`](./LUNCHSYNC_PROGRESS.md) 참조 (이 파일과 분리 운영)
 
@@ -333,7 +333,7 @@ CREATE TYPE session_status AS ENUM (
 
 CREATE TYPE order_status AS ENUM (
   'PENDING',    -- 주문 생성, 결제 대기
-  'PAID',       -- 결제 완료 (Toss confirm 또는 SIMULATE/CASH 즉시)
+  'PAID',       -- 결제 완료 (Toss/POS 승인 또는 비운영 SIMULATE)
   'PREPARING',  -- 점주 조리 시작
   'READY',      -- 조리 완료, 픽업/배달 대기
   'COMPLETED',  -- 주문 종료
@@ -426,6 +426,12 @@ ALTER TABLE sessions
 ### 인증
 ```
 POST /auth/kakao          카카오 토큰 검증 → JWT 발급
+POST /auth/signup/email   계정 생성 → 10분 이메일 검증 목적 JWT
+POST /auth/login/email    검증된 이메일만 일반 JWT 발급
+POST /auth/email/send-otp 가입 이메일로 OTP 발송 (10분 검증 목적 Bearer JWT 필수)
+POST /auth/email/verify-otp OTP·DB 반영 확인 → 일반 JWT 교환 발급 (동일 JWT 필수)
+POST /auth/verify-phone   검증된 전화번호 기반 공개 로그인/가입
+POST /auth/verify-phone/attach JWT 본인 계정에 검증 전화번호 연결
 ```
 
 ### 유저
@@ -486,7 +492,7 @@ DELETE /cart/:id          항목 삭제
 POST   /orders                주문 생성 (트랜잭션: orders + order_items만)
 GET    /orders/:id            주문 상세/상태 (폴링)
 GET    /orders/session/:id    세션의 전체 주문 목록
-PATCH  /orders/:id/status     주문 상태 변경 (점주 수락/거절, POS 완료)
+PATCH  /orders/:id/status     고객 본인 PENDING 주문 취소만 허용
 ```
 
 `POST /orders`의 현재 요청 계약은 `sessionId`, `items[]`의 `menuItemId`·`quantity`,
@@ -523,7 +529,7 @@ POST   /payments/confirm      토스 결제 승인 (amount 위변조 방어 포�
 GET    /pos/orders/:restaurantId          점주용 주문 목록
 GET    /pos/orders/:restaurantId/stats    결제 상태별 통계
 PATCH  /pos/orders/:orderId/status        주문 상태 변경 (조리중 → 준비완료 등)
-POST   /pos/orders/:orderId/cancel        취소/환불 (TODO: Toss 실제 환불 미연결)
+POST   /pos/orders/:orderId/cancel        Toss 취소 후 조건부 DB 조정
 ```
 
 ### 알림
@@ -645,58 +651,52 @@ NestJS
   ① JWT에서 userId 획득
   ② menu_items 재조회
   ③ 같은 식당 여부 검증
-  ④ restaurantId, 주문 시점 단가, totalPrice 계산
-  ⑤ PostgreSQL RPC 호출 [트랜잭션 시작]
+  ④ canonical/legacy 소유권으로 자기 매장 주문 차단
+  ⑤ restaurantId, 주문 시점 단가, totalPrice 계산
+  ⑥ PostgreSQL RPC 호출 [트랜잭션 시작]
      ├─ orders INSERT { ..., status: 'PENDING' }
      ├─ order_items INSERT × 요청 항목 수
      └─ 모두 성공 시 커밋 / 하나라도 실패 시 전체 롤백
 
 후속 결제 처리 [RPC 트랜잭션 밖]
-  ├─ SIMULATE/CASH
-  │   └─ 별도 orders UPDATE로 PAID와 payment_key 기록
+  ├─ SIMULATE
+  │   ├─ production 또는 명시 플래그 없음: RPC 호출 전 403
+  │   └─ 비운영 + ALLOW_SIMULATED_PAYMENTS=true: 별도 UPDATE로 PAID 기록
   ├─ TOSS
   │   ├─ 주문은 PENDING 유지
   │   └─ 결제위젯 이후 POST /payments/confirm에서 승인 및 별도 DB UPDATE
-  └─ CARD
-      ├─ 입력을 CARD로 정규화해 저장·응답
-      └─ 외부 승인 결과가 기록될 때까지 PENDING 유지
+  └─ CARD/CASH
+      ├─ 결제 방식을 정규화해 저장·응답
+      └─ 외부 승인 또는 POS 수납 확인 전까지 PENDING 유지
 ```
 
 현재 `POST /orders`는 `cart_items`를 읽거나 비우지 않는다. Flutter의 장바구니는
 요청 항목을 만드는 UI 상태이며, 주문 성공 뒤 장바구니 정리는 별도 클라이언트/API
-흐름으로 다뤄야 한다. `SIMULATE`/`CASH`의 후속 UPDATE 오류를 감지해 성공 응답으로
-이어지지 않도록 500으로 처리하며, 저장·결제 분기·응답에는 같은
-정규화 값을 사용한다. 다만 이때 이미 생성된 `PENDING` 주문의 안전한 재시도와
-복구는 아직 정의되지 않았다. Toss 승인 성공 뒤 DB UPDATE 실패도 별도 조정
-경계이므로, 두 경우 모두 idempotency·탐지·재시도·운영 reconciliation 절차가
-남은 reliability 위험이다.
+흐름으로 다뤄야 한다. 비운영 `SIMULATE`의 후속 UPDATE 오류를 감지해 성공 응답으로
+이어지지 않도록 500으로 처리하며, 저장·결제 분기·응답에는 같은 정규화 값을
+사용한다. 알 수 없는 방식은 400이고 생략 시 `TOSS`다. 이미 생성된 `PENDING` 주문의 안전한 재시도와
+복구는 아직 정의되지 않았다. Toss 승인 뒤 취소 경합은 즉시 보상 환불하고,
+환불 뒤 조리 경합은 bounded CAS로 조정한다. 다만 외부 승인·환불 성공 뒤 프로세스가
+중단되거나 DB 장애가 지속되면 요청 내 보상만으로 최종 수렴을 보장할 수 없다.
+provider 작업 ledger/outbox, `REFUNDING` 선점 상태와 재시작 가능한 reconciliation
+worker가 남은 reliability 위험이다.
 
-`CARD`는 정규화된 결제 방식 이름이지 주문 생성 시점의 결제 완료 증거가 아니다.
-서버는 `CARD`를 저장·응답하되 외부 승인 결과가 명시적으로 기록되기 전까지 해당
-주문을 `PENDING`으로 유지한다.
+`CARD`와 `CASH`는 정규화된 결제 방식 이름이지 주문 생성 시점의 결제 완료
+증거가 아니다. 서버는 두 값을 저장·응답하되 외부 승인 또는 POS 수납 결과가
+명시적으로 기록되기 전까지 주문을 `PENDING`으로 유지한다.
 
-### 점주 주문 수락
+### POS 조리 상태 전이
 
 ```
-[FCM 수신] 점주 폰에 푸시 알림
-  → 알림 탭 → 점주앱 진입
+결제 확인으로 PAID
+  → 권한 있는 POS PATCH /pos/orders/:orderId/status
+    body: { status: 'PREPARING' }
+  → PREPARING → READY → COMPLETED 순서만 허용
+  → 같은 목표 상태 재요청은 멱등 성공
+  → source 상태 CAS가 빗나가고 목표 상태도 아니면 409
 
-View (OrderDashboard)
-  → NestJS GET /orders/today 폴링 3초
-  → 주문 카드 목록 표시
-
-[버튼 탭] "수락"
-  → NestJS PATCH /orders/:id/status
-    body: { status: 'ACCEPTED' }
-
-Controller
-  → role 검증 (OWNER만 가능)
-  → orders UPDATE
-  → notifications INSERT + FCM 발송 (손님에게)
-
-View (손님 OrderTrackScreen)
-  → 폴링으로 ACCEPTED 감지
-  → "점주가 수락했습니다" 표시
+고객 PATCH /orders/:id/status는 이 조리 전이를 수행하지 않는다.
+고객은 본인 PENDING 주문을 CANCELLED로 바꾸는 요청만 할 수 있다.
 ```
 
 ---
@@ -713,8 +713,9 @@ View (손님 OrderTrackScreen)
 - JWT 토큰 기반 인증 (모든 API)
 - `users.role`: CUSTOMER / OWNER / POS
 - 투표: 해당 세션 참여자만 가능
-- 주문 수락: OWNER만 가능
-- POS 완료 처리: POS만 가능
+- 조리 상태 전이와 환불: 현재 승인 점주에 연결된 POS만 가능
+- POS owner 토큰은 요청마다 승인 상태와 canonical 매장 소유권 재검증
+- legacy 매장 매핑은 중복 계정이 없을 때만 canonical 소유권으로 조건부 승격
 
 ### 트랜잭션 필수 처리
 - 세션 생성: sessions + session_members (방장 포함) 묶음

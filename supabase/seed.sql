@@ -1,0 +1,5 @@
+-- Intentionally empty.
+--
+-- LunchSync local resets must start without real or copied user data.
+-- Add deterministic, synthetic fixtures in a separate test transaction when
+-- a scenario needs data.

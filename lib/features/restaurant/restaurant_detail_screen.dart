@@ -122,12 +122,10 @@ class _RestaurantDetailScreenState
   Future<void> _loadLoyalty() async {
     final user = ref.read(userProvider);
     final token = user.accessToken;
-    final userId = user.userId;
-    if (token == null || userId == null || userId.isEmpty) return;
+    if (token == null || token.isEmpty) return;
     final result = await _restaurantsApi.getLoyalty(
       accessToken: token,
       restaurantId: widget.restaurantId,
-      userId: userId,
     );
     if (!mounted) return;
     setState(() => _loyalty = result);
@@ -174,9 +172,9 @@ class _RestaurantDetailScreenState
     if (_favoriteBusy) return;
     final token = ref.read(userProvider).accessToken;
     if (token == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('로그인이 필요해요')),
-      );
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('로그인이 필요해요')));
       return;
     }
 
@@ -203,9 +201,11 @@ class _RestaurantDetailScreenState
       setState(() => _isFavorite = prev);
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text(prev
-              ? '즐겨찾기 해제에 실패했어요. 잠시 후 다시 시도해봐요'
-              : '즐겨찾기 추가에 실패했어요 (한도 100개 초과 가능성)'),
+          content: Text(
+            prev
+                ? '즐겨찾기 해제에 실패했어요. 잠시 후 다시 시도해봐요'
+                : '즐겨찾기 추가에 실패했어요 (한도 100개 초과 가능성)',
+          ),
         ),
       );
       return;
@@ -374,9 +374,7 @@ class _RestaurantDetailScreenState
       if (_activeSessionStatus != 'ORDERED') {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              '투표가 끝난 후에 메뉴를 주문할 수 있어요. 친구들과 함께 결정해봐요',
-            ),
+            content: Text('투표가 끝난 후에 메뉴를 주문할 수 있어요. 친구들과 함께 결정해봐요'),
             duration: Duration(seconds: 3),
           ),
         );
@@ -388,9 +386,7 @@ class _RestaurantDetailScreenState
         // 다른 식당이 winner 로 결정됨 — 이 식당 주문 차단
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
-            content: Text(
-              '이번 점심 세션은 다른 식당이 선택됐어요. 그 식당으로 이동해봐요',
-            ),
+            content: Text('이번 점심 세션은 다른 식당이 선택됐어요. 그 식당으로 이동해봐요'),
             duration: Duration(seconds: 3),
           ),
         );
@@ -434,8 +430,8 @@ class _RestaurantDetailScreenState
       body: _isRestaurantLoading
           ? const Center(child: CircularProgressIndicator())
           : _restaurant == null
-              ? _buildNotFound()
-              : _buildContent(_restaurant!),
+          ? _buildNotFound()
+          : _buildContent(_restaurant!),
     );
   }
 
@@ -444,7 +440,11 @@ class _RestaurantDetailScreenState
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-          const Icon(Icons.error_outline, size: 48, color: AppColors.iconInactive),
+          const Icon(
+            Icons.error_outline,
+            size: 48,
+            color: AppColors.iconInactive,
+          ),
           const SizedBox(height: AppSpacing.sm),
           Text(
             '식당 정보를 찾을 수 없어요',
@@ -466,6 +466,16 @@ class _RestaurantDetailScreenState
           // ── 식당 헤더 ───────────────────────────────────
           _buildHeader(r),
 
+          const Padding(
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.screenHorizontal,
+              AppSpacing.md,
+              AppSpacing.screenHorizontal,
+              0,
+            ),
+            child: RestaurantDataNotice(),
+          ),
+
           // ── 길찾기 버튼 (지도는 없음, 외부 앱으로 길찾기만) ──
           if (r.lat != null && r.lng != null) ...[
             const SizedBox(height: AppSpacing.md),
@@ -473,10 +483,7 @@ class _RestaurantDetailScreenState
               padding: const EdgeInsets.symmetric(
                 horizontal: AppSpacing.screenHorizontal,
               ),
-              child: AppPrimaryButton(
-                label: '길찾기',
-                onPressed: _showRouteSheet,
-              ),
+              child: AppPrimaryButton(label: '길찾기', onPressed: _showRouteSheet),
             ),
           ],
 
@@ -611,14 +618,20 @@ class _RestaurantDetailScreenState
           Row(
             children: [
               if (r.category != null) ...[
-                Icon(Icons.restaurant_rounded,
-                    size: 14, color: AppColors.textSecondary),
+                Icon(
+                  Icons.restaurant_rounded,
+                  size: 14,
+                  color: AppColors.textSecondary,
+                ),
                 const SizedBox(width: 4),
                 Text(r.category!, style: AppTextStyles.bodySmall),
                 const SizedBox(width: AppSpacing.sm),
               ],
-              Icon(Icons.payments_outlined,
-                  size: 14, color: AppColors.textSecondary),
+              Icon(
+                Icons.payments_outlined,
+                size: 14,
+                color: AppColors.textSecondary,
+              ),
               const SizedBox(width: 4),
               Text(priceLabel, style: AppTextStyles.bodySmall),
               // ── 평점 칩 (사장님 피드백 — 2026-05-14) ─────────
@@ -629,8 +642,11 @@ class _RestaurantDetailScreenState
               //   - toStringAsFixed(1) 로 항상 소수점 1자리 통일.
               if (r.rating != null) ...[
                 const SizedBox(width: AppSpacing.sm),
-                Icon(Icons.star_rounded,
-                    size: 14, color: Colors.amber.shade600),
+                Icon(
+                  Icons.star_rounded,
+                  size: 14,
+                  color: Colors.amber.shade600,
+                ),
                 const SizedBox(width: 2),
                 Text(
                   r.rating!.toStringAsFixed(1),
@@ -643,8 +659,11 @@ class _RestaurantDetailScreenState
             const SizedBox(height: 4),
             Row(
               children: [
-                Icon(Icons.place_outlined,
-                    size: 14, color: AppColors.textSecondary),
+                Icon(
+                  Icons.place_outlined,
+                  size: 14,
+                  color: AppColors.textSecondary,
+                ),
                 const SizedBox(width: 4),
                 Expanded(
                   child: Text(
@@ -664,8 +683,11 @@ class _RestaurantDetailScreenState
             const SizedBox(height: 4),
             Row(
               children: [
-                Icon(Icons.directions_walk_rounded,
-                    size: 14, color: AppColors.textSecondary),
+                Icon(
+                  Icons.directions_walk_rounded,
+                  size: 14,
+                  color: AppColors.textSecondary,
+                ),
                 const SizedBox(width: 4),
                 Text(distance, style: AppTextStyles.bodySmall),
               ],
@@ -775,8 +797,11 @@ class _RestaurantDetailScreenState
         padding: const EdgeInsets.symmetric(vertical: 2),
         child: Row(
           children: [
-            Icon(Icons.rate_review_outlined,
-                size: 14, color: AppColors.textSecondary),
+            Icon(
+              Icons.rate_review_outlined,
+              size: 14,
+              color: AppColors.textSecondary,
+            ),
             const SizedBox(width: 4),
             if (hasReviews) ...[
               Icon(Icons.star_rounded, size: 14, color: amber),
@@ -803,8 +828,11 @@ class _RestaurantDetailScreenState
               ),
             ],
             const SizedBox(width: 2),
-            Icon(Icons.chevron_right_rounded,
-                size: 14, color: AppColors.iconInactive),
+            Icon(
+              Icons.chevron_right_rounded,
+              size: 14,
+              color: AppColors.iconInactive,
+            ),
           ],
         ),
       ),
@@ -838,9 +866,7 @@ class _RestaurantDetailScreenState
       padding: const EdgeInsets.symmetric(
         horizontal: AppSpacing.screenHorizontal,
       ),
-      child: Column(
-        children: menus.map(_buildMenuRow).toList(),
-      ),
+      child: Column(children: menus.map(_buildMenuRow).toList()),
     );
   }
 
@@ -946,11 +972,11 @@ class _RouteOption extends StatelessWidget {
               child: Icon(icon, color: color, size: 22),
             ),
             const SizedBox(width: AppSpacing.md),
-            Expanded(
-              child: Text(label, style: AppTextStyles.bodyMedium),
+            Expanded(child: Text(label, style: AppTextStyles.bodyMedium)),
+            const Icon(
+              Icons.chevron_right_rounded,
+              color: AppColors.iconInactive,
             ),
-            const Icon(Icons.chevron_right_rounded,
-                color: AppColors.iconInactive),
           ],
         ),
       ),

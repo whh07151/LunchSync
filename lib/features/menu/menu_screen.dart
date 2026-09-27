@@ -63,9 +63,9 @@ import 'menu_swipe_screen.dart';
 class MenuScreen extends ConsumerStatefulWidget {
   const MenuScreen({
     super.key,
-    required this.restaurantId,   // 현재 진입한 식당의 UUID
+    required this.restaurantId, // 현재 진입한 식당의 UUID
     required this.restaurantName, // 식당 이름 (앱바 제목으로 표시)
-    this.sessionId,               // 주문을 묶을 점심 세션 ID (없으면 자동 조회)
+    this.sessionId, // 주문을 묶을 점심 세션 ID (없으면 자동 조회)
   });
 
   /// 메뉴를 조회할 식당의 UUID
@@ -92,7 +92,6 @@ class MenuScreen extends ConsumerStatefulWidget {
 
 class _MenuScreenState extends ConsumerState<MenuScreen>
     with SingleTickerProviderStateMixin {
-
   // ── 카테고리 탭 컨트롤러 ────────────────────────────────
   // SingleTickerProviderStateMixin: TabController 애니메이션에 필요한 Ticker 제공
   late final TabController _tabController;
@@ -135,9 +134,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
   List<MenuItem> get _filteredMenuItems {
     final items = _menuItems ?? const <MenuItem>[];
     if (_selectedCategory == MenuCategory.all) return items;
-    return items
-        .where((item) => item.category == _selectedCategory)
-        .toList();
+    return items.where((item) => item.category == _selectedCategory).toList();
   }
 
   // ── 생명주기: 화면 초기화 ───────────────────────────────
@@ -211,9 +208,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     // DONE 은 이미 종료된 세션이므로 주문 받을 수 없음.
     // 그 외 상태(WAITING/VOTING/ORDERED) 는 아직 주문을 추가할 수 있다고
     // 보고 첫 번째 항목을 채택. 우선순위는 백엔드 정렬을 신뢰.
-    final active = sessions
-        .where((s) => s.status != 'DONE')
-        .toList();
+    final active = sessions.where((s) => s.status != 'DONE').toList();
 
     setState(() {
       _resolvedSessionId = active.isEmpty ? null : active.first.id;
@@ -248,15 +243,17 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     // - 백엔드 category 문자열을 enum 으로 매핑
     // - description 누락 시 빈 문자열로 폴백
     final mapped = dtoList
-        .map((dto) => MenuItem(
-              id: dto.id,
-              restaurantId: widget.restaurantId,
-              name: dto.name,
-              description: dto.description ?? '',
-              price: dto.price,
-              category: _mapCategory(dto.category),
-              imageUrl: dto.imageUrl,
-            ))
+        .map(
+          (dto) => MenuItem(
+            id: dto.id,
+            restaurantId: widget.restaurantId,
+            name: dto.name,
+            description: dto.description ?? '',
+            price: dto.price,
+            category: _mapCategory(dto.category),
+            imageUrl: dto.imageUrl,
+          ),
+        )
         .toList();
 
     setState(() {
@@ -284,14 +281,11 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
     final auth = ref.read(userProvider);
     final token = auth.accessToken;
-    final userId = auth.userId;
     if (token == null || token.isEmpty) return;
-    if (userId == null || userId.isEmpty) return;
 
     final conflicts = await _menusApi.checkAllergens(
       accessToken: token,
       restaurantId: widget.restaurantId,
-      userId: userId,
     );
     if (!mounted) return;
     if (conflicts.isEmpty) return; // 충돌 없음 → 기존 상태 유지
@@ -444,16 +438,22 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
       // ── 본문: 로딩 / 에러 / 빈 상태 / 카테고리별 메뉴 목록 ─
       body: Column(
         children: [
+          const Padding(
+            padding: EdgeInsets.fromLTRB(
+              AppSpacing.screenHorizontal,
+              AppSpacing.sm,
+              AppSpacing.screenHorizontal,
+              0,
+            ),
+            child: RestaurantDataNotice(),
+          ),
 
           // 메뉴 목록 (Expanded로 남은 공간 모두 차지)
-          Expanded(
-            child: _buildBody(cartItems),
-          ),
+          Expanded(child: _buildBody(cartItems)),
 
           // ── 하단 장바구니 요약 바 ─────────────────────────
           // 담긴 항목이 1개 이상일 때만 표시
-          if (totalCount > 0)
-            _buildCartBottomBar(totalCount, totalPrice),
+          if (totalCount > 0) _buildCartBottomBar(totalCount, totalPrice),
         ],
       ),
     );
@@ -515,8 +515,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     final swipeTooltip = _isLoading
         ? '메뉴 불러오는 중…'
         : (menusForSwipe.length < 5
-            ? '메뉴가 부족해요 (5개 이상 필요)'
-            : '스와이프 모드로 메뉴 둘러보기');
+              ? '메뉴가 부족해요 (5개 이상 필요)'
+              : '스와이프 모드로 메뉴 둘러보기');
 
     return AppBar(
       // 뒤로가기 버튼 자동 추가 (이전 화면으로 돌아갈 수 있음)
@@ -525,10 +525,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           // 식당 이름
-          Text(
-            widget.restaurantName,
-            style: AppTextStyles.heading3,
-          ),
+          Text(widget.restaurantName, style: AppTextStyles.heading3),
           // 메뉴 개수 안내
           Text(
             countLabel,
@@ -572,7 +569,6 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
         // 탭이 많으면 가로 스크롤 가능
         isScrollable: true,
         tabAlignment: TabAlignment.start, // 왼쪽 정렬
-
         // 선택된 탭 강조 색상
         labelColor: Theme.of(context).colorScheme.primary,
         unselectedLabelColor: AppColors.textSecondary,
@@ -585,9 +581,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
         unselectedLabelStyle: AppTextStyles.bodyMedium,
 
         // MenuCategory enum의 모든 값을 탭으로 생성
-        tabs: MenuCategory.values
-            .map((cat) => Tab(text: cat.label))
-            .toList(),
+        tabs: MenuCategory.values.map((cat) => Tab(text: cat.label)).toList(),
       ),
     );
   }
@@ -618,10 +612,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
       ),
       itemCount: items.length,
       // 항목 사이 구분선
-      separatorBuilder: (context, index) => const Divider(
-        height: 1,
-        color: AppColors.divider,
-      ),
+      separatorBuilder: (context, index) =>
+          const Divider(height: 1, color: AppColors.divider),
       itemBuilder: (context, index) {
         // 이 메뉴가 장바구니에 몇 개 담겨 있는지
         final qty = ref.read(cartProvider.notifier).quantityOf(items[index].id);
@@ -640,7 +632,6 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
       child: Row(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-
           // ── 메뉴 이미지 영역 ─────────────────────────────
           // [사장님 피드백 대응 — 2026-05-13]
           //   기존: imageUrl 이 있어도 Image.network 자체를 호출하지 않고
@@ -691,8 +682,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                   right: 4,
                   child: Semantics(
                     button: true,
-                    label:
-                        '알레르기 충돌 ${item.allergenConflicts.length}건. 자세히 보기',
+                    label: '알레르기 충돌 ${item.allergenConflicts.length}건. 자세히 보기',
                     child: GestureDetector(
                       onTap: () => _showAllergenSheet(item),
                       child: Container(
@@ -715,10 +705,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                         ),
                         child: const Text(
                           '⚠️',
-                          style: TextStyle(
-                            fontSize: 12,
-                            color: Colors.white,
-                          ),
+                          style: TextStyle(fontSize: 12, color: Colors.white),
                         ),
                       ),
                     ),
@@ -734,7 +721,6 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-
                 // ── 메뉴 이름 ──────────────────────────────
                 Text(
                   item.name,
@@ -765,7 +751,6 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                 Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-
                     // 가격 표시
                     Text(
                       item.formattedPrice,
@@ -789,8 +774,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                         ),
                         decoration: BoxDecoration(
                           color: AppColors.backgroundGrey,
-                          borderRadius:
-                              BorderRadius.circular(AppRadius.chip),
+                          borderRadius: BorderRadius.circular(AppRadius.chip),
                         ),
                         child: Text(
                           '품절',
@@ -815,8 +799,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                           ),
                           decoration: BoxDecoration(
                             color: primary,
-                            borderRadius:
-                                BorderRadius.circular(AppRadius.chip),
+                            borderRadius: BorderRadius.circular(AppRadius.chip),
                           ),
                           child: Text(
                             '담기',
@@ -833,7 +816,6 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-
                           // 수량 감소 버튼 (0이 되면 항목 자동 제거)
                           _buildQuantityButton(
                             icon: Icons.remove_rounded,
@@ -847,9 +829,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
                           // 현재 수량 표시
                           Padding(
-                            padding: const EdgeInsets.symmetric(
-                              horizontal: 10,
-                            ),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
                             child: Text(
                               '$cartQty',
                               style: AppTextStyles.bodyMedium.copyWith(
@@ -863,9 +843,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                           _buildQuantityButton(
                             icon: Icons.add_rounded,
                             onTap: () {
-                              ref
-                                  .read(cartProvider.notifier)
-                                  .addItem(item);
+                              ref.read(cartProvider.notifier).addItem(item);
                               setState(() {}); // UI 즉시 갱신
                             },
                           ),
@@ -895,7 +873,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
         width: 28,
         height: 28,
         decoration: BoxDecoration(
-          color: primary.withAlpha(20),   // 연한 주황 배경
+          color: primary.withAlpha(20), // 연한 주황 배경
           shape: BoxShape.circle,
         ),
         child: Icon(icon, size: 16, color: primary),
@@ -919,14 +897,11 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
       ),
       decoration: const BoxDecoration(
         color: AppColors.background,
-        border: Border(
-          top: BorderSide(color: AppColors.divider, width: 1),
-        ),
+        border: Border(top: BorderSide(color: AppColors.divider, width: 1)),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         children: [
-
           // ── 총 수량 + 총 금액 요약 행 ─────────────────────
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -970,7 +945,9 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
             builder: (_) {
               final resolved = _resolvedSessionId;
               final canOrder =
-                  !_isResolvingSession && resolved != null && resolved.isNotEmpty;
+                  !_isResolvingSession &&
+                  resolved != null &&
+                  resolved.isNotEmpty;
 
               // 2026-05-15 UX 미세 개선 (배민 패턴):
               //   기존: 비활성 시 라벨이 "먼저 점심 세션을 만들어 봐요"로 바뀜 → 혼란
@@ -1112,8 +1089,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                           ),
                           decoration: BoxDecoration(
                             color: const Color(0x1AFF5252), // 연한 빨강 배경
-                            borderRadius:
-                                BorderRadius.circular(AppRadius.chip),
+                            borderRadius: BorderRadius.circular(AppRadius.chip),
                             border: Border.all(
                               color: const Color(0xFFFF5252),
                               width: 1,
