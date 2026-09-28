@@ -242,7 +242,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     // DTO → 화면용 MenuItem 모델 변환
     // - 백엔드 category 문자열을 enum 으로 매핑
     // - description 누락 시 빈 문자열로 폴백
-    final mapped = dtoList
+    // 외부 수집·AI 추정 메뉴의 가격은 확인되지 않았으므로 장바구니에 담지 않는다.
+    final mapped = dtoList.where((dto) => dto.source == 'MANUAL')
         .map(
           (dto) => MenuItem(
             id: dto.id,

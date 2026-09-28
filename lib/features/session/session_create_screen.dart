@@ -10,7 +10,6 @@ import '../../providers/session_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/sessions_api_service.dart';
 import '../../services/invitations_api_service.dart';
-import '../../services/crawl_api_service.dart';
 import '../../services/geolocation_service.dart';
 import 'session_lobby_screen.dart';
 
@@ -81,7 +80,6 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
 
   static const _sessionsApi    = SessionsApiService();
   static const _invitationsApi = InvitationsApiService();
-  static const _crawlApi       = CrawlApiService();
   static const _geoService     = GeolocationService();
 
   @override
@@ -242,18 +240,7 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
       }
       debugPrint('[SessionCreate] INVITATION_CREATE_SUCCEEDED');
 
-      // ── 6. 주변 식당 크롤링 트리거 (비동기, 실패해도 흐름에 영향 없음) ──
-      // 호스트의 GPS를 기준으로 반경 내 실제 식당을 DB에 채운다.
-      // 추천 엔진은 이 데이터를 기반으로 점수화.
-      // 결과를 기다리지 않고 fire-and-forget — 로비 진입 후 백그라운드 완료.
-      // 위의 세션 생성 단계에서 이미 얻어둔 hostPos를 재사용해 GPS 중복 조회 방지.
-      _triggerCrawlInBackground(
-        token: token,
-        radiusMeters: radius,
-        hostPos: hostPos,
-      );
-
-      // ── 7. 세션 생성 완료 → sessionProvider 초기화 후 로비 진입 ──
+      // ── 6. 세션 생성 완료 → sessionProvider 초기화 후 로비 진입 ──
       // selectedMembers는 이미 역할을 다했으므로 초기화.
       // clearSession에서 예외가 나도 라우팅은 진행되도록 try로 보호.
       try {
@@ -289,29 +276,6 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
         setState(() => _isLoading = false);
       }
     }
-  }
-
-  // ── 주변 식당 크롤링을 백그라운드로 실행 ──────────────
-  // GPS 권한 거부 / 에뮬레이터 미설정 시 조용히 스킵.
-  // 성공하면 주변 실제 식당 데이터가 DB에 채워져 추천 엔진에서 활용됨.
-  // hostPos: 세션 생성 시 이미 얻어둔 좌표를 재사용하기 위한 파라미터.
-  //          null이면 여기서 한 번 더 조회 시도.
-  void _triggerCrawlInBackground({
-    required String token,
-    int? radiusMeters,
-    Position? hostPos,
-  }) {
-    // async 함수를 await 없이 호출 → fire-and-forget
-    () async {
-      final pos = hostPos ?? await _geoService.getCurrentPosition();
-      if (pos == null) return; // GPS 실패 — 기존 식당으로 폴백
-      await _crawlApi.crawlRestaurants(
-        accessToken: token,
-        lat: pos.latitude,
-        lng: pos.longitude,
-        radius: radiusMeters ?? _kDefaultRadius,
-      );
-    }();
   }
 
   // ── 에러 스낵바 헬퍼 ─────────────────────────────────

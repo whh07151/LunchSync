@@ -157,6 +157,7 @@ class MenuItemDto {
     this.category,
     this.description,
     this.imageUrl,
+    this.source,
   });
 
   final String id;
@@ -165,6 +166,8 @@ class MenuItemDto {
   final String? category;
   final String? description;
   final String? imageUrl;
+  /// MANUAL, CRAWL_NAVER, AI_GEMINI 또는 UNKNOWN. 확인 시각은 아직 없음.
+  final String? source;
 
   factory MenuItemDto.fromJson(Map<String, dynamic> json) {
     return MenuItemDto(
@@ -174,6 +177,7 @@ class MenuItemDto {
       category: json['category'] as String?,
       description: json['description'] as String?,
       imageUrl: json['imageUrl'] as String?,
+      source: json['source'] as String?,
     );
   }
 }
@@ -199,6 +203,9 @@ class RestaurantsApiService {
     String? category,
     int? maxPrice,
     int? limit,
+    double? lat,
+    double? lng,
+    int? radius,
     bool throwOnError = false,
   }) async {
     try {
@@ -206,6 +213,11 @@ class RestaurantsApiService {
       if (category != null) params['category'] = category;
       if (maxPrice != null) params['maxPrice'] = maxPrice.toString();
       if (limit != null) params['limit'] = limit.toString();
+      if (lat != null && lng != null) {
+        params['lat'] = lat.toString();
+        params['lng'] = lng.toString();
+        if (radius != null) params['radius'] = radius.toString();
+      }
 
       final uri = Uri.parse('${AppConfig.backendBaseUrl}/restaurants')
           .replace(queryParameters: params.isNotEmpty ? params : null);

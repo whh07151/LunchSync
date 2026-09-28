@@ -4,6 +4,7 @@ import '../owner/owner_home_screen.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:url_launcher/url_launcher.dart';
 import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../core/widgets/widgets.dart';
@@ -167,7 +168,7 @@ class HomeTodaySessionsErrorCard extends StatelessWidget {
 //   - 빠른 실행 CTA 4개: 점심 만들기 / 코드로 참가 / 최근 이력 / 토너먼트(WOW#6)
 //     (※ 알림은 AppBar 우측 아이콘 + 탭바에서 이미 도달 가능 — 중복 제거)
 //   - 오늘의 세션 섹션: 오늘 참여 중인 세션 카드
-//   - AI 추천 식당 섹션: 식당 카드 가로 스크롤 (지도 없음)
+//   - 주문 가능한 등록 식당과 읽기 전용 카카오 주변 장소 섹션
 //   - 하단 탭바 5개: 홈 / 점심세션 / 주문현황 / 내역 / 내정보
 //
 // 📌 지도는 홈에 없음. CU-15(지도/리스트 토글) 화면에서만 표시 (와이어프레임 기준).
@@ -188,8 +189,8 @@ class HomeScreen extends ConsumerStatefulWidget {
 }
 
 // WidgetsBindingObserver: 앱 라이프사이클(포그라운드/백그라운드) 변화 수신.
-// 사장님 피드백(2026-05-13) 반영: 위치 권한을 시스템 설정에서 켜고 돌아왔을 때
-// 자동 재크롤로 빈 상태에서 빠져나오게 함. 권한 변경 자체는 OS 이벤트가 없어
+// 위치 권한을 시스템 설정에서 켜고 돌아왔을 때
+// 주변 장소를 다시 조회한다. 권한 변경 자체는 OS 이벤트가 없어
 // "포그라운드 복귀 시점" 을 트리거로 사용한다.
 class _HomeScreenState extends ConsumerState<HomeScreen>
     with WidgetsBindingObserver {
@@ -239,17 +240,22 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   Timer? _unreadPollingTimer;
   static const _kUnreadPollInterval = Duration(seconds: 30);
 
-  // ── 자동 크롤링 관련 상태 ─────────────────────────────
-  // 앱 진입 + 이동 감지 기반으로 카카오 로컬 API에서 주변 식당을 DB에 동기화.
-  // 쿨다운으로 API 쿼터 과다 소모를 방지한다(카카오는 1일 10k 호출 제한).
+  // ── 읽기 전용 주변 장소 탐색 상태 ───────────────────────
+  // 카카오 장소는 주문 가능한 DB 식당과 독립적으로 보여 준다.
   StreamSubscription<Position>? _positionSub;
-  DateTime? _lastCrawlAt; // 마지막 크롤링 성공 시각 — 쿨다운 계산용
-  static const _kCrawlCooldown = Duration(minutes: 5); // 동일 위치라도 5분 대기
-  static const _kCrawlRadiusM = 1000; // 크롤 반경(미터)
-  static const _kCrawlMoveFilter = 500; // 재크롤 기준 이동 거리(미터)
+  DateTime? _lastDiscoveryAt;
+  double? _lastDiscoveryLat;
+  double? _lastDiscoveryLng;
+  bool _isDiscoveryLoading = false;
+  String? _discoveryError;
+  List<NearbyPlaceDto> _nearbyPlaces = const [];
+  int _discoveryRequestSerial = 0;
+  static const _kDiscoveryCooldown = Duration(minutes: 5);
+  static const _kNearbyRadiusM = 1000;
+  static const _kDiscoveryMoveFilter = 500;
 
   // ── 사용자 현재 위치(거리 표시용) ──────────────────────
-  // 자동 크롤 스트림에서 받은 좌표를 그대로 재사용 — Geolocator 권한이 없거나
+  // 주변 탐색 스트림에서 받은 좌표를 그대로 재사용 — Geolocator 권한이 없거나
   // 위치 서비스가 꺼져 있으면 영구히 null. 식당 카드의 "거리" 라인은
   // null 인 동안 자체적으로 숨겨진다(distanceLabel 이 null 반환).
   double? _userLat;
@@ -260,7 +266,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   //   true  : 권한 OK → "주변 식당 찾는 중..." + LoadingIndicator
   //   false : 거부/제한 → "위치 권한을 켜주세요" + 설정 안내
   //   null  : 아직 미확인(첫 진입 직후) → 단순 안내
-  // 자동 크롤 진입 시 1회 평가하고, 포그라운드 복귀 시 재평가.
+  // 위치 탐색 진입 시 평가하고, 권한 오류 후 포그라운드 복귀 시 재평가.
   bool? _hasLocationPermission;
 
   // ── 생명주기: 화면이 처음 만들어질 때 ──────────────────
@@ -284,8 +290,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       _loadMyFavorites();
       // WOW#9 — 이번 주 토너먼트 트렌딩 식당 미리 로드(0개면 섹션 숨김).
       _loadTrendingRestaurants();
-      // 진입 즉시 1회 자동 크롤링 + 이동 스트림 구독
-      _startAutoCrawl();
+      // 위치 기반 읽기 전용 장소 탐색 + 이동 스트림 구독
+      _startNearbyDiscovery();
 
       // 알림 미읽음 카운트 30초 폴링 — 홈 머무는 동안 배지 자동 갱신
       _unreadPollingTimer = Timer.periodic(_kUnreadPollInterval, (_) {
@@ -305,19 +311,16 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
   // ── 앱 라이프사이클 콜백 ──────────────────────────────
   // 사용자가 시스템 설정에서 위치 권한을 켜고 앱으로 돌아오면
-  // 자동으로 한 번 더 크롤 시도. 빈 상태로 머무는 경험을 줄인다.
+  // 자동으로 한 번 더 장소 탐색을 시도한다.
   // resumed 외 상태(paused/inactive 등)는 모두 무시.
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     super.didChangeAppLifecycleState(state);
     if (state != AppLifecycleState.resumed) return;
-    // 식당 목록이 비어 있고 권한 거부 상태였을 때만 재시도 — 불필요한 호출 방지.
-    final isEmpty = (_recommendedRestaurants ?? const []).isEmpty;
-    if (!isEmpty) return;
-    // 쿨다운 무시하고 한 번 즉시 시도 — 사용자가 직접 행동(설정 변경)을 한 직후라서
-    // 사용자 입장에서 "다녀왔는데도 안 채워지면" 실망감이 큼.
-    _lastCrawlAt = null;
-    _startAutoCrawl();
+    if (_hasLocationPermission == false || _discoveryError != null) {
+      _lastDiscoveryAt = null;
+      _startNearbyDiscovery();
+    }
   }
 
   // ── 멤버 선택 화면(CU-08)으로 이동 ──────────────────────
@@ -400,86 +403,128 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     });
   }
 
-  // ── 자동 크롤링 시작 ────────────────────────────────────
-  // 앱을 켠 시점부터 홈 화면에 머무는 동안 사용자 위치 기준으로
-  // 주변 식당을 DB에 지속적으로 동기화.
-  //
-  // 동작 순서:
-  //   1. 진입 즉시 1회 스냅샷 → 크롤링 트리거
-  //   2. 위치 스트림 구독(500m 이상 이동 시 이벤트) → 쿨다운 통과 시 재크롤링
-  //
-  // 쿨다운:
-  //   - 동일 위치에서 연속 호출 방지 (5분)
-  //   - 카카오 로컬 API는 1일 10k 호출 제한이라 과다 호출 시 쿼터 소진 위험
-  void _startAutoCrawl() {
-    // 1) 진입 시 1회 스냅샷 기반 크롤링
+  // ── 카카오 장소 탐색 ────────────────────────────────────
+  // 위치 정보는 주변 탐색에만 전송한다. 주문 가능한 식당 DB는 수정하지 않는다.
+  void _startNearbyDiscovery() {
+    _positionSub?.cancel();
+    _discoveryRequestSerial++;
+    var streamPositionSeen = false;
+    setState(() {
+      _nearbyPlaces = const [];
+      _isDiscoveryLoading = true;
+      _discoveryError = null;
+    });
     () async {
       final pos = await const GeolocationService().getCurrentPosition();
       if (!mounted) return;
-      // 권한 상태 플래그 갱신 — 빈 상태 카피 분기에 사용.
-      setState(() => _hasLocationPermission = pos != null);
+      // 스트림의 더 최신 위치가 먼저 도착했다면 늦은 스냅샷으로 덮지 않는다.
+      if (streamPositionSeen) return;
+      setState(() {
+        _hasLocationPermission = pos != null;
+        if (pos == null) {
+          _discoveryRequestSerial++;
+          _nearbyPlaces = const [];
+          _isDiscoveryLoading = false;
+          _discoveryError = null;
+          _userLat = null;
+          _userLng = null;
+        }
+      });
       if (pos != null) {
-        _updateUserCoord(pos); // 거리 표기용 좌표 갱신
-        await _triggerCrawlIfCooled(pos);
+        _updateUserCoord(pos);
+        await _discoverIfDue(pos);
+      } else {
+        _loadRecommendedRestaurants();
       }
     }();
 
-    // 2) 이동 감지 스트림 구독 — 500m 이상 이동 시에만 이벤트 발행
     _positionSub = const GeolocationService()
-        .positionStream(distanceFilterMeters: _kCrawlMoveFilter)
+        .positionStream(distanceFilterMeters: _kDiscoveryMoveFilter)
         .listen(
           (pos) {
-            _updateUserCoord(pos); // 이동 시마다 거리 표기용 좌표도 갱신
-            // async 함수를 await 없이 호출해 스트림 콜백은 즉시 반환
-            _triggerCrawlIfCooled(pos);
+            streamPositionSeen = true;
+            _updateUserCoord(pos);
+            _discoverIfDue(pos);
           },
           onError: (_) {
-            // 스트림 에러는 GeolocationService에서 이미 로깅됨 — UI 무시
+            if (!mounted) return;
+            setState(() => _discoveryError = '위치를 갱신하지 못했어요. 다시 시도해 주세요.');
           },
         );
   }
 
   // ── 거리 표기용 사용자 좌표 갱신 ───────────────────────
-  // 자동 크롤 흐름과 별도로 카드 거리 라인에 사용. setState 로 식당 카드
+  // 장소 탐색 흐름과 별도로 카드 거리 라인에 사용. setState 로 식당 카드
   // 리빌드하여 "거리 320m" 같은 한 줄이 자동 업데이트되도록 한다.
   void _updateUserCoord(Position pos) {
     if (!mounted) return;
     // 위/경도가 동일하면 굳이 setState 안 함 — 불필요한 리빌드 방지.
-    if (_userLat == pos.latitude && _userLng == pos.longitude) return;
+    if (_userLat == pos.latitude && _userLng == pos.longitude) {
+      if (_isRestaurantsLoading) _loadRecommendedRestaurants();
+      return;
+    }
     setState(() {
       _userLat = pos.latitude;
       _userLng = pos.longitude;
     });
+    // 현재 위치를 기준으로 주문 가능한 식당도 다시 조회한다.
+    _loadRecommendedRestaurants();
   }
 
-  // ── 쿨다운 통과 시에만 크롤링 API 호출 ──────────────────
-  // API 쿼터 보호 장치. 마지막 성공 시각에서 _kCrawlCooldown 이내면 스킵.
-  Future<void> _triggerCrawlIfCooled(Position pos) async {
+  // 같은 지역은 5분 동안 재조회하지 않지만, 500m 이상 이동하면 즉시 갱신한다.
+  Future<void> _discoverIfDue(Position pos) async {
     final now = DateTime.now();
-    if (_lastCrawlAt != null &&
-        now.difference(_lastCrawlAt!) < _kCrawlCooldown) {
-      return; // 쿨다운 중
+    final moved =
+        _lastDiscoveryLat == null ||
+        _lastDiscoveryLng == null ||
+        Geolocator.distanceBetween(
+              _lastDiscoveryLat!,
+              _lastDiscoveryLng!,
+              pos.latitude,
+              pos.longitude,
+            ) >=
+            _kDiscoveryMoveFilter;
+    if (!moved &&
+        _lastDiscoveryAt != null &&
+        now.difference(_lastDiscoveryAt!) < _kDiscoveryCooldown) {
+      return;
     }
 
     final token = ref.read(userProvider).accessToken;
-    if (token == null) return; // 로그아웃 상태 — 크롤 권한 없음
-
-    // 요청 완료를 기다리지 않고 먼저 시각을 갱신 — 중복 호출 방지용
-    _lastCrawlAt = now;
-
-    final result = await const CrawlApiService().crawlRestaurants(
-      accessToken: token,
-      lat: pos.latitude,
-      lng: pos.longitude,
-      radius: _kCrawlRadiusM,
-    );
-
-    // 크롤 실패 시 다음 이벤트에 재시도 가능하도록 시각 복구
-    if (result == null) {
-      _lastCrawlAt = null;
-    } else if (mounted) {
-      // 성공 — 새 식당이 DB에 들어왔을 수 있으므로 홈 추천 섹션 재조회
-      _loadRecommendedRestaurants();
+    if (token == null) {
+      if (mounted) {
+        setState(() => _discoveryError = '로그인한 뒤 주변 장소를 확인해 주세요.');
+      }
+      return;
+    }
+    _lastDiscoveryAt = now; // 진행 중 같은 좌표로 중복 요청 방지
+    _lastDiscoveryLat = pos.latitude;
+    _lastDiscoveryLng = pos.longitude;
+    final requestSerial = ++_discoveryRequestSerial;
+    setState(() {
+      _nearbyPlaces = const [];
+      _isDiscoveryLoading = true;
+      _discoveryError = null;
+    });
+    try {
+      final places = await const CrawlApiService().getNearbyPlaces(
+        accessToken: token,
+        lat: pos.latitude,
+        lng: pos.longitude,
+        radius: _kNearbyRadiusM,
+      );
+      if (!mounted || requestSerial != _discoveryRequestSerial) return;
+      setState(() {
+        _nearbyPlaces = places;
+        _isDiscoveryLoading = false;
+      });
+    } catch (_) {
+      if (!mounted || requestSerial != _discoveryRequestSerial) return;
+      _lastDiscoveryAt = null;
+      setState(() {
+        _isDiscoveryLoading = false;
+        _discoveryError = '카카오 장소 정보를 불러오지 못했어요.';
+      });
     }
   }
 
@@ -509,10 +554,11 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   }
 
   // ── AI 추천 식당 조회 ────────────────────────────────────
-  // GET /api/restaurants?limit=10 — 기본 식당 목록(추후 추천 엔진 결과로 교체)
-  // CORE-07 추천 점수화 엔진 완성 전까지는 단순 최신순 목록을 사용.
+  // 위치를 얻은 뒤 반경 1km 내 식당을 거리순으로 조회한다.
   Future<void> _loadRecommendedRestaurants() async {
     final token = ref.read(userProvider).accessToken;
+    final lat = _userLat;
+    final lng = _userLng;
     if (token == null) {
       if (mounted) setState(() => _isRestaurantsLoading = false);
       return;
@@ -521,9 +567,12 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     final list = await const RestaurantsApiService().getRestaurants(
       accessToken: token,
       limit: 10,
+      lat: lat,
+      lng: lng,
+      radius: lat != null && lng != null ? _kNearbyRadiusM : null,
     );
 
-    if (!mounted) return;
+    if (!mounted || lat != _userLat || lng != _userLng) return;
     setState(() {
       _recommendedRestaurants = list;
       _isRestaurantsLoading = false;
@@ -742,7 +791,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
           const SizedBox(height: AppSpacing.lg),
 
-          // ── AI 추천 식당 섹션 ────────────────────────────
+          // 등록 식당은 주문에, 카카오 장소는 탐색에만 사용한다.
           // 타이틀 옆에 "기준" 칩을 함께 노출 → 사장님 피드백
           // ("AI 추천 기준이 불명") 반영. 별도 정보 다이얼로그 없이
           // 한 줄로 "왜 이 식당이 보이는가" 를 즉시 이해할 수 있게 함.
@@ -760,6 +809,9 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
           // 가로 스크롤 식당 카드 목록
           // (와이어프레임: 홈에는 지도 X. 지도는 CU-15 "지도/리스트 토글"에서만)
           _buildRestaurantList(),
+
+          const SizedBox(height: AppSpacing.lg),
+          _buildNearbyPlacesSection(),
 
           // 하단 여백 (하단 탭바와 겹치지 않도록)
           const SizedBox(height: AppSpacing.xl),
@@ -1385,7 +1437,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
-  // ── "AI 추천 식당" 섹션 전용 헤더 ────────────────────────
+  // ── 저장된 식당 섹션 전용 헤더 ──────────────────────────
   // 타이틀(heading3) + 그 아래 작은 기준 안내 칩.
   // 사장님 피드백(2026-05-13) 반영: "AI 추천 기준이 뭔지 모르겠다" 해소.
   // 칩은 backgroundGrey + 작은 caption 으로, 디자인 토큰 추가 없음.
@@ -1397,11 +1449,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Row(
-            crossAxisAlignment: CrossAxisAlignment.center,
+          Wrap(
+            crossAxisAlignment: WrapCrossAlignment.center,
+            spacing: AppSpacing.sm,
+            runSpacing: AppSpacing.xs,
             children: [
-              Text('AI 추천 식당', style: AppTextStyles.heading3),
-              const SizedBox(width: AppSpacing.sm),
+              Text(
+                _userLat == null ? '식당 둘러보기' : '주변 식당',
+                style: AppTextStyles.heading3,
+              ),
               // 기준 안내 칩 — 작고 부드러운 회색 톤.
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
@@ -1413,13 +1469,13 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     Icon(
-                      Icons.auto_awesome_rounded,
+                      Icons.location_on_outlined,
                       size: 11,
                       color: AppColors.textSecondary,
                     ),
                     const SizedBox(width: 3),
                     Text(
-                      '위치·가격·평점 기반',
+                      _userLat == null ? '위치 미사용 · 저장된 식당' : '1km 내 저장된 식당',
                       style: AppTextStyles.caption.copyWith(
                         color: AppColors.textSecondary,
                         fontWeight: FontWeight.w600,
@@ -1797,7 +1853,242 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     );
   }
 
-  // ── AI 추천 식당 가로 스크롤 목록 위젯 ──────────────────────
+  // 카카오의 위치 기반 장소 결과는 매장 등록이나 메뉴 정보로 취급하지 않는다.
+  Widget _buildNearbyPlacesSection() {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(
+            horizontal: AppSpacing.screenHorizontal,
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.explore_outlined, color: primary, size: 22),
+                  const SizedBox(width: AppSpacing.sm),
+                  Expanded(
+                    child: Text('주변 장소 둘러보기', style: AppTextStyles.heading3),
+                  ),
+                ],
+              ),
+              const SizedBox(height: AppSpacing.xs),
+              Text(
+                '카카오 장소 정보 · 메뉴·가격은 매장 확인',
+                style: AppTextStyles.bodySmall.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: AppSpacing.sm),
+        if (_hasLocationPermission == null || _isDiscoveryLoading)
+          _buildDiscoveryMessage(
+            icon: Icons.location_searching_rounded,
+            title: '주변 장소를 찾고 있어요',
+            detail: '현재 위치에서 1km 안의 카카오 장소를 확인합니다.',
+            loading: true,
+          )
+        else if (_hasLocationPermission == false)
+          _buildDiscoveryMessage(
+            icon: Icons.location_off_outlined,
+            title: '위치 권한이 필요해요',
+            detail: '위치 권한이나 기기 위치 서비스를 켠 뒤 다시 시도해 주세요.',
+            retry: true,
+          )
+        else if (_discoveryError != null)
+          _buildDiscoveryMessage(
+            icon: Icons.wifi_off_rounded,
+            title: _discoveryError!,
+            detail: '인터넷 연결을 확인한 뒤 다시 시도해 주세요.',
+            retry: true,
+          )
+        else if (_nearbyPlaces.isEmpty)
+          _buildDiscoveryMessage(
+            icon: Icons.map_outlined,
+            title: '1km 안에 표시할 장소가 없어요',
+            detail: '다른 위치에서 다시 찾아보거나 잠시 후 시도해 주세요.',
+            retry: true,
+          )
+        else
+          SizedBox(
+            height: 175,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppSpacing.screenHorizontal,
+              ),
+              itemCount: _nearbyPlaces.length,
+              separatorBuilder: (_, _) =>
+                  const SizedBox(width: AppSpacing.sm + 4),
+              itemBuilder: (_, index) =>
+                  _buildNearbyPlaceCard(_nearbyPlaces[index]),
+            ),
+          ),
+      ],
+    );
+  }
+
+  Widget _buildDiscoveryMessage({
+    required IconData icon,
+    required String title,
+    required String detail,
+    bool loading = false,
+    bool retry = false,
+  }) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(
+        horizontal: AppSpacing.screenHorizontal,
+      ),
+      child: Container(
+        width: double.infinity,
+        padding: const EdgeInsets.all(AppSpacing.md),
+        decoration: BoxDecoration(
+          color: AppColors.surface,
+          border: Border.all(color: AppColors.border),
+          borderRadius: BorderRadius.circular(AppRadius.card),
+        ),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(icon, color: AppColors.textSecondary, size: 24),
+            const SizedBox(width: AppSpacing.sm + 4),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    title,
+                    style: AppTextStyles.bodyMedium.copyWith(
+                      fontWeight: FontWeight.w600,
+                    ),
+                  ),
+                  const SizedBox(height: AppSpacing.xs),
+                  Text(
+                    detail,
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                  if (retry) ...[
+                    const SizedBox(height: AppSpacing.sm),
+                    TextButton.icon(
+                      onPressed: () {
+                        _lastDiscoveryAt = null;
+                        _startNearbyDiscovery();
+                      },
+                      icon: const Icon(Icons.refresh_rounded, size: 18),
+                      label: const Text('다시 찾기'),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            if (loading)
+              const SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildNearbyPlaceCard(NearbyPlaceDto place) {
+    final kakaoUri = Uri.tryParse(place.kakaoUrl);
+    // Kakao Local can return an http detail URL; open the same host over HTTPS.
+    final uri = kakaoUri?.scheme == 'http'
+        ? kakaoUri!.replace(scheme: 'https')
+        : kakaoUri;
+    final isKakaoUrl =
+        uri != null &&
+        uri.scheme == 'https' &&
+        (uri.host == 'place.map.kakao.com' || uri.host == 'map.kakao.com');
+    final distance = place.distanceMeters < 1000
+        ? '${place.distanceMeters}m'
+        : '${(place.distanceMeters / 1000).toStringAsFixed(1)}km';
+    return Container(
+      width: 274,
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  place.name,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: AppSpacing.xs),
+              Text(
+                distance,
+                style: AppTextStyles.caption.copyWith(
+                  color: AppColors.textSecondary,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          Text(
+            place.address.isEmpty ? '주소 정보 없음' : place.address,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const Spacer(),
+          Text(
+            '카카오 장소 정보',
+            style: AppTextStyles.caption.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: AppSpacing.xs),
+          OutlinedButton.icon(
+            onPressed: isKakaoUrl ? () => _openKakaoPlace(uri) : null,
+            icon: const Icon(Icons.open_in_new_rounded, size: 16),
+            label: const Text('카카오 상세 보기'),
+            style: OutlinedButton.styleFrom(
+              minimumSize: const Size.fromHeight(40),
+              side: const BorderSide(color: AppColors.border),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openKakaoPlace(Uri uri) async {
+    try {
+      if (await launchUrl(uri, mode: LaunchMode.externalApplication)) return;
+    } catch (_) {
+      // The same non-sensitive, actionable message is shown for plugin failures.
+    }
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('카카오 상세 화면을 열지 못했어요. 다시 시도해 주세요.')),
+    );
+  }
+
+  // ── 등록 식당 가로 스크롤 목록 위젯 ──────────────────────
   // 식당 카드를 가로로 스크롤하며 볼 수 있는 리스트
   // 상태별 표시: 로딩(스켈레톤 카드) / 빈 상태(친절한 안내) / 리스트
   Widget _buildRestaurantList() {
@@ -1825,8 +2116,7 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
 
     final restaurants = _recommendedRestaurants ?? const <RestaurantDto>[];
 
-    // 추천 결과 없음 — 권한 상태에 따라 세 갈래로 안내 분기.
-    //   (a) 권한 OK    : "주변 식당 찾는 중" + 작은 스피너 → 자동 크롤 끝나길 기다리는 인상
+    // 등록 식당이 없는 상태는 장소 탐색 결과와 구분한다.
     //   (b) 권한 거부 : "위치 권한을 켜주세요" + 설정/재시도 버튼
     //   (c) 미확인    : 권한 평가 전 → "잠시만요" 정도의 중립 카피
     // 카드 구조/색상 토큰은 동일. 카피와 보조 위젯(스피너/설정버튼)만 분기.
@@ -1839,15 +2129,15 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
       final bool showSpinner; // 권한 OK 일 때만 스피너 노출
       final bool showRetry; // 권한 거부 시 강조 버튼 1개로 단순화
       if (hasPerm == true) {
-        icon = Icons.location_searching_rounded;
-        title = '주변 식당을 찾고 있어요';
-        subtitle = '위치 기반으로 식당을 모으는 중이에요. 잠시만요!';
-        showSpinner = true;
+        icon = Icons.storefront_outlined;
+        title = '저장된 주변 식당이 없어요';
+        subtitle = '아래 카카오 장소 정보에서 주변 매장을 둘러볼 수 있어요.';
+        showSpinner = false;
         showRetry = true;
       } else if (hasPerm == false) {
         icon = Icons.location_off_rounded;
         title = '위치 권한이 필요해요';
-        subtitle = '주변 식당을 추천하려면 위치 권한을 켜주세요.\n설정에서 켠 뒤 다시 시도해봐요';
+        subtitle = '근처 등록 식당을 보려면 위치 권한을 켜주세요.';
         showSpinner = false;
         showRetry = true;
       } else {
@@ -1905,12 +2195,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
                 OutlinedButton.icon(
                   onPressed: () {
                     setState(() => _isRestaurantsLoading = true);
-                    // 권한 거부였다면 다시 평가 + 재크롤 시도까지.
-                    // 사용자가 시스템 설정에서 권한을 켰을 수도 있어서
-                    // 단순 목록 재조회보다 _startAutoCrawl 이 더 정확함.
-                    _lastCrawlAt = null;
-                    _startAutoCrawl();
-                    _loadRecommendedRestaurants();
+                    _lastDiscoveryAt = null;
+                    _startNearbyDiscovery();
                   },
                   icon: const Icon(Icons.refresh_rounded, size: 16),
                   label: const Text('다시 시도'),

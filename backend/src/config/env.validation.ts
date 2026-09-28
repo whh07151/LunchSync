@@ -58,8 +58,11 @@ export function validateEnvironment(
         target.search || target.hash || !['127.0.0.1', 'localhost', '[::1]'].includes(target.hostname)) {
       throw new Error('Local runtime requires a loopback Supabase URL');
     }
-    for (const name of ['FIREBASE_PROJECT_ID', 'FIREBASE_ADMIN_KEY_PATH', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'TOSS_SECRET_KEY', 'KAKAO_REST_API_KEY']) {
+    for (const name of ['FIREBASE_PROJECT_ID', 'FIREBASE_ADMIN_KEY_PATH', 'GOOGLE_APPLICATION_CREDENTIALS', 'GEMINI_API_KEY', 'TOSS_SECRET_KEY']) {
       if (config[name]?.trim()) throw new Error(`External ${name} is disabled in local runtime`);
+    }
+    if (config.KAKAO_REST_API_KEY?.trim() && config.LUNCHSYNC_ALLOW_KAKAO_DISCOVERY !== 'true') {
+      throw new Error('Kakao discovery key requires explicit local opt-in');
     }
   }
   if (config.NODE_ENV !== 'production') {

@@ -26,6 +26,21 @@ if (-not (Test-Path -LiteralPath $jwtPath)) {
 }
 $env:JWT_SECRET = [IO.File]::ReadAllText($jwtPath)
 $env:KAKAO_APP_ID = '1534395'
+# Only Kakao Local's read-only place lookup is enabled. The old menu crawler is removed.
+# Read one key from the local, Git-ignored env file without inheriting other provider secrets.
+$kakaoEnvPath = Join-Path $repo 'backend\.env'
+$kakaoLine = $null
+if (Test-Path -LiteralPath $kakaoEnvPath) {
+  $kakaoLine = Get-Content -LiteralPath $kakaoEnvPath -Encoding UTF8 |
+    Where-Object { $_ -match '^KAKAO_REST_API_KEY=' } | Select-Object -First 1
+}
+if ($kakaoLine -and $kakaoLine -match '^KAKAO_REST_API_KEY=(.+)$') {
+  $candidate = $Matches[1].Trim().Trim('"', "'")
+  if ($candidate -and -not $candidate.StartsWith('<')) {
+    $env:KAKAO_REST_API_KEY = $candidate
+    $env:LUNCHSYNC_ALLOW_KAKAO_DISCOVERY = 'true'
+  }
+}
 $env:PORT = '3000'
 $env:ALLOW_SIMULATED_PAYMENTS = 'true'
 $env:DEV_PROMOTE_ENABLED = 'false'

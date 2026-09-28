@@ -1,4 +1,5 @@
-import { Controller, Post, Body, UseGuards, Logger } from '@nestjs/common';
+import { BadRequestException, Controller, HttpCode, Post, Body, UseGuards, Logger } from '@nestjs/common';
+import { Throttle } from '@nestjs/throttler';
 import { IsLatitude, IsLongitude, IsNumber, IsOptional, Max, Min } from 'class-validator';
 import { CrawlService } from './crawl.service';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -43,6 +44,22 @@ export class CrawlController {
 
   constructor(private readonly crawlService: CrawlService) {}
 
+  @Post('nearby')
+  @HttpCode(200)
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
+  async discoverNearby(@Body() query: CrawlRequestDto) {
+    const lat = query.lat;
+    const lng = query.lng;
+    const radius = query.radius ?? 1000;
+    if (!Number.isFinite(lat) || Math.abs(lat) > 90 ||
+        !Number.isFinite(lng) || Math.abs(lng) > 180 ||
+        !Number.isInteger(radius) || radius < 50 || radius > 5000) {
+      throw new BadRequestException('유효한 위치와 50~5000m 반경을 입력해 주세요.');
+    }
+    const data = await this.crawlService.discoverNearby(lat, lng, radius);
+    return { success: true, data };
+  }
+
   // ── POST /api/crawl/restaurants ─────────────────────────
   // 클라이언트(session_create_screen.dart)는 이 호출을 fire-and-forget 으로
   // 사용하므로 500 응답이 사용자 화면을 직접 막진 않지만, 그래도 200 으로
@@ -50,10 +67,12 @@ export class CrawlController {
   //   - 클라이언트 로그가 '응답 실패: 500' 으로 도배되지 않음 → 진단 용이
   //   - 향후 추천 동기 흐름이 이 API 결과를 카운트해도 0으로 안전 폴백
   @Post('restaurants')
+  @Throttle({ default: { limit: 6, ttl: 60_000 } })
   async crawlRestaurants(@Body() dto: CrawlRequestDto) {
     const radius = dto.radius || 1000;
     try {
-      const result = await this.crawlService.crawlAndSeed(
+      // 예전 클라이언트 호환용. 장소를 조회만 하며 DB·메뉴는 수정하지 않는다.
+      const nearby = await this.crawlService.discoverNearby(
         dto.lat,
         dto.lng,
         radius,
@@ -61,7 +80,12 @@ export class CrawlController {
 
       return {
         success: true,
-        data: result,
+        data: {
+          totalSearched: nearby.length,
+          totalSaved: 0,
+          totalMenus: 0,
+          restaurants: [],
+        },
       };
     } catch (_) {
       // 예: Supabase 일시적 장애, 카카오/네이버/Gemini 호출 전부 실패 등.

@@ -31,6 +31,8 @@ class OrderTestDatabase {
   sessionStatus = 'ORDERED';
   sessionWinnerRestaurantId: string | null = RESTAURANT_ID;
   rpcFailureMessage = 'order_items insert failed';
+  menuSource = 'MANUAL';
+  menuAvailable = true;
 
   constructor(
     private readonly rpcShouldFail = true,
@@ -142,6 +144,8 @@ class OrderTestDatabase {
                 name: 'Atomic lunch',
                 price: 12_000,
                 restaurant_id: RESTAURANT_ID,
+                source: this.menuSource,
+                is_available: this.menuAvailable,
               },
             ],
             error: null,
@@ -337,6 +341,35 @@ describe('Order creation consistency (HTTP acceptance)', () => {
       createMessage: '주문을 생성할 수 없습니다.',
       visibleOrders: [],
     });
+  });
+
+  it('rejects an AI-priced menu before creating an order', async () => {
+    database.menuSource = 'AI_GEMINI';
+    const response = await request(app.getHttpServer())
+      .post('/api/orders')
+      .send({
+        sessionId: SESSION_ID,
+        items: [{ menuItemId: MENU_ITEM_ID, quantity: 1 }],
+        paymentMethod: 'CASH',
+      });
+
+    expect(response.status).toBe(400);
+    expect(database.lastRpcFunctionName).toBeNull();
+    expect(database.orders).toHaveLength(0);
+  });
+
+  it('rejects a sold-out menu before creating an order', async () => {
+    database.menuAvailable = false;
+    const response = await request(app.getHttpServer())
+      .post('/api/orders')
+      .send({
+        sessionId: SESSION_ID,
+        items: [{ menuItemId: MENU_ITEM_ID, quantity: 1 }],
+        paymentMethod: 'CASH',
+      });
+
+    expect(response.status).toBe(400);
+    expect(database.lastRpcFunctionName).toBeNull();
   });
 
   it('keeps a normalized cash order pending until POS confirms receipt', async () => {

@@ -53,11 +53,16 @@ export class OrdersService {
 
     const { data: menuItems, error: menuError } = await this.supabase.client
       .from('menu_items')
-      .select('id, name, price, restaurant_id')
+      .select('id, name, price, restaurant_id, source, is_available')
       .in('id', menuItemIds);
 
     if (menuError || !menuItems || menuItems.length === 0) {
       throw new NotFoundException('메뉴 아이템을 찾을 수 없습니다.');
+    }
+    if (menuItems.some((menu) =>
+      menu.source !== 'MANUAL' || menu.is_available !== true,
+    )) {
+      throw new BadRequestException('등록된 판매 중 메뉴만 주문할 수 있어요.');
     }
 
     // CORE-09: 메뉴 충돌 검증 — 모든 아이템이 같은 식당인지 확인

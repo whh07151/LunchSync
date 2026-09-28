@@ -12,6 +12,12 @@ describe('validateEnvironment', () => {
       expect(() => validateEnvironment({ ...local, [name]: 'synthetic-inherited-value' })).toThrow(/disabled/);
     }
   });
+  it('allows only explicitly opted-in read-only Kakao discovery in local runtime', () => {
+    const local = { LUNCHSYNC_LOCAL_RUNTIME: 'true', SUPABASE_URL: 'http://127.0.0.1:54321' };
+    expect(() => validateEnvironment({ ...local, KAKAO_REST_API_KEY: 'local-test-key' })).toThrow(/opt-in/);
+    expect(validateEnvironment({ ...local, KAKAO_REST_API_KEY: 'local-test-key', LUNCHSYNC_ALLOW_KAKAO_DISCOVERY: 'true' }))
+      .toMatchObject({ LUNCHSYNC_ALLOW_KAKAO_DISCOVERY: 'true' });
+  });
   const productionConfig = {
     NODE_ENV: 'production',
     SUPABASE_URL: 'https://project.supabase.co',

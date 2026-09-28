@@ -1,6 +1,5 @@
-import { Injectable, NotFoundException } from '@nestjs/common';
+import { BadRequestException, Injectable, NotFoundException, ServiceUnavailableException } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
-import { ensureRestaurantImageUrl } from './restaurant-image-fallback';
 import { normalizePriceRangeToWon } from './price-range-normalizer';
 
 // ══════════════════════════════════════════════════════════
@@ -29,6 +28,22 @@ export class RestaurantsService {
   // ── GET /restaurants ──────────────────────────────────
   // 필터 조건으로 식당 목록 조회
   async getRestaurants(query: GetRestaurantsQuery) {
+    if ((query.lat == null) !== (query.lng == null)) {
+      throw new BadRequestException('위도와 경도를 함께 입력해 주세요.');
+    }
+    if (query.lat != null && (!Number.isFinite(query.lat) || Math.abs(query.lat) > 90 ||
+        !Number.isFinite(query.lng) || Math.abs(query.lng!) > 180)) {
+      throw new BadRequestException('유효한 위도와 경도를 입력해 주세요.');
+    }
+    if (query.radius != null && (!Number.isFinite(query.radius) || query.radius < 50 || query.radius > 5000)) {
+      throw new BadRequestException('반경은 50~5000m로 입력해 주세요.');
+    }
+    if (query.limit != null && (!Number.isInteger(query.limit) || query.limit < 1 || query.limit > 100)) {
+      throw new BadRequestException('조회 개수는 1~100개로 입력해 주세요.');
+    }
+    if (query.offset != null && (!Number.isInteger(query.offset) || query.offset < 0 || query.offset > 1000)) {
+      throw new BadRequestException('시작 위치는 0~1000 사이여야 합니다.');
+    }
     // 2026-05-13 image_url 컬럼 select 추가:
     //   클라이언트 RestaurantDto.imageUrl 매핑용. 사장님 피드백 "사진 잘 보였으면"
     //   대응. 카드/상세에서 사진 렌더링이 가능해짐 (없으면 FoodImage 폴백 동작).
@@ -41,42 +56,53 @@ export class RestaurantsService {
     //   사장이 POS/사장앱에서 입력한 "오늘의 한 줄" 메시지.
     //   응답 camelCase 키 todaysNote 로 변환되어 손님 추천 카드 노란 띠와
     //   추천 점수 가중치(+5)에 사용된다. NULL 이면 UI 에 노출되지 않음.
-    let qb = this.supabase.client
-      .from('restaurants')
-      .select('id, name, category, price_range, address, lat, lng, image_url, rating, todays_note, created_at');
+    const createQuery = () => {
+      let qb = this.supabase.client
+        .from('restaurants')
+        .select('id, name, category, price_range, address, lat, lng, image_url, rating, todays_note, created_at');
+      if (query.category) qb = qb.eq('category', query.category);
+      if (query.maxPrice != null) qb = qb.lte('price_range', query.maxPrice);
+      return qb;
+    };
 
-    if (query.category) {
-      qb = qb.eq('category', query.category);
-    }
-    if (query.maxPrice) {
-      qb = qb.lte('price_range', query.maxPrice);
-    }
-
-    qb = qb.order('created_at', { ascending: false });
-
-    if (query.limit) {
-      qb = qb.limit(query.limit);
-    }
-    if (query.offset) {
-      qb = qb.range(query.offset, query.offset + (query.limit ?? 20) - 1);
-    }
-
-    const { data, error } = await qb;
-
-    if (error) {
-      throw new Error('RESTAURANT_LIST_LOOKUP_FAILED');
-    }
-
-    // 위치 기반 반경 필터 (2026-05-12 추가):
-    //   query.lat/lng/radius 모두 있으면 Haversine 으로 반경 내 식당만 반환.
-    //   추후 PostGIS 도입 시 DB 쿼리 단에서 처리하도록 이동 가능.
-    let rows = data ?? [];
+    let rows: any[];
     if (query.lat != null && query.lng != null) {
-      const radius = query.radius ?? 1000; // 기본 1km
-      rows = rows.filter((r: any) => {
-        if (r.lat == null || r.lng == null) return false;
-        return haversineMeters(query.lat!, query.lng!, r.lat, r.lng) <= radius;
-      });
+      const radius = query.radius ?? 1000;
+      const latDelta = radius / 111_320;
+      const lngDelta = radius / (111_320 * Math.max(0.01, Math.cos(query.lat * Math.PI / 180)));
+      const candidates: any[] = [];
+      // PostgREST의 기본 1000행 제한을 넘는 지역도 빠뜨리지 않도록 페이지별 조회.
+      for (let start = 0; start <= 5000; start += 1000) {
+        const { data, error } = await createQuery()
+          .gte('lat', query.lat - latDelta)
+          .lte('lat', query.lat + latDelta)
+          .gte('lng', query.lng - lngDelta)
+          .lte('lng', query.lng + lngDelta)
+          .order('id')
+          .range(start, start === 5000 ? start : start + 999);
+        if (error) throw new Error('RESTAURANT_LIST_LOOKUP_FAILED');
+        if (start === 5000 && (data ?? []).length > 0) {
+          throw new ServiceUnavailableException('주변 식당 후보가 너무 많아 범위를 좁혀야 합니다.');
+        }
+        candidates.push(...(data ?? []));
+        if ((data ?? []).length < 1000) break;
+      }
+      rows = candidates
+        .map((r) => ({ row: r, distance: haversineMeters(query.lat!, query.lng!, Number(r.lat), Number(r.lng)) }))
+        .filter(({ distance }) => distance <= radius)
+        .sort((a, b) => a.distance - b.distance || String(a.row.id).localeCompare(String(b.row.id)))
+        .slice(query.offset ?? 0, (query.offset ?? 0) + (query.limit ?? 20))
+        .map(({ row }) => row);
+    } else {
+      let qb = createQuery().order('created_at', { ascending: false });
+      if (query.offset != null) {
+        qb = qb.range(query.offset, query.offset + (query.limit ?? 20) - 1);
+      } else if (query.limit != null) {
+        qb = qb.limit(query.limit);
+      }
+      const { data, error } = await qb;
+      if (error) throw new Error('RESTAURANT_LIST_LOOKUP_FAILED');
+      rows = data ?? [];
     }
 
     return rows.map((r: any) => ({
@@ -95,7 +121,7 @@ export class RestaurantsService {
       // 2026-05-14: 응답 단 최후 방어층. 시드/크롤이 누락된 옛 레코드도
       // 카테고리·이름 기반 Unsplash URL 로 자동 채워서 내려보낸다.
       // (DB 마이그레이션이 적용되기 전 EC2 상태에서도 시연 안전.)
-      imageUrl: ensureRestaurantImageUrl(r.image_url, r.category, r.name),
+      imageUrl: displayableImageUrl(r.image_url),
       // 네이버 플레이스 평점 (0.0~5.0). 미수집 식당은 null.
       // 클라이언트 RestaurantDto.rating 에 매핑되어 ⭐ 칩으로 표시됨.
       rating: r.rating != null ? Number(r.rating) : null,
@@ -136,7 +162,7 @@ export class RestaurantsService {
       address: data.address ?? '',
       lat: data.lat,
       lng: data.lng,
-      imageUrl: ensureRestaurantImageUrl(data.image_url, data.category, data.name),
+      imageUrl: displayableImageUrl(data.image_url),
       rating: data.rating != null ? Number(data.rating) : null,
       // 2026-05-31 WOW#1: 사장님 "오늘의 한 줄".
       //   목록 응답과 동일 정규화 규칙 적용 (빈 문자열 → null).
@@ -156,8 +182,9 @@ export class RestaurantsService {
   async getMenusByRestaurant(restaurantId: string) {
     const { data, error } = await this.supabase.client
       .from('menu_items')
-      .select('id, name, price, category, description, image_url')
+      .select('id, name, price, category, description, image_url, source, is_available')
       .eq('restaurant_id', restaurantId)
+      .eq('is_available', true)
       .order('category')
       .order('price');
 
@@ -165,18 +192,16 @@ export class RestaurantsService {
       throw new Error('RESTAURANT_MENU_LOOKUP_FAILED');
     }
 
-    // 2026-05-15: menu_items 의 image_url 이 null/empty 인 옛 레코드도
-    // 카테고리·이름 기반 Unsplash URL 로 자동 폴백. 시드/크롤 누락 안전망.
+    // 예시 검색 이미지를 실제 메뉴 사진처럼 반환하지 않는다.
     const menus = (data ?? []).map((m) => ({
       id: m.id,
       name: m.name ?? '메뉴',
       price: m.price ?? 0,
       category: m.category ?? '기타',
       description: m.description ?? '',
-      imageUrl:
-        m.image_url && String(m.image_url).trim().length > 0
-          ? m.image_url
-          : `https://source.unsplash.com/400x300/?korean,food,${encodeURIComponent(m.name ?? 'meal')}`,
+      imageUrl: m.source === 'MANUAL' ? displayableImageUrl(m.image_url) : null,
+      source: m.source ?? 'UNKNOWN',
+      priceVerifiedAt: null,
     }));
 
     // DTO 기준: { categories[], menus[] } 구조로 반환
@@ -230,6 +255,13 @@ export class RestaurantsService {
       isFirstTime: visitCount === 1,
     };
   }
+}
+
+function displayableImageUrl(value: unknown): string | null {
+  if (typeof value !== 'string' || value.trim().length === 0) return null;
+  // 과거 시드/AI 생성 결과는 검색 URL을 저장했다. 해당 식당/메뉴 사진이 아니다.
+  if (value.includes('source.unsplash.com/')) return null;
+  return value;
 }
 
 // ══════════════════════════════════════════════════════════

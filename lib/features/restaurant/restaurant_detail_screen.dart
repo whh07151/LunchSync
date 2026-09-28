@@ -899,6 +899,13 @@ class _RestaurantDetailScreenState
                     fontWeight: FontWeight.w600,
                   ),
                 ),
+                if (m.source != 'MANUAL')
+                  Text(
+                    m.source == 'AI_GEMINI' ? 'AI 예시 · 가격 미확인' : '외부 참고 · 가격 미확인',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
                 if (m.description != null && m.description!.isNotEmpty)
                   Padding(
                     padding: const EdgeInsets.only(top: 2),
@@ -916,7 +923,7 @@ class _RestaurantDetailScreenState
           ),
           const SizedBox(width: AppSpacing.sm),
           Text(
-            '${_formatComma(m.price)}원',
+            m.source == 'MANUAL' ? '${_formatComma(m.price)}원' : '가격 확인 필요',
             style: AppTextStyles.bodyMedium.copyWith(
               fontWeight: FontWeight.w700,
             ),
