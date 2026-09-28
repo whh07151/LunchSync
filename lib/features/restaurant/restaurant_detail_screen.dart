@@ -14,6 +14,7 @@ import '../menu/menu_screen.dart';
 import '../../services/favorites_api_service.dart';
 import '../../services/reviews_api_service.dart';
 import 'restaurant_reviews_screen.dart';
+import 'menu_price_estimator.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-13 식당 상세 화면
@@ -871,6 +872,11 @@ class _RestaurantDetailScreenState
   }
 
   Widget _buildMenuRow(MenuItemDto m) {
+    final estimate = estimateMenuPrice(
+      target: m,
+      restaurantMenus: _menuPreview ?? const [],
+      restaurantPriceRange: _restaurant?.priceRange,
+    );
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 8),
       child: Row(
@@ -901,10 +907,21 @@ class _RestaurantDetailScreenState
                 ),
                 if (m.source != 'MANUAL')
                   Text(
-                    m.source == 'AI_GEMINI' ? 'AI 예시 · 가격 미확인' : '외부 참고 · 가격 미확인',
+                    m.source == 'AI_GEMINI'
+                        ? 'AI 참고 · 판매가 미확인'
+                        : '외부 참고 · 판매가 미확인',
                     style: AppTextStyles.bodySmall.copyWith(
                       color: AppColors.textSecondary,
                     ),
+                  ),
+                if (estimate != null)
+                  Text(
+                    '${estimate.basis} · 주문 불가',
+                    style: AppTextStyles.bodySmall.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
                   ),
                 if (m.description != null && m.description!.isNotEmpty)
                   Padding(
@@ -923,7 +940,11 @@ class _RestaurantDetailScreenState
           ),
           const SizedBox(width: AppSpacing.sm),
           Text(
-            m.source == 'MANUAL' ? '${_formatComma(m.price)}원' : '가격 확인 필요',
+            m.source == 'MANUAL'
+                ? '${_formatComma(m.price)}원'
+                : estimate == null
+                ? '가격 확인 필요'
+                : '예상 ${_formatComma(estimate.won)}원',
             style: AppTextStyles.bodyMedium.copyWith(
               fontWeight: FontWeight.w700,
             ),

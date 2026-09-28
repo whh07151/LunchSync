@@ -32,8 +32,8 @@ class RestaurantDataNotice extends StatelessWidget {
           Expanded(
             child: Text(
               kDebugMode
-                  ? '로컬 시연 데이터가 포함될 수 있어요. 메뉴·가격·사진은 실제 방문 전에 확인해 주세요.'
-                  : '메뉴·가격·사진은 등록 정보예요. 실제 방문 전에 최신 정보를 확인해 주세요.',
+                  ? '로컬 시연 데이터가 포함될 수 있어요. 예상 가격·예시 이미지는 실제 메뉴 정보가 아니니 주문 전에 확인해 주세요.'
+                  : '예상 가격·예시 이미지는 참고용이에요. 실제 판매가와 메뉴 사진을 확인해 주세요.',
               style: AppTextStyles.bodySmall.copyWith(
                 color: AppColors.textPrimary,
                 height: 1.45,
