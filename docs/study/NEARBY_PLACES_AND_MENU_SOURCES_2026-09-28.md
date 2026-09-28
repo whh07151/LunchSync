@@ -61,3 +61,7 @@
 카카오 로그인 앱(1534395)과 지도 무료 앱(1423393)의 키를 혼동하면 앱 로그인은 되더라도 지도가 빈 화면이 된다. 로그인 설정을 유지하고, 지도 무료 앱의 **JavaScript 키**를 Git 제외 파일 `.local/kakao-map-js-key.local`에 한 줄로 저장한다. 기존 지도 앱의 JavaScript SDK 허용 도메인에는 `http://localhost:8080`이 등록되어 있다. 지도 REST 키는 별도 Git 제외 `backend/.env`의 `KAKAO_REST_API_KEY`에 둔다.
 
 `powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-local-client.ps1 -Target apk` 또는 `-Target web`을 실행하면 스크립트가 키 형식을 확인하고 Git 제외 Dart define 파일을 만들어 지도 키를 빌드에만 전달한다. 에뮬레이터의 새 APK에서 지도와 리스트 전환을 확인했고, 지도 키가 로그인 SDK 키를 덮어쓰지 않는 구조다. 새 기기나 브라우저 origin에서는 카카오 콘솔의 JavaScript SDK 도메인 등록을 확인해야 한다.
+
+## Android 위치 핀 이동 검증
+
+잠긴 `geolocator_android 4.6.2`는 첫 위치 스트림 설정을 뒤 구독자에게도 공유한다. 홈 화면이 먼저 500m 필터로 구독해 지도 화면의 10m 설정이 무시되는 문제를 에뮬레이터에서 재현했다. 지도에 머문 채 500m 미만을 이동하면 핀이 고정되고, 500m 이상 이동하면 이벤트가 왔다. 홈 스트림을 지도와 동일한 10m로 맞추되 홈의 식당 정보 갱신은 100m 이상, 카카오 장소 재조회는 기존 500m 이동 또는 5분 기준으로 제한했다. 서울시청 가상 위치에서 약 50m 이동한 뒤 지도 타일/식당 핀이 유지되고 파란 위치 핀만 즉시 옮겨진 것을 Android 에뮬레이터에서 확인했다. 이 검증은 에뮬레이터의 모의 GPS이며 실기기 위치 정확도 검증은 아니다.

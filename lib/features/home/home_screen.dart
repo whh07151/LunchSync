@@ -253,6 +253,8 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
   static const _kDiscoveryCooldown = Duration(minutes: 5);
   static const _kNearbyRadiusM = 1000;
   static const _kDiscoveryMoveFilter = 500;
+  static const _kSharedPositionFilter = 10;
+  static const _kHomeRefreshFilter = 100;
 
   // ── 사용자 현재 위치(거리 표시용) ──────────────────────
   // 주변 탐색 스트림에서 받은 좌표를 그대로 재사용 — Geolocator 권한이 없거나
@@ -439,10 +441,23 @@ class _HomeScreenState extends ConsumerState<HomeScreen>
     }();
 
     _positionSub = const GeolocationService()
-        .positionStream(distanceFilterMeters: _kDiscoveryMoveFilter)
+        // geolocator_android shares the first native stream settings across
+        // subscribers. Use the map's 10m filter; throttle home work below.
+        .positionStream(distanceFilterMeters: _kSharedPositionFilter)
         .listen(
           (pos) {
             streamPositionSeen = true;
+            if (_userLat != null &&
+                _userLng != null &&
+                Geolocator.distanceBetween(
+                      _userLat!,
+                      _userLng!,
+                      pos.latitude,
+                      pos.longitude,
+                    ) <
+                    _kHomeRefreshFilter) {
+              return;
+            }
             _updateUserCoord(pos);
             _discoverIfDue(pos);
           },

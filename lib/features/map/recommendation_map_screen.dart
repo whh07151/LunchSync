@@ -159,6 +159,12 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
   // ── 좌표 → 내 위치 핀 공통 반영 ───────────────────────
   // setState 로 지도 위젯에 즉시 반영. 동일 좌표가 반복 들어와도 안전 (단순 교체).
   void _applyPosition(Position pos) {
+    final previous = _myLocationPin;
+    if (previous != null &&
+        (previous.lat - pos.latitude).abs() < 0.00001 &&
+        (previous.lng - pos.longitude).abs() < 0.00001) {
+      return;
+    }
     setState(() {
       _myLocationPin = KakaoMapPin(
         name: '내 위치',
