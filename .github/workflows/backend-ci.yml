@@ -22,9 +22,15 @@ concurrency:
 
 jobs:
   test-and-build:
-    name: Test and build backend
+    name: Test and build backend (Node ${{ matrix.node-version }})
     runs-on: ubuntu-latest
     timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        node-version:
+          - 20.20.2
+          - 24.11.1
     defaults:
       run:
         working-directory: backend
@@ -35,7 +41,7 @@ jobs:
       - name: Set up Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 24.11.1
+          node-version: ${{ matrix.node-version }}
           cache: npm
           cache-dependency-path: backend/package-lock.json
 
