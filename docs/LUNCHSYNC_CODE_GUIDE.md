@@ -769,7 +769,7 @@ userProvider.setFromProfile() (홈 화면 인사말도 즉시 반영)
 |------|--------|------|
 | ValidationPipe | `whitelist: true` | DTO에 없는 필드 자동 제거 |
 | ValidationPipe | `forbidNonWhitelisted: true` | 정의 외 필드 시 400 에러 |
-| ValidationPipe | `transform: true` | string → number 자동 변환 |
+| ValidationPipe | `transform: true` | 요청을 DTO 인스턴스로 변환하고 `enableImplicitConversion: true`로 변환 가능한 숫자 문자열 등을 변환한 뒤 `@IsInt()` 등의 제약을 검증 |
 | CORS | `origin: '*'` | 모든 출처 허용 (개발 중) |
 | Global Prefix | `/api` | 모든 엔드포인트에 /api 접두사 |
 | PORT | `3000` | 환경변수로 변경 가능 |
@@ -790,6 +790,7 @@ userProvider.setFromProfile() (홈 화면 인사말도 즉시 반영)
 | `SupabaseModule` | Supabase 클라이언트 (@Global) |
 | `AuthModule` | 카카오 로그인 + JWT 발급 |
 | `UsersModule` | 유저 프로필 조회/수정 |
+| `OrdersModule` | 주문 생성/조회/상태 변경 + 메뉴 충돌 검증 |
 
 **향후 추가 예정** (담당자):
 
@@ -800,7 +801,6 @@ userProvider.setFromProfile() (홈 화면 인사말도 즉시 반영)
 | `MenusModule` | 안태환 |
 | `VotesModule` | 우현호 |
 | `CartModule` | 안태환 |
-| `OrdersModule` | 우현호 |
 | `NotificationsModule` | 미정 |
 
 ---
@@ -827,6 +827,28 @@ userProvider.setFromProfile() (홈 화면 인사말도 즉시 반영)
 
 4. AuthResult 반환
 ```
+
+**이메일 인증 경계**:
+
+- `emailSignup`은 응답 호환을 위해 token 필드를 유지하지만 10분짜리
+  `purpose: EMAIL_VERIFICATION` 제한 JWT만 발급한다.
+- 제한 JWT는 `JwtStrategy`에서 일반 보호 API 접근을 거절한다.
+- OTP 검증과 `email_verified_at` 1행 반영 후에만 일반 JWT를 교환 발급한다.
+- `emailLogin`은 미인증 이메일의 비밀번호가 맞아도 일반 JWT를 발급하지 않고,
+  OTP를 재개할 짧은 검증 목적 토큰만 오류 응답에 포함한다.
+- 이메일 조회는 wildcard를 escape한 `ILIKE`를 사용해 신규 소문자 계정과 기존
+  mixed-case 계정을 같은 규칙으로 찾는다.
+- OTP provider 호출은 DB용 service-role client와 분리된 sessionless Auth client를
+  매 작업마다 생성한다.
+- 변경 전 발급된 일반 이메일 JWT도 현재 계정의 인증 상태를 재조회한다. DB 장애는
+  401이 아닌 재시도 가능한 503으로 구분한다.
+- Flutter는 가입 토큰을 저장하지 않고 OTP 성공 응답의 일반 JWT만 저장한다.
+
+**휴대폰 계정 연결 경계**:
+
+- 공개 `/auth/verify-phone`은 검증된 전화번호로만 계정을 결정한다.
+- 기존 계정 연결 `/auth/verify-phone/attach`는 JWT가 필요하며 대상 ID를
+  `req.user.userId`에서만 가져온다.
 
 **`AuthResult` 인터페이스**:
 ```typescript
@@ -888,10 +910,17 @@ userProvider.setFromProfile() (홈 화면 인사말도 즉시 반영)
 
 **추출 방식**: `Authorization: Bearer {token}` 헤더에서 추출
 
-**`validate()` 반환값**:
+**`validate()` 반환값과 목적 토큰 차단**:
 ```typescript
-{ userId: payload.sub }  // req.user에 주입됨
+{ type: 'USER', userId: payload.sub }       // 일반 사용자 JWT
+{ type: 'POS', restaurantId: payload.sub,
+  ownerUserId: payload.ownerUserId, authMode: payload.authMode } // POS JWT
 ```
+
+`purpose === 'EMAIL_VERIFICATION'`인 가입 제한 JWT는 401로 거절한다. 일반 USER
+JWT는 현재 계정의 이메일 인증 상태를 재조회하며, 조회 오류는
+`SESSION_ACCOUNT_LOOKUP_FAILED` 503이다. owner-backed POS JWT의 매장 권한은
+`PosAccessService`에서 승인 점주와 canonical 소유권을 요청마다 다시 확인한다.
 
 **사용 예**:
 ```typescript
@@ -1060,7 +1089,54 @@ const { data, error } = await this.supabase.client
 ```
 
 > **⚠️ 보안**: `service_role` 키는 절대 Flutter 앱에 노출 금지.  
-> Flutter는 Supabase에 직접 접근하지 않음.
+> Flutter는 Supabase에 직접 접근하지 않음. 실값은 승인된 비밀 관리자 또는 배포
+> 플랫폼의 보호된 환경 변수에서 NestJS 런타임에만 주입하며 Git·문서·메신저에
+> 복사하지 않음.
+
+### 주문 생성 RPC의 검증·트랜잭션·권한 경계
+
+`POST /api/orders`는 HTTP 입력 검증과 데이터베이스 원자성을 서로 다른 계층에서 책임진다.
+
+1. NestJS `ValidationPipe`와 주문 DTO가 요청 모양을 검증한다.
+   - `sessionId`: 비어 있지 않은 문자열
+   - `items`: 1~100개 배열
+   - 각 항목의 `menuItemId`: 문자열
+   - 각 항목의 `quantity`: 1~999 정수
+   - `paymentMethod`: 허용된 결제 방식이며, 없으면 컨트롤러가 `TOSS`를 사용
+   - DTO에 없는 `restaurantId`, `totalPrice`, `price` 같은 필드는
+     `forbidNonWhitelisted: true` 때문에 400으로 거절
+2. `OrdersService`는 JWT에서 `userId`를 얻고, `menu_items`를 다시 조회한다.
+   모든 메뉴가 한 식당에 속하는지 확인한 뒤 legacy `users.restaurant_id`와
+   canonical `restaurants.owner_user_id`를 모두 확인해 자기 매장 주문을 차단한다.
+   이어서 `restaurantId`, 주문 시점의 단가 스냅샷, `totalPrice`를 서버에서
+   계산한다. 클라이언트 금액은 신뢰하지 않는다.
+3. 다음 6개 인자를 가진 PostgreSQL 함수가 `orders` 헤더와 `order_items`
+   항목을 한 트랜잭션에서 생성한다.
+
+```text
+public.create_order_with_items(
+  uuid, uuid, uuid, integer, text, json
+)
+```
+
+함수 내부의 항목 INSERT 하나라도 실패하면 앞서 생성한 주문 헤더도 함께 롤백돼야
+한다. 이 보장은 Supabase RPC를 흉내 낸 테스트 더블이 아니라 실제 PostgreSQL
+계약 테스트에서 실패를 유도한 뒤 `orders` 행이 남지 않는 것으로 검증한다.
+
+함수는 명시적인 `SECURITY INVOKER`로 실행하며, 새 함수에 기본 부여되는
+`PUBLIC EXECUTE`를 명시적으로 회수한다. `anon`, `authenticated`에도 실행 권한을
+주지 않고 백엔드가 사용하는 `service_role`에만 6-인자 시그니처의 `EXECUTE`를
+부여한다. 함수 소유자/DB 관리자의 관리 권한은 별도다.
+
+> **결제 경계**: RPC가 보장하는 범위는 `orders` + `order_items` 생성까지다.
+> 비운영 환경이면서 `ALLOW_SIMULATED_PAYMENTS=true`인 경우에만 RPC 성공 후
+> 별도 요청으로 `PAID`와 `payment_key`를 기록한다. 플래그가 없거나 production이면
+> `SIMULATE`는 RPC 전에 403이다.
+> `TOSS`, `CARD`, `CASH`는 승인 또는 POS 수납 확인 전까지 `PENDING`을 유지한다.
+> 주문 생성 경로는 정규화된 결제 방식을 저장·분기·응답에 일관되게 사용하고,
+> 알 수 없는 값은 400으로 거절해 `SIMULATE` 우회로 바뀌지 않게 한다.
+> 다만 이때 이미 생성된 `PENDING` 주문의 안전한 재시도·복구와 Toss 승인 후 DB
+> 갱신 실패의 durable reconciliation queue는 별도 reliability 경계로 남아 있다.
 
 ---
 
@@ -1175,6 +1251,42 @@ POST /api/sessions ⏳
 
 ---
 
+### 흐름 5: 주문 생성
+
+```text
+Flutter                  NestJS OrdersService                PostgreSQL
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+
+POST /api/orders
+{sessionId, items,
+ paymentMethod}
+Authorization: Bearer JWT
+                         ↓ DTO 검증
+                         JWT에서 userId 획득
+                         menu_items 조회
+                         한 식당 여부 검증
+                         canonical/legacy 자기매장 여부 검증
+                         restaurantId/단가/합계 계산
+                         ↓
+                         RPC create_order_with_items(6 args)
+                                                              ↓
+                                                     INSERT orders(PENDING)
+                                                     INSERT order_items
+                                                     ├─ 모두 성공: COMMIT
+                                                     └─ 하나라도 실패: 전체 ROLLBACK
+                         ↓
+                         명시적으로 허용한 비운영 SIMULATE만 별도 PAID 업데이트
+                         TOSS/CARD/CASH는 PENDING 유지, 승인·수납 단계로 이동
+                         ↓
+응답
+```
+
+HTTP 수용 테스트의 Supabase 테스트 더블은 RPC 오류를 NestJS가 500으로 변환하고
+부분 주문을 응답으로 노출하지 않는 서비스 동작을 검증한다. 실제 데이터베이스
+트랜잭션 롤백과 함수 실행 ACL은 별도의 PostgreSQL 계약 테스트가 검증해야 한다.
+
+---
+
 ## 14. 현재 구현된 API 목록
 
 ### ✅ 구현 완료
@@ -1184,6 +1296,11 @@ POST /api/sessions ⏳
 | `POST` | `/api/auth/kakao` | 없음 | 카카오 로그인 + JWT 발급 |
 | `GET` | `/api/users/me` | JWT | 내 프로필 조회 |
 | `PATCH` | `/api/users/me` | JWT | 프로필/조건 수정 |
+| `POST` | `/api/orders` | JWT | 주문 헤더·항목 원자적 생성, 결제 방식에 따른 후속 처리 |
+| `GET` | `/api/orders/today` | JWT | 오늘 생성한 내 주문 목록 |
+| `GET` | `/api/orders/:id` | JWT | 본인 또는 같은 세션 멤버의 주문 상세 조회 |
+| `PATCH` | `/api/orders/:id/status` | JWT | 주문 소유자의 허용된 상태 전이 |
+| `PATCH` | `/api/orders/:id/review` | JWT | 완료된 본인 주문의 리뷰 작성/수정 |
 
 ### ⏳ 구현 예정
 
@@ -1202,10 +1319,6 @@ POST /api/sessions ⏳
 | `GET` | `/api/cart/:sessionId` | 장바구니 조회 | 안태환 |
 | `PATCH` | `/api/cart/:id` | 수량 수정 | 안태환 |
 | `DELETE` | `/api/cart/:id` | 항목 삭제 | 안태환 |
-| `POST` | `/api/orders` | 주문 생성 | 우현호 |
-| `GET` | `/api/orders/:id` | 주문 상태 조회 | 안태환 |
-| `GET` | `/api/orders/today` | 오늘 주문 목록 (점주) | 안태환 |
-| `PATCH` | `/api/orders/:id/status` | 주문 상태 변경 | 안태환 |
 | `GET` | `/api/notifications` | 알림 목록 | 미정 |
 | `PATCH` | `/api/notifications/:id/read` | 읽음 처리 | 미정 |
 
@@ -1259,9 +1372,24 @@ MenuScreen(restaurantName: '한솥도시락', restaurantId: 'uuid-v4')
 Flutter `cartProvider`에서 주문 시 필요한 데이터:
 ```dart
 cartProvider.state          // List<CartItem>
-cartProvider.notifier.totalPrice  // 총 금액
+cartProvider.notifier.totalPrice  // 화면 표시용 합계; 서버 요청의 신뢰값으로 사용하지 않음
 ```
-백엔드 `POST /api/orders` 요청 시 `sessionId`, `restaurantId`, `items`, `totalPrice` 필요.
+
+백엔드 `POST /api/orders`에는 다음 값만 보낸다.
+
+```json
+{
+  "sessionId": "uuid",
+  "items": [
+    { "menuItemId": "uuid", "quantity": 2 }
+  ],
+  "paymentMethod": "TOSS"
+}
+```
+
+`restaurantId`, 항목 `price`, `totalPrice`는 보내지 않는다. 서버가 메뉴 ID로
+`menu_items`를 조회해 한 식당 주문인지 확인하고, 식당 ID·단가·합계를 도출한다.
+정의되지 않은 필드를 보내면 전역 `ValidationPipe`가 400으로 거절한다.
 
 ---
 
@@ -1343,16 +1471,86 @@ class MenuItem {
 
 ### NestJS 백엔드
 
+- [ ] 비운영 PostgreSQL 리허설 환경에
+  `2026-07-27-create-order-with-items-v2.sql`을 먼저 적용
+- [ ] 바로 이어서
+  `2026-07-29-schema-introspection-function-signatures.sql`을 적용한 뒤
+  `check_schema_resources()`가 정확한 6-인자 주문 RPC를 보고하는지 확인
+- [ ] 정확한 6-인자 함수
+  `create_order_with_items(uuid,uuid,uuid,integer,text,json)`가 생성됐는지 확인
+- [ ] 함수가 `SECURITY INVOKER`이고 `PUBLIC`/`anon`/`authenticated`의
+  `EXECUTE`가 없으며 `service_role`만 애플리케이션 호출 권한을 갖는지 확인
+- [ ] 실제 PostgreSQL에서 항목 제약조건 실패를 유도해 주문 헤더도 남지 않는지 확인
+- [ ] 리허설 통과 후 승인된 운영자가 실제 백엔드 대상 DB에 2026-07-27 주문 RPC
+  마이그레이션과 2026-07-29 introspection 마이그레이션을 이 순서로 적용
+- [ ] 같은 대상 DB에서 정확한 시그니처, 함수 보안 모드, 최소 ACL과
+  `check_schema_resources()` 응답을 다시 확인한 뒤에만 백엔드를 배포
+- [ ] 비운영 `SIMULATE` 명시 opt-in과 기본 거절, Toss·`CARD`·`CASH`의
+  `PENDING` → 승인/수납 흐름을 각각 사람 손으로 확인
+- [ ] 외부 결제 작업 ledger/outbox, `REFUNDING` 선점 상태와 재시작 가능한
+  reconciliation worker를 선언형 Supabase 스키마부터 설계·검증
 - [ ] `origin: '*'` → 실제 도메인으로 제한 (`main.ts`)
 - [ ] `JWT_SECRET` 강력한 랜덤값으로 교체 (`.env`)
 - [ ] 에러 응답 포맷 통일 (DTO 명세서 기준)
 - [ ] 배포 전 `console.log` 및 디버그 코드 제거
 - [ ] 환경변수 `.env` 파일 절대 커밋 금지 확인
+- [ ] `SUPABASE_SERVICE_ROLE_KEY`는 승인된 비밀 관리자/보호된 런타임 환경
+  변수로만 주입하고 공유 문서·메신저에 실값이 없는지 확인
 - [ ] HTTPS 강제 설정
 - [ ] Rate Limiting 적용 (인증 엔드포인트)
 - [ ] Supabase `service_role` 키 재발급 (세션 중 노출 가능성)
 
 ---
 
-*이 문서는 2026-04-08 기준 구현 상태를 반영합니다.*  
+### 주문 생성 변경 배포·롤백 순서
+
+배포는 **비운영 DB의 v2 주문 마이그레이션 → 2026-07-29 introspection
+마이그레이션 → 비운영 계약 검증 → 승인된 운영자의 실제 백엔드 대상 DB 두
+마이그레이션 순차 적용 → 대상 DB의 정확한 시그니처·ACL·introspection 재검증 →
+백엔드 배포 → 수동 정상 흐름 확인** 순서로 진행한다. 6-인자 함수를 요구하는
+백엔드를 실제 대상 DB의 두 마이그레이션과 검증보다 먼저 배포하면 RPC 시그니처
+불일치 또는 부정확한 부트 헬스체크가 발생할 수 있다. 실제 대상 DB 적용과 백엔드
+배포는 승인된 운영자의 남은 작업이며 이 문서 갱신 과정에서는 실행하지 않았다.
+
+이 변경의 배포·검증 핵심 파일은 다음과 같다.
+
+- `backend/scripts/migrations/2026-07-27-create-order-with-items-v2.sql`
+- `backend/scripts/migrations/2026-07-29-schema-introspection-function-signatures.sql`
+- `backend/src/orders/orders.controller.ts`
+- `backend/src/orders/orders.service.ts`
+- `backend/src/orders/orders.consistency.spec.ts`
+- `backend/src/app.module.ts`
+- `backend/src/supabase/schema-healthcheck.service.ts`
+- `backend/src/supabase/schema-healthcheck.service.spec.ts`
+- `backend/package.json`
+- `backend/test/jest-postgres.json`
+- `backend/test/orders.postgres-spec.ts`
+- `backend/test/support/disposable-postgres.ts`
+
+2026-07-29 현재 체크포인트의 실제 결과는 기본 Jest **7개 스위트·47개 테스트**,
+PostgreSQL 전용 Jest **2개 스위트·5개 테스트**, NestJS 빌드 통과다. PostgreSQL
+검사는 일회용 `postgres:16-alpine`에서 수행했으며 운영 DB 마이그레이션이나
+라이브 Toss 결제를 실행한 결과가 아니다. 이후 추가한 하드닝 테스트는 실제 실행
+결과가 생기기 전까지 통과로 기록하지 않는다.
+
+2026-08-05 하드닝 체크포인트에서는 기본 Jest **26개 스위트·152개 테스트**,
+NestJS build, Flutter **12개 테스트**, Dart analyze가 통과했다. Docker Desktop
+Linux 엔진이 꺼져 있어 변경된 PostgreSQL 전용 검사는 재실행하지 않았고 통과로
+기록하지 않는다. 실제 Toss 요청, 원격 DB 변경과 배포도 수행하지 않았다.
+
+롤백은 반대로 **백엔드 호출자부터 이전 버전으로 되돌린 뒤** 검토된 유지보수
+작업에서 6-인자 함수와 ACL을 복원/제거한다. 실행 중인 백엔드가 참조하는
+시그니처를 먼저 삭제하지 않는다. 운영 데이터가 생긴 뒤에는 주문 행을 임의로
+삭제하지 말고 데이터 보존·복구 계획을 별도로 승인받는다.
+
+관련 설계·검토 문서:
+
+- [`study/ORDER_CREATION_CONSISTENCY_REVIEW.md`](study/ORDER_CREATION_CONSISTENCY_REVIEW.md)
+- [`LUNCHSYNC_DTO.md`](LUNCHSYNC_DTO.md)
+- [`LUNCHSYNC_SPECIFICATION.md`](LUNCHSYNC_SPECIFICATION.md)
+
+---
+
+*문서의 초기 구현 기준은 2026-04-08이며, 주문 생성 일관성·보안·배포 섹션은
+2026-07-29 기준으로 갱신했습니다.*
 *코드 변경 시 해당 섹션을 업데이트해 주세요.*

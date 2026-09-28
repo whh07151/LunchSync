@@ -26,7 +26,7 @@ import {
 //   상태 변경(PATCH)·취소(POST)는 보안 유지 위해 throttle 적용 그대로 둠.
 import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { assertPosAccessTo } from '../auth/pos-ownership.util';
+import { PosAccessService } from '../auth/pos-ownership.util';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import { PosService } from './pos.service';
 
@@ -64,7 +64,7 @@ interface UploadedPhotoFile {
 //   기존 매트릭스는 ACCEPTED 가 누락되어 PAID → ACCEPTED 전이 시 400 발생.
 //   POS DTO 에 ACCEPTED 추가 (CANCELLED 는 별도 cancel 엔드포인트가 담당하므로 제외).
 class UpdatePosOrderStatusDto {
-  @IsIn(['ACCEPTED', 'PREPARING', 'READY', 'COMPLETED'])
+  @IsIn(['PREPARING', 'READY', 'COMPLETED'])
   status: string;
 }
 
@@ -113,7 +113,10 @@ class TossPosChargeDto {
 @Controller('pos')
 @UseGuards(JwtAuthGuard)
 export class PosController {
-  constructor(private readonly posService: PosService) {}
+  constructor(
+    private readonly posService: PosService,
+    private readonly posAccess: PosAccessService,
+  ) {}
 
   // ── OW-10: 식당별 주문 목록 (정식 경로) ───────────────
   // 권한: POS 토큰의 매장 ID 와 path 매장 ID 일치 필수 (2026-05-12 박검토A)
@@ -125,7 +128,7 @@ export class PosController {
     @Param('id') restaurantId: string,
     @Query('status') status?: string,
   ) {
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posService.getOrdersByRestaurant(
       restaurantId,
       status,
@@ -151,7 +154,7 @@ export class PosController {
     @Req() req: AuthedRequest,
     @Param('id') restaurantId: string,
   ) {
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posService.getPaymentStats(restaurantId);
     return { success: true, data: result };
   }
@@ -190,7 +193,7 @@ export class PosController {
     @Query('dateFrom') dateFrom?: string,
     @Query('dateTo') dateTo?: string,
   ) {
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posService.getPaymentHistory(
       restaurantId,
       dateFrom,
@@ -221,7 +224,7 @@ export class PosController {
   ) {
     const restaurantId =
       await this.posService.getRestaurantIdByOrderId(orderId);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posService.refundSim(orderId);
     return { success: true, data: result };
   }
@@ -235,7 +238,7 @@ export class PosController {
     @Body() dto: UpdatePosOrderStatusDto,
   ) {
     const restaurantId = await this.posService.getRestaurantIdByOrderId(orderId);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posService.updateOrderStatus(orderId, dto.status);
     return { success: true, data: result };
   }
@@ -249,7 +252,7 @@ export class PosController {
     @Body() dto: CancelOrderDto,
   ) {
     const restaurantId = await this.posService.getRestaurantIdByOrderId(orderId);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posService.cancelOrder(orderId, dto.reason);
     return { success: true, data: result };
   }
@@ -292,7 +295,7 @@ export class PosController {
     // 권한 검증 — 다른 매장 주문에 사진 못 붙이도록
     const restaurantId =
       await this.posService.getRestaurantIdByOrderId(orderId);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
 
     const result = await this.posService.saveCompletionPhoto(orderId, photo);
     return { success: true, data: result };
@@ -323,7 +326,7 @@ export class PosController {
     @Body() dto: UpdateTodaysNoteDto,
   ) {
     // 매장 권한 검증 — POS JWT 가 발급된 식당과 path 식당 ID 일치 필수.
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
 
     // 빈 문자열 / 공백만 입력 시 명시적으로 null 로 normalize.
     // (DB 와 손님 응답이 일관되게 "미입력" 으로 처리되어 노란 띠가 사라짐)
@@ -378,7 +381,7 @@ export class PosController {
     // 권한 검증 — 다른 매장 주문에 결제 처리 못 하도록.
     const restaurantId =
       await this.posService.getRestaurantIdByOrderId(orderId);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
 
     const result = await this.posService.chargeViaPosToss(
       orderId,

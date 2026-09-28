@@ -1,6 +1,7 @@
 import { Body, Controller, Get, Param, Post, Req, UseGuards } from '@nestjs/common';
 import { IsString, IsNotEmpty, IsOptional } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { SessionAccessService } from '../auth/session-access.service';
 import { VotesService } from './votes.service';
 
 // ══════════════════════════════════════════════════════════
@@ -29,7 +30,10 @@ class DecideDto {
 @Controller('sessions')
 @UseGuards(JwtAuthGuard)
 export class VotesController {
-  constructor(private readonly votesService: VotesService) {}
+  constructor(
+    private readonly votesService: VotesService,
+    private readonly sessionAccess: SessionAccessService,
+  ) {}
 
   @Post(':id/votes')
   async castVote(
@@ -37,6 +41,7 @@ export class VotesController {
     @Param('id') sessionId: string,
     @Body() dto: CastVoteDto,
   ) {
+    await this.sessionAccess.assertMember(sessionId, req.user.userId);
     const result = await this.votesService.castVote(
       req.user.userId,
       sessionId,
@@ -46,7 +51,11 @@ export class VotesController {
   }
 
   @Get(':id/votes')
-  async getVotes(@Param('id') sessionId: string) {
+  async getVotes(
+    @Req() req: { user: { userId: string } },
+    @Param('id') sessionId: string,
+  ) {
+    await this.sessionAccess.assertMember(sessionId, req.user.userId);
     const result = await this.votesService.getVotesBySession(sessionId);
     return { success: true, data: result };
   }

@@ -106,15 +106,8 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
   // 같은 화면에서 토스트가 여러 번 떠 사용자를 괴롭히지 않도록 플래그.
   bool _permissionToastShown = false;
 
-  // ── 지도 SDK 폴백 플래그 ────────────────────────────────
-  // 사장님 피드백(2026-05-14) 반영: 카카오 JS SDK 로드 실패 시 회색 빈 화면이
-  // 떠 답답함이 컸음. 직접적인 onError 콜백이 KakaoMapWidget 에 없어,
-  //   ① 5초 타이머 만료까지 사용자가 보고 있는데 지도가 안 보이면 안내 오버레이
-  //   ② 사용자가 "리스트만 보기" 누르면 미니카드 전체화면으로 전환
-  // 두 가지 보수적 패턴으로 폴백을 제공한다.
-  Timer? _mapHintTimer;
-  bool _showMapHint = false;        // 5초 후 안내 오버레이 노출 플래그
-  bool _listOnlyMode = false;       // 사용자가 직접 리스트 전용 모드로 전환했는가
+  // 지도를 읽을 수 없는 경우에도 식당을 확인할 수 있는 수동 목록 전환.
+  bool _listOnlyMode = false; // 사용자가 직접 리스트 전용 모드로 전환했는가
 
   @override
   void initState() {
@@ -124,22 +117,12 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
       _loadInitialLocation();
       _subscribeLocationUpdates();
     });
-
-    // 5초 안에 사용자가 지도를 인식 못 했을 가능성을 가정하고 안내 오버레이.
-    // 실제 SDK 로드 실패를 직접 감지할 수 없어, 시간 기반 휴리스틱으로 폴백한다.
-    // 사용자가 이미 리스트 전용 모드로 전환했거나 화면이 사라진 경우 무시.
-    _mapHintTimer = Timer(const Duration(seconds: 5), () {
-      if (!mounted) return;
-      if (_listOnlyMode) return;
-      setState(() => _showMapHint = true);
-    });
   }
 
   @override
   void dispose() {
-    // 스트림/타이머 구독 정리 — 화면이 사라질 때 GPS 콜백이 계속 살아있으면 안 됨.
+    // 화면이 사라질 때 GPS 콜백이 계속 살아있으면 안 됨.
     _positionSub?.cancel();
-    _mapHintTimer?.cancel();
     super.dispose();
   }
 
@@ -176,6 +159,12 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
   // ── 좌표 → 내 위치 핀 공통 반영 ───────────────────────
   // setState 로 지도 위젯에 즉시 반영. 동일 좌표가 반복 들어와도 안전 (단순 교체).
   void _applyPosition(Position pos) {
+    final previous = _myLocationPin;
+    if (previous != null &&
+        (previous.lat - pos.latitude).abs() < 0.00001 &&
+        (previous.lng - pos.longitude).abs() < 0.00001) {
+      return;
+    }
     setState(() {
       _myLocationPin = KakaoMapPin(
         name: '내 위치',
@@ -203,11 +192,9 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
   Widget build(BuildContext context) {
     final points = widget.points;
     final pins = points
-        .map((p) => KakaoMapPin(
-              name: p.restaurant.name,
-              lat: p.lat,
-              lng: p.lng,
-            ))
+        .map(
+          (p) => KakaoMapPin(name: p.restaurant.name, lat: p.lat, lng: p.lng),
+        )
         .toList();
 
     return Scaffold(
@@ -225,14 +212,10 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
           children: [
             const Text(
               '지도로 보기',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w700,
-              ),
+              style: TextStyle(fontSize: 16, fontWeight: FontWeight.w700),
             ),
             // 세션 부제(optional) — 있으면 작게 회색으로 표기.
-            if (widget.sessionTitle != null &&
-                widget.sessionTitle!.isNotEmpty)
+            if (widget.sessionTitle != null && widget.sessionTitle!.isNotEmpty)
               Text(
                 widget.sessionTitle!,
                 style: AppTextStyles.caption.copyWith(
@@ -259,11 +242,7 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.map_outlined,
-              size: 56,
-              color: AppColors.textSecondary,
-            ),
+            Icon(Icons.map_outlined, size: 56, color: AppColors.textSecondary),
             const SizedBox(height: AppSpacing.md),
             Text(
               '지도에 표시할 식당이 없어요',
@@ -296,22 +275,25 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
   // 폴백 모드(_listOnlyMode=true) 에서는 지도 영역을 0으로 줄이고
   // 미니 카드 리스트만 세로 형태로 전체화면 표시 → 사장님 피드백 반영.
   Widget _buildMapBody(
-      List<KakaoMapPin> pins, List<RestaurantMapPoint> points) {
+    List<KakaoMapPin> pins,
+    List<RestaurantMapPoint> points,
+  ) {
     // 리스트 전용 모드 — 지도 SDK 로드 실패한 경우 사용자가 직접 전환.
     // 가로 스크롤이 아닌 세로 스크롤로 전환해 전체 식당을 한 눈에 훑을 수 있도록.
-    if (_listOnlyMode) {
+    if (_listOnlyMode || AppConfig.kakaoMapJavaScriptAppKey.isEmpty) {
       return _buildListOnlyBody(points);
     }
 
     return LayoutBuilder(
       builder: (context, constraints) {
         // 화면 높이의 70%를 지도에 — 최소 240px 보장 (작은 폰 폴드 모드 대응).
-        final mapHeight =
-            (constraints.maxHeight * 0.7).clamp(240.0, constraints.maxHeight);
+        final mapHeight = (constraints.maxHeight * 0.7).clamp(
+          240.0,
+          constraints.maxHeight,
+        );
         return Column(
           children: [
-            // ── 상단 지도 영역 + 안내 오버레이 ───────────
-            // Stack 으로 지도 위에 안내 오버레이(폴백 유도)와 우상단 토글 버튼을 올림.
+            // ── 상단 지도 영역 + 목록 전환 ───────────
             SizedBox(
               height: mapHeight,
               child: Stack(
@@ -319,7 +301,7 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
                   KakaoMapWidget(
                     pins: pins,
                     myLocation: _myLocationPin,
-                    jsAppKey: AppConfig.kakaoJavaScriptAppKey,
+                    jsAppKey: AppConfig.kakaoMapJavaScriptAppKey,
                     height: mapHeight,
                     // 줌 레벨 4 — 식당이 1~2km 반경에 흩어진 케이스 평균에 적합.
                     zoomLevel: 4,
@@ -327,20 +309,7 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
                   // 우상단 "리스트만 보기" 토글 — 항상 노출.
                   // 사장님 피드백("지도 안 보일 때 답답") 우선 해소 — 사용자가
                   // 즉시 폴백할 수 있는 즉답형 버튼.
-                  Positioned(
-                    top: 12,
-                    right: 12,
-                    child: _buildListOnlyToggle(),
-                  ),
-                  // 5초 후에도 사용자가 안내가 필요하다면 살짝 떠오르는 힌트.
-                  // 실제 SDK 로드 실패를 알 수 없으므로 "안 보이면 눌러보세요" 톤.
-                  if (_showMapHint)
-                    Positioned(
-                      left: 12,
-                      right: 12,
-                      bottom: 12,
-                      child: _buildMapHintBanner(),
-                    ),
+                  Positioned(top: 12, right: 12, child: _buildListOnlyToggle()),
                 ],
               ),
             ),
@@ -348,9 +317,7 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
             // ── 하단 미니 카드 가로 스크롤 ────────────────
             Expanded(
               child: Padding(
-                padding: const EdgeInsets.symmetric(
-                  vertical: AppSpacing.sm,
-                ),
+                padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                 child: ListView.separated(
                   scrollDirection: Axis.horizontal,
                   padding: const EdgeInsets.symmetric(
@@ -380,7 +347,6 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
         onTap: () {
           setState(() {
             _listOnlyMode = true;
-            _showMapHint = false;
           });
         },
         child: Padding(
@@ -403,53 +369,6 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  // 5초 후 떠오르는 안내 배너 — 지도가 안 보일 때 다음 액션 안내.
-  // 카카오 SDK 로드 실패의 실제 신호는 못 받지만 "안 보이면 눌러요" 톤으로 우회.
-  Widget _buildMapHintBanner() {
-    return Material(
-      color: AppColors.surface,
-      elevation: 4,
-      borderRadius: BorderRadius.circular(AppRadius.card),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(
-          horizontal: AppSpacing.md,
-          vertical: AppSpacing.sm,
-        ),
-        child: Row(
-          children: [
-            Icon(
-              Icons.info_outline_rounded,
-              size: 18,
-              color: Theme.of(context).colorScheme.primary,
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                '지도가 안 보이나요? 아래 식당 목록도 확인해봐요',
-                style: AppTextStyles.bodySmall.copyWith(
-                  color: AppColors.textPrimary,
-                ),
-              ),
-            ),
-            // 닫기 버튼 — 1회 본 사용자에게 다시 강요하지 않도록.
-            InkWell(
-              onTap: () => setState(() => _showMapHint = false),
-              borderRadius: BorderRadius.circular(999),
-              child: Padding(
-                padding: const EdgeInsets.all(2),
-                child: Icon(
-                  Icons.close_rounded,
-                  size: 16,
-                  color: AppColors.textSecondary,
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );
@@ -478,34 +397,35 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
                 ),
               ),
               // 다시 지도 보기 — 일시적 폴백이라는 신호를 주기 위한 단방향 복귀.
-              InkWell(
-                borderRadius: BorderRadius.circular(999),
-                onTap: () => setState(() => _listOnlyMode = false),
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 6,
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Icon(
-                        Icons.map_outlined,
-                        size: 14,
-                        color: AppColors.textSecondary,
-                      ),
-                      const SizedBox(width: 4),
-                      Text(
-                        '지도 다시 보기',
-                        style: AppTextStyles.caption.copyWith(
+              if (AppConfig.kakaoMapJavaScriptAppKey.isNotEmpty)
+                InkWell(
+                  borderRadius: BorderRadius.circular(999),
+                  onTap: () => setState(() => _listOnlyMode = false),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 6,
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(
+                          Icons.map_outlined,
+                          size: 14,
                           color: AppColors.textSecondary,
-                          fontWeight: FontWeight.w700,
                         ),
-                      ),
-                    ],
+                        const SizedBox(width: 4),
+                        Text(
+                          '지도 다시 보기',
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.textSecondary,
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
-              ),
             ],
           ),
         ),
@@ -514,7 +434,8 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
             padding: const EdgeInsets.all(AppSpacing.md),
             itemCount: points.length,
             separatorBuilder: (_, _) => const SizedBox(height: 10),
-            itemBuilder: (_, i) => _buildMiniCard(points[i], i + 1),
+            itemBuilder: (_, i) =>
+                _buildMiniCard(points[i], i + 1, listMode: true),
           ),
         ),
       ],
@@ -525,14 +446,19 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
   // 탭 시: 카메라가 해당 핀으로 이동되면 좋겠지만, 현재 KakaoMapWidget 이
   // 외부 카메라 제어 API를 제공하지 않아 미구현(별도 티켓으로 분리 권장).
   // 대신 탭 시 추후 식당 상세 라우팅을 붙일 수 있게 GestureDetector 만 준비.
-  Widget _buildMiniCard(RestaurantMapPoint point, int rank) {
+  Widget _buildMiniCard(
+    RestaurantMapPoint point,
+    int rank, {
+    bool listMode = false,
+  }) {
     final primary = Theme.of(context).colorScheme.primary;
     final r = point.restaurant;
     return GestureDetector(
       // onTap 비워둠 — 카메라 이동 API 부재. 추후 라우팅 확장 포인트.
       onTap: () {},
       child: Container(
-        width: 220,
+        width: listMode ? double.infinity : 220,
+        height: listMode ? 96 : null,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
           color: AppColors.surface,
@@ -557,16 +483,13 @@ class _RecommendationMapScreenState extends State<RecommendationMapScreen> {
                   height: 22,
                   alignment: Alignment.center,
                   decoration: BoxDecoration(
-                    color:
-                        rank <= 3 ? primary : AppColors.backgroundGrey,
+                    color: rank <= 3 ? primary : AppColors.backgroundGrey,
                     shape: BoxShape.circle,
                   ),
                   child: Text(
                     '$rank',
                     style: AppTextStyles.caption.copyWith(
-                      color: rank <= 3
-                          ? Colors.white
-                          : AppColors.textSecondary,
+                      color: rank <= 3 ? Colors.white : AppColors.textSecondary,
                       fontWeight: FontWeight.w800,
                     ),
                   ),

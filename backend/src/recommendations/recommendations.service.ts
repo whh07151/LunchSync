@@ -211,11 +211,9 @@ export class RecommendationsService {
           })
         : allRestaurants;
 
-    // 디버그: 반경 필터 결과 추적
+    // 반경 필터 가시성은 유지하되 세션 ID와 정밀 좌표는 기록하지 않는다.
     this.logger.log(
-      `[추천 디버그] session=${sessionId} center=(${centerLat},${centerLng}) ` +
-        `radius=${radiusMeters}m 전체식당=${allRestaurants.length} ` +
-        `반경내=${restaurants.length}`,
+      `RECOMMENDATION_RADIUS_FILTER total=${allRestaurants.length} matched=${restaurants.length}`,
     );
 
     if (restaurants.length === 0) {
@@ -614,9 +612,7 @@ export class RecommendationsService {
 
     if (error || !data) {
       // 폴백: 빈 Map → 호출부에서 가산 0 으로 처리.
-      this.logger.warn(
-        `[v3 B-1] getUserCategoryFrequency user=${userId} error=${error?.message ?? 'no-data'}`,
-      );
+      this.logger.warn('RECOMMENDATION_USER_CATEGORY_LOOKUP_FAILED');
       return result;
     }
 

@@ -55,12 +55,11 @@ Future<void> main() async {
     );
   } catch (e) {
     // 로그만 남기고 진행 — 휴대폰 인증 화면 진입 시 다시 에러 처리
-    debugPrint('Firebase 초기화 실패: $e');
+    debugPrint('[App] FIREBASE_INITIALIZATION_FAILED');
   }
 
   runApp(const ProviderScope(child: LunchSyncApp()));
 }
-
 
 // ─────────────────────────────────────────────────────────
 // LunchSyncApp: 앱 전체를 감싸는 최상위 위젯
@@ -88,7 +87,6 @@ class LunchSyncApp extends ConsumerWidget {
   }
 }
 
-
 // ─────────────────────────────────────────────────────────
 // _RootNavigator: 첫 화면 결정 + 라우팅
 // ─────────────────────────────────────────────────────────
@@ -100,7 +98,6 @@ class _RootNavigator extends ConsumerStatefulWidget {
 }
 
 class _RootNavigatorState extends ConsumerState<_RootNavigator> {
-
   // ── 부팅 단계별 상태 ─────────────────────────────────
   // null  : 확인 중 (로딩 표시)
   // false : 첫 실행 (스플래시 보여줘야 함)
@@ -153,8 +150,7 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
     }
 
     // 1) 영속 토큰 복원 시도
-    final restored =
-        await ref.read(userProvider.notifier).restoreFromStorage();
+    final restored = await ref.read(userProvider.notifier).restoreFromStorage();
 
     // 2) 토큰이 있으면 서버에 검증 요청 → role/status 최신화
     if (restored) {
@@ -198,7 +194,9 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
     final savedJwt = PaymentWebBridge.getSessionItem('ls_jwt');
     if (savedJwt == null || savedJwt.isEmpty) return;
 
-    ref.read(userProvider.notifier).restoreFromSession(
+    ref
+        .read(userProvider.notifier)
+        .restoreFromSession(
           accessToken: savedJwt,
           userId: PaymentWebBridge.getSessionItem('ls_user_id'),
           name: PaymentWebBridge.getSessionItem('ls_user_name'),
@@ -265,9 +263,7 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
                     builder: (ctx3) => ConditionSetupScreen(
                       onComplete: () {
                         Navigator.of(ctx3).pushReplacement(
-                          MaterialPageRoute(
-                            builder: (_) => const HomeScreen(),
-                          ),
+                          MaterialPageRoute(builder: (_) => const HomeScreen()),
                         );
                       },
                     ),
@@ -305,7 +301,6 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
 
   @override
   Widget build(BuildContext context) {
-
     // ── 1. 결제 리턴 우선 ────────────────────────────
     if (_paymentReturn != null) {
       final info = _paymentReturn!;
@@ -402,20 +397,12 @@ class _RootNavigatorState extends ConsumerState<_RootNavigator> {
           ),
         );
       },
-      onBrowse: () {
-        Navigator.of(context).pushReplacement(
-          MaterialPageRoute(
-            builder: (_) => const _PlaceholderScreen(title: '둘러보기 (준비 중)'),
-          ),
-        );
-      },
     );
   }
 }
 
-
 // ─────────────────────────────────────────────────────────
-// _PaymentReturnInfo / _PlaceholderScreen — 기존 그대로
+// _PaymentReturnInfo — 결제 리턴 상태
 // ─────────────────────────────────────────────────────────
 class _PaymentReturnInfo {
   const _PaymentReturnInfo._({
@@ -438,40 +425,21 @@ class _PaymentReturnInfo {
     required String paymentKey,
     required String orderId,
     required int amount,
-  }) =>
-      _PaymentReturnInfo._(
-        isSuccess: true,
-        paymentKey: paymentKey,
-        orderId: orderId,
-        amount: amount,
-      );
+  }) => _PaymentReturnInfo._(
+    isSuccess: true,
+    paymentKey: paymentKey,
+    orderId: orderId,
+    amount: amount,
+  );
 
   factory _PaymentReturnInfo.fail({
     String? code,
     String? message,
     String? orderId,
-  }) =>
-      _PaymentReturnInfo._(
-        isSuccess: false,
-        code: code,
-        message: message,
-        orderId: orderId,
-      );
-}
-
-
-class _PlaceholderScreen extends StatelessWidget {
-  const _PlaceholderScreen({required this.title});
-
-  final String title;
-
-  @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(title: Text(title)),
-      body: Center(
-        child: Text(title, style: AppTextStyles.bodyLarge),
-      ),
-    );
-  }
+  }) => _PaymentReturnInfo._(
+    isSuccess: false,
+    code: code,
+    message: message,
+    orderId: orderId,
+  );
 }

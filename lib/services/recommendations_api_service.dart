@@ -121,7 +121,7 @@ class RecommendationsApiService {
           final penalty = metadata['recentPenalty'];
           if (penalty is Map && penalty.isNotEmpty) {
             debugPrint(
-              '[RecommendationsApiService] recentPenalty=$penalty (CU-21)',
+              '[RecommendationsApiService] RECENT_PENALTY_APPLIED_${penalty.length}',
             );
           }
         }
@@ -132,7 +132,7 @@ class RecommendationsApiService {
       }
       return [];
     } catch (e) {
-      debugPrint('[RecommendationsApiService] getRecommendations 에러: $e');
+      debugPrint('[RecommendationsApiService] GET_RECOMMENDATIONS_FAILED');
       return [];
     }
   }

@@ -161,12 +161,11 @@ class FriendsApiService {
       }
 
       debugPrint(
-        '[FriendsApiService] addFriend 실패: '
-        '${response.statusCode} ${response.body}',
+        '[FriendsApiService] ADD_FRIEND_HTTP_${response.statusCode}',
       );
       return const AddFriendResult.error();
     } catch (e) {
-      debugPrint('[FriendsApiService] addFriend 에러: $e');
+      debugPrint('[FriendsApiService] ADD_FRIEND_FAILED');
       return const AddFriendResult.error();
     }
   }
@@ -199,7 +198,7 @@ class FriendsApiService {
       );
       return const [];
     } catch (e) {
-      debugPrint('[FriendsApiService] listFriends 에러: $e');
+      debugPrint('[FriendsApiService] LIST_FRIENDS_FAILED');
       return const [];
     }
   }
@@ -231,7 +230,7 @@ class FriendsApiService {
       );
       return false;
     } catch (e) {
-      debugPrint('[FriendsApiService] removeFriend 에러: $e');
+      debugPrint('[FriendsApiService] REMOVE_FRIEND_FAILED');
       return false;
     }
   }

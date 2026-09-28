@@ -40,6 +40,11 @@ export interface RestaurantResult {
   posToken: string;
 }
 
+type OwnedRestaurantRow = Omit<RestaurantResult, 'imageUrl' | 'posToken'> & {
+  image_url: string | null;
+  owner_user_id: string | null;
+};
+
 @Injectable()
 export class PosRestaurantsService {
   constructor(
@@ -47,15 +52,16 @@ export class PosRestaurantsService {
     private readonly jwt: JwtService,
   ) {}
 
-  async create(ownerUserId: string, dto: CreateRestaurantDto): Promise<RestaurantResult> {
-    const { data: existing } = await this.supabase.client
-      .from('restaurants')
-      .select('id')
-      .eq('owner_user_id', ownerUserId)
-      .maybeSingle();
+  async create(
+    ownerUserId: string,
+    dto: CreateRestaurantDto,
+  ): Promise<RestaurantResult> {
+    const existing = await this.findOwnedRestaurant(ownerUserId);
 
     if (existing) {
-      throw new ConflictException('이미 등록된 식당이 있습니다. 기존 식당을 확인해 주세요.');
+      throw new ConflictException(
+        '이미 등록된 식당이 있습니다. 기존 식당을 확인해 주세요.',
+      );
     }
 
     const { data, error } = await this.supabase.client
@@ -74,10 +80,10 @@ export class PosRestaurantsService {
       .single();
 
     if (error || !data) {
-      throw new Error(`식당 생성 실패: ${error?.message}`);
+      throw new Error('POS_RESTAURANT_CREATE_FAILED');
     }
 
-    const posToken = this.jwt.sign({ sub: data.id, type: 'POS' });
+    const posToken = this.issueOwnerPosToken(data.id, ownerUserId);
 
     return {
       id: data.id,
@@ -92,16 +98,10 @@ export class PosRestaurantsService {
   }
 
   async getMyRestaurant(ownerUserId: string): Promise<RestaurantResult> {
-    const { data, error } = await this.supabase.client
-      .from('restaurants')
-      .select('id, name, category, address, lat, lng, image_url')
-      .eq('owner_user_id', ownerUserId)
-      .maybeSingle();
-
-    if (error) throw new Error(`식당 조회 실패: ${error.message}`);
+    const data = await this.findOwnedRestaurant(ownerUserId);
     if (!data) throw new NotFoundException('등록된 식당이 없습니다.');
 
-    const posToken = this.jwt.sign({ sub: data.id, type: 'POS' });
+    const posToken = this.issueOwnerPosToken(data.id, ownerUserId);
 
     return {
       id: data.id,
@@ -113,5 +113,98 @@ export class PosRestaurantsService {
       imageUrl: data.image_url,
       posToken,
     };
+  }
+
+  private async findOwnedRestaurant(
+    ownerUserId: string,
+  ): Promise<OwnedRestaurantRow | null> {
+    const columns =
+      'id, name, category, address, lat, lng, image_url, owner_user_id';
+    const { data: canonical, error: canonicalError } =
+      await this.supabase.client
+        .from('restaurants')
+        .select(columns)
+        .eq('owner_user_id', ownerUserId)
+        .maybeSingle();
+
+    if (canonicalError) {
+      throw new Error('POS_RESTAURANT_LOOKUP_FAILED');
+    }
+    if (canonical) return canonical as OwnedRestaurantRow;
+
+    const { data: owner, error: ownerError } = await this.supabase.client
+      .from('users')
+      .select('restaurant_id')
+      .eq('id', ownerUserId)
+      .maybeSingle();
+    if (ownerError) throw new Error('POS_RESTAURANT_OWNER_LOOKUP_FAILED');
+    if (!owner?.restaurant_id) return null;
+
+    const { data: legacy, error: legacyError } = await this.supabase.client
+      .from('restaurants')
+      .select(columns)
+      .eq('id', owner.restaurant_id)
+      .maybeSingle();
+    if (legacyError) throw new Error('POS_RESTAURANT_LEGACY_LOOKUP_FAILED');
+    if (!legacy) return null;
+    if (legacy.owner_user_id != null && legacy.owner_user_id !== ownerUserId) {
+      return null;
+    }
+
+    if (legacy.owner_user_id == null) {
+      const { data: competingLegacyOwner, error: legacyMappingError } =
+        await this.supabase.client
+          .from('users')
+          .select('id')
+          .eq('restaurant_id', legacy.id)
+          .neq('id', ownerUserId)
+          .limit(1)
+          .maybeSingle();
+      if (legacyMappingError) {
+        throw new Error(
+          `매장 소유권 매핑 조회 실패: ${legacyMappingError.message}`,
+        );
+      }
+      if (competingLegacyOwner) {
+        throw new ConflictException(
+          '여러 계정에 연결된 기존 매장입니다. 관리자에게 소유권 정리를 요청해주세요.',
+        );
+      }
+
+      // legacy users.restaurant_id 매핑을 토큰 발급 전에 canonical 소유권으로
+      // 원자 승격한다. 그래야 이후 POS 요청이 현재 owner/status를 재검증할 수 있다.
+      const { data: claimed, error: claimError } = await this.supabase.client
+        .from('restaurants')
+        .update({ owner_user_id: ownerUserId })
+        .eq('id', legacy.id)
+        .is('owner_user_id', null)
+        .select(columns)
+        .maybeSingle();
+      if (claimError) {
+        throw new Error('POS_RESTAURANT_OWNERSHIP_SYNC_FAILED');
+      }
+      if (!claimed) {
+        // 다른 요청이 먼저 소유권을 정했다면 잘못된 POS 토큰을 발급하지 않는다.
+        return null;
+      }
+      return claimed as OwnedRestaurantRow;
+    }
+
+    return legacy as OwnedRestaurantRow;
+  }
+
+  private issueOwnerPosToken(
+    restaurantId: string,
+    ownerUserId: string,
+  ): string {
+    return this.jwt.sign(
+      {
+        sub: restaurantId,
+        type: 'POS',
+        ownerUserId,
+        authMode: 'OWNER',
+      },
+      { expiresIn: '8h' },
+    );
   }
 }

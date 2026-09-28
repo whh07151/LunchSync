@@ -10,7 +10,6 @@ import '../../providers/session_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/sessions_api_service.dart';
 import '../../services/invitations_api_service.dart';
-import '../../services/crawl_api_service.dart';
 import '../../services/geolocation_service.dart';
 import 'session_lobby_screen.dart';
 
@@ -81,7 +80,6 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
 
   static const _sessionsApi    = SessionsApiService();
   static const _invitationsApi = InvitationsApiService();
-  static const _crawlApi       = CrawlApiService();
   static const _geoService     = GeolocationService();
 
   @override
@@ -171,7 +169,7 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
     }
 
     setState(() => _isLoading = true);
-    debugPrint('[SessionCreate] 세션 생성 시작 — name=$name, radius=$radius, budget=$budget');
+    debugPrint('[SessionCreate] SESSION_CREATE_STARTED');
 
     try {
       // ── 3. 호스트 GPS 조회 (외부 안전망 타임아웃 적용) ──
@@ -193,10 +191,13 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
           debugPrint('[SessionCreate] GPS 조회 ${_kGpsLookupTimeout.inSeconds}초 타임아웃 — null로 폴백');
           return null;
         });
-        debugPrint('[SessionCreate] GPS 조회 결과: '
-            '${hostPos == null ? "null(미확보)" : "${hostPos.latitude},${hostPos.longitude}"}');
-      } catch (e) {
-        debugPrint('[SessionCreate] GPS 조회 예외 — null로 폴백: $e');
+        debugPrint(
+          hostPos == null
+              ? '[SessionCreate] GPS_UNAVAILABLE'
+              : '[SessionCreate] GPS_AVAILABLE',
+        );
+      } catch (_) {
+        debugPrint('[SessionCreate] GPS_LOOKUP_FAILED');
         hostPos = null;
       }
 
@@ -221,7 +222,7 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
         _showError('세션을 만들지 못했어요. 잠시 후 다시 시도해봐요');
         return;
       }
-      debugPrint('[SessionCreate] 세션 생성 성공: id=${session.id}');
+      debugPrint('[SessionCreate] SESSION_CREATE_SUCCEEDED');
 
       // ── 5. 초대코드 생성 ──────────────────────────────
       debugPrint('[SessionCreate] POST /invitations 호출');
@@ -237,26 +238,15 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
         _showError('초대 코드를 만들지 못했어요. 다시 시도해봐요');
         return;
       }
-      debugPrint('[SessionCreate] 초대코드 생성 성공: ${invitation.inviteCode}');
+      debugPrint('[SessionCreate] INVITATION_CREATE_SUCCEEDED');
 
-      // ── 6. 주변 식당 크롤링 트리거 (비동기, 실패해도 흐름에 영향 없음) ──
-      // 호스트의 GPS를 기준으로 반경 내 실제 식당을 DB에 채운다.
-      // 추천 엔진은 이 데이터를 기반으로 점수화.
-      // 결과를 기다리지 않고 fire-and-forget — 로비 진입 후 백그라운드 완료.
-      // 위의 세션 생성 단계에서 이미 얻어둔 hostPos를 재사용해 GPS 중복 조회 방지.
-      _triggerCrawlInBackground(
-        token: token,
-        radiusMeters: radius,
-        hostPos: hostPos,
-      );
-
-      // ── 7. 세션 생성 완료 → sessionProvider 초기화 후 로비 진입 ──
+      // ── 6. 세션 생성 완료 → sessionProvider 초기화 후 로비 진입 ──
       // selectedMembers는 이미 역할을 다했으므로 초기화.
       // clearSession에서 예외가 나도 라우팅은 진행되도록 try로 보호.
       try {
         ref.read(sessionProvider.notifier).clearSession();
-      } catch (e) {
-        debugPrint('[SessionCreate] clearSession 예외(무시): $e');
+      } catch (_) {
+        debugPrint('[SessionCreate] SESSION_STATE_CLEAR_FAILED');
       }
 
       if (!mounted) return;
@@ -270,12 +260,11 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
           ),
         ),
       );
-    } catch (e, st) {
+    } catch (_) {
       // ── 예외 안전망 ─────────────────────────────────
       // API 서비스 내부에서 잡지 못한 예외나 라우팅/Provider 단계의 예외가
       // 여기로 올라오면 사용자에게 안내하고 로딩 상태를 반드시 해제한다.
-      debugPrint('[SessionCreate] 예기치 못한 예외: $e');
-      debugPrint('[SessionCreate] 스택: $st');
+      debugPrint('[SessionCreate] SESSION_CREATE_UNEXPECTED_FAILURE');
       if (mounted) {
         _showError('세션을 만드는 중 문제가 생겼어요. 다시 시도해봐요');
       }
@@ -287,29 +276,6 @@ class _SessionCreateScreenState extends ConsumerState<SessionCreateScreen> {
         setState(() => _isLoading = false);
       }
     }
-  }
-
-  // ── 주변 식당 크롤링을 백그라운드로 실행 ──────────────
-  // GPS 권한 거부 / 에뮬레이터 미설정 시 조용히 스킵.
-  // 성공하면 주변 실제 식당 데이터가 DB에 채워져 추천 엔진에서 활용됨.
-  // hostPos: 세션 생성 시 이미 얻어둔 좌표를 재사용하기 위한 파라미터.
-  //          null이면 여기서 한 번 더 조회 시도.
-  void _triggerCrawlInBackground({
-    required String token,
-    int? radiusMeters,
-    Position? hostPos,
-  }) {
-    // async 함수를 await 없이 호출 → fire-and-forget
-    () async {
-      final pos = hostPos ?? await _geoService.getCurrentPosition();
-      if (pos == null) return; // GPS 실패 — 기존 식당으로 폴백
-      await _crawlApi.crawlRestaurants(
-        accessToken: token,
-        lat: pos.latitude,
-        lng: pos.longitude,
-        radius: radiusMeters ?? _kDefaultRadius,
-      );
-    }();
   }
 
   // ── 에러 스낵바 헬퍼 ─────────────────────────────────

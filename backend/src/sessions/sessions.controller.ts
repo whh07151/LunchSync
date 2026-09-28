@@ -27,6 +27,7 @@ import {
 import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
+import { SessionAccessService } from '../auth/session-access.service';
 import { SessionsService } from './sessions.service';
 import { ChemistryService } from './chemistry.service';
 
@@ -119,6 +120,7 @@ export class SessionsController {
   constructor(
     private readonly sessionsService: SessionsService,
     private readonly chemistryService: ChemistryService,
+    private readonly sessionAccess: SessionAccessService,
   ) {}
 
   // ── GET /api/sessions/:id/chemistry ───────────────────
@@ -137,7 +139,11 @@ export class SessionsController {
   // 안전망으로 함께 둔다.
   @SkipThrottle({ default: true })
   @Get(':id/chemistry')
-  async getChemistry(@Param('id') id: string) {
+  async getChemistry(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.sessionAccess.assertMember(id, req.user.userId);
     const result = await this.chemistryService.getChemistry(id);
     return { success: true, data: result };
   }
@@ -165,7 +171,11 @@ export class SessionsController {
   //   글로벌 throttler 한도(분당 100) 부담을 줄이기 위해 적용.
   @SkipThrottle({ default: true })
   @Get(':id/invite')
-  async getInviteInfo(@Param('id') id: string) {
+  async getInviteInfo(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.sessionAccess.assertMember(id, req.user.userId);
     const result = await this.sessionsService.getInviteInfo(id);
     return { success: true, data: result };
   }
@@ -192,7 +202,11 @@ export class SessionsController {
 
   // ── GET /api/sessions/:id ─────────────────────────────
   @Get(':id')
-  async getSessionById(@Param('id') id: string) {
+  async getSessionById(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.sessionAccess.assertMember(id, req.user.userId);
     const result = await this.sessionsService.getSessionById(id);
     return { success: true, data: result };
   }
@@ -231,7 +245,11 @@ export class SessionsController {
 
   @SkipThrottle({ default: true, auth: true, signup: true })
   @Get(':id/members')
-  async getSessionMembers(@Param('id') id: string) {
+  async getSessionMembers(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+  ) {
+    await this.sessionAccess.assertMember(id, req.user.userId);
     const result = await this.sessionsService.getSessionMembers(id);
     return { success: true, data: result };
   }

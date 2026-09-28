@@ -1,26 +1,36 @@
 // ══════════════════════════════════════════════════════════
-// 파일 역할: 앱 민감 설정값 보관
+// 파일 역할: 클라이언트 공개 식별자와 앱 기본 설정값 보관
 //
-// ⚠️ 주의: 이 파일은 .gitignore에 등록되어 있습니다.
-//    GitHub 등 공개 저장소에 절대 올리지 마세요.
-//    팀원에게는 카카오 개발자 콘솔에서 직접 앱 키를 확인하도록 안내하세요.
+// 카카오 Native/JavaScript 앱 키는 클라이언트 바이너리에 포함되는 공개 식별자입니다.
+// REST API 키와 서버 비밀값은 이 파일에 넣지 말고 backend/.env에서 관리합니다.
 //
 // ══════════════════════════════════════════════════════════
+
+import 'package:flutter/foundation.dart';
 
 class AppConfig {
   AppConfig._(); // 인스턴스 생성 방지 (모든 값을 static으로만 사용)
 
   /// 카카오 Native 앱 키 (Android/iOS)
   /// https://developers.kakao.com → 내 애플리케이션 → 앱 키 → Native 앱 키
-  static const String kakaoNativeAppKey = '1a8f618f7a89644f824c091c4c9c085a';
+  static const String kakaoNativeAppKey = '95889654e8fdb27056189f4579a78116';
 
   /// 카카오 JavaScript 앱 키 (Web/Chrome)
   /// https://developers.kakao.com → 내 애플리케이션 → 앱 키 → JavaScript 앱 키
-  static const String kakaoJavaScriptAppKey = '4873cbbe1f8110a38bb487677405a6ac';
+  static const String kakaoJavaScriptAppKey =
+      '3bc7c322f80d6ea1b8dc8eda297c04f3';
+
+  // Maps use a different Kakao app from Login. An absent map key must remain
+  // absent instead of silently using the Login app (which has Maps disabled).
+  static const String _kakaoMapJsKeyOverride = String.fromEnvironment(
+    'KAKAO_MAP_JS_KEY',
+    defaultValue: '',
+  );
+  static String get kakaoMapJavaScriptAppKey => _kakaoMapJsKeyOverride;
 
   /// LunchSync 백엔드 서버 기본 URL
   ///
-  /// 🟢 현재 기본값: AWS EC2 배포 서버 (http://13.125.165.80:3000/api)
+  /// 기본값은 로컬 서버입니다. 배포 빌드에는 HTTPS BACKEND_URL이 필요합니다.
   ///
   /// 로컬 개발 시 dart-define 으로 오버라이드:
   ///   에뮬레이터: --dart-define=BACKEND_HOST=10.0.2.2
@@ -29,13 +39,13 @@ class AppConfig {
 
   // ── 백엔드 URL 빌드 환경별 분기 ──────────────────────────
   //
-  // 우선순위: BACKEND_URL > BACKEND_HOST > 기본값(EC2)
+  // 우선순위: BACKEND_URL > BACKEND_HOST > 플랫폼별 로컬 주소
   //
   //   1) BACKEND_URL=<full url>      — 완전 URL 직접 지정 (HTTPS도 OK)
   //      예) --dart-define=BACKEND_URL=http://localhost:3000/api
   //   2) BACKEND_HOST=<IP or domain> — 호스트만 지정 (포트 3000, HTTP 자동)
   //      예) --dart-define=BACKEND_HOST=10.0.2.2
-  //   3) 둘 다 미지정                — EC2 기본값 사용
+  //   3) 둘 다 미지정                — 로컬 주소 사용 (debug/profile 전용)
 
   static const String _backendUrlOverride = String.fromEnvironment(
     'BACKEND_URL',
@@ -47,14 +57,41 @@ class AppConfig {
     defaultValue: '',
   );
 
-  // 우선순위: BACKEND_URL > BACKEND_HOST(http:3000) > DuckDNS 도메인(HTTPS, 기본)
-  //   2026-06-03: 기본값을 직접 IP(13.125.165.80) → DuckDNS 도메인으로 변경.
-  //   EC2 퍼블릭 IP가 바뀌어도(Stop/Start 등) 도메인은 그대로라 앱 재설정 불필요.
-  static const String backendBaseUrl = _backendUrlOverride.length > 0
-      ? _backendUrlOverride
-      : (_backendHost.length > 0
-          ? 'http://$_backendHost:3000/api'
-          : 'https://lunchsync-api.duckdns.org/api');
+  // 로컬 기본값: Android emulator는 호스트 PC를 10.0.2.2로 접근한다.
+  // 웹/데스크톱은 localhost. 실기기는 BACKEND_URL로 PC 주소를 지정한다.
+  // 배포할 때는 승인된 HTTPS BACKEND_URL을 빌드에 명시한다.
+  static String get backendBaseUrl => resolveBackendUrl(
+    urlOverride: _backendUrlOverride,
+    hostOverride: _backendHost,
+    android: !kIsWeb && defaultTargetPlatform == TargetPlatform.android,
+    release: kReleaseMode,
+  );
+
+  static String resolveBackendUrl({
+    String urlOverride = '',
+    String hostOverride = '',
+    bool android = false,
+    bool release = false,
+  }) {
+    if (release) {
+      final uri = Uri.tryParse(urlOverride);
+      if (uri == null ||
+          uri.scheme != 'https' ||
+          uri.host.isEmpty ||
+          uri.userInfo.isNotEmpty ||
+          uri.hasQuery ||
+          uri.hasFragment) {
+        throw StateError('Release requires an explicit HTTPS BACKEND_URL.');
+      }
+    }
+    return urlOverride.isNotEmpty
+        ? urlOverride
+        : (hostOverride.isNotEmpty
+              ? 'http://$hostOverride:3000/api'
+              : (android
+                    ? 'http://10.0.2.2:3000/api'
+                    : 'http://localhost:3000/api'));
+  }
 
   // ══════════════════════════════════════════════════════════
   // 토스페이먼츠 (결제위젯 v2)

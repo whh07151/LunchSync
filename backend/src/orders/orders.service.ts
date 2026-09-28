@@ -3,7 +3,10 @@ import {
   NotFoundException,
   ForbiddenException,
   BadRequestException,
+  ConflictException,
   InternalServerErrorException,
+  Logger,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
@@ -28,47 +31,93 @@ export interface UpdateOrderStatusDto {
   status: string;
 }
 
+type NormalizedPaymentMethod = 'TOSS' | 'CARD' | 'CASH' | 'SIMULATE';
+
 @Injectable()
 export class OrdersService {
+  private readonly logger = new Logger(OrdersService.name);
+
   constructor(private readonly supabase: SupabaseService) {}
 
   // ── POST /orders — 주문 생성 (CU-17 + CORE-09) ────────
   async createOrder(userId: string, dto: CreateOrderDto) {
+    const paymentMethod = this.normalizePaymentMethod(dto.paymentMethod);
+    this.assertPaymentMethodAllowed(paymentMethod);
+    const winnerRestaurantId = await this.getOrderSessionWinner(
+      userId,
+      dto.sessionId,
+    );
+
     // 1. 메뉴 아이템 가격 조회 + 충돌 검증 (CORE-09)
     const menuItemIds = dto.items.map((i) => i.menuItemId);
 
     const { data: menuItems, error: menuError } = await this.supabase.client
       .from('menu_items')
-      .select('id, name, price, restaurant_id')
+      .select('id, name, price, restaurant_id, source, is_available')
       .in('id', menuItemIds);
 
     if (menuError || !menuItems || menuItems.length === 0) {
       throw new NotFoundException('메뉴 아이템을 찾을 수 없습니다.');
+    }
+    if (menuItems.some((menu) =>
+      menu.source !== 'MANUAL' || menu.is_available !== true,
+    )) {
+      throw new BadRequestException('등록된 판매 중 메뉴만 주문할 수 있어요.');
     }
 
     // CORE-09: 메뉴 충돌 검증 — 모든 아이템이 같은 식당인지 확인
     const restaurantIds = new Set(menuItems.map((m) => m.restaurant_id));
     if (restaurantIds.size > 1) {
       // BadRequestException: 클라이언트 입력 오류 → 400 응답
-      throw new BadRequestException('서로 다른 식당의 메뉴를 동시에 주문할 수 없습니다.');
+      throw new BadRequestException(
+        '서로 다른 식당의 메뉴를 동시에 주문할 수 없습니다.',
+      );
     }
     // orders.restaurant_id 컬럼에 들어갈 단일 값
     const restaurantId = menuItems[0].restaurant_id as string;
+    if (restaurantId !== winnerRestaurantId) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_SESSION_RESTAURANT_MISMATCH',
+        message: '세션에서 선택한 식당의 메뉴만 주문할 수 있어요.',
+      });
+    }
 
     // 2026-05-31 자기매장 주문 차단 — 사장이 본인 가게에 주문하는 비정상 흐름 차단.
     //   배경: hyunho 같은 시연 계정이 role 토글로 사장↔손님을 오갈 때, 본인이
     //         운영하는 가게에 주문이 들어가면 사장 화면에서 자기 주문을 받는
     //         이상한 흐름이 됨. 일반 사장 계정도 OWNER+APPROVED 라면 자기 가게
     //         주문은 금지하는 게 비즈니스 룰.
-    const { data: orderingUser } = await this.supabase.client
-      .from('users')
-      .select('role, restaurant_id')
-      .eq('id', userId)
-      .maybeSingle();
-    if (
+    const { data: orderingUser, error: orderingUserError } =
+      await this.supabase.client
+        .from('users')
+        .select('role, restaurant_id')
+        .eq('id', userId)
+        .maybeSingle();
+
+    const { data: canonicalOwnedRestaurant, error: ownershipLookupError } =
+      await this.supabase.client
+        .from('restaurants')
+        .select('id')
+        .eq('id', restaurantId)
+        .eq('owner_user_id', userId)
+        .maybeSingle();
+
+    if (orderingUserError || ownershipLookupError) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'ORDER_OWNERSHIP_LOOKUP_FAILED',
+        message:
+          '매장 소유권을 확인하지 못했습니다. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+
+    const isLegacyOwner =
       orderingUser?.role === 'OWNER' &&
-      orderingUser?.restaurant_id === restaurantId
-    ) {
+      orderingUser?.restaurant_id === restaurantId;
+    const isCanonicalOwner = canonicalOwnedRestaurant?.id === restaurantId;
+    if (isLegacyOwner || isCanonicalOwner) {
       throw new BadRequestException(
         '본인이 운영하는 매장에는 주문할 수 없어요. 손님 계정으로 로그인하거나 다른 매장을 선택해주세요.',
       );
@@ -77,12 +126,18 @@ export class OrdersService {
     // 2. 총 금액 계산
     const menuMap = new Map(menuItems.map((m) => [m.id, m]));
     let totalPrice = 0;
-    const orderItems: { menuItemId: string; quantity: number; price: number }[] = [];
+    const orderItems: {
+      menuItemId: string;
+      quantity: number;
+      price: number;
+    }[] = [];
 
     for (const item of dto.items) {
       const menu = menuMap.get(item.menuItemId);
       if (!menu) {
-        throw new NotFoundException(`메뉴 아이템(${item.menuItemId})을 찾을 수 없습니다.`);
+        throw new NotFoundException(
+          `메뉴 아이템(${item.menuItemId})을 찾을 수 없습니다.`,
+        );
       }
       const itemPrice = menu.price * item.quantity;
       totalPrice += itemPrice;
@@ -93,47 +148,38 @@ export class OrdersService {
       });
     }
 
-    // 3. orders 테이블 INSERT
-    // restaurant_id 는 NOT NULL 제약이 있어 반드시 포함해야 함
-    // payment_method: 사용자가 선택한 결제수단 그대로 저장 → 매출 통계 분리에 사용
-    const paymentMethod = this.normalizePaymentMethod(dto.paymentMethod);
-    const { data: order, error: orderError } = await this.supabase.client
-      .from('orders')
-      .insert({
-        session_id: dto.sessionId,
-        user_id: userId,
-        restaurant_id: restaurantId,
-        total_price: totalPrice,
-        status: 'PENDING',
-        payment_method: paymentMethod,
-      })
-      .select('id, status, total_price, created_at')
-      .single();
+    // 3. orders + order_items 원자적 생성
+    // PostgreSQL 함수 안에서 어느 INSERT든 실패하면 주문 전체가 롤백된다.
+    const { data: orderRaw, error: orderError } =
+      await this.supabase.client.rpc('create_order_with_items', {
+        p_session_id: dto.sessionId,
+        p_user_id: userId,
+        p_restaurant_id: restaurantId,
+        p_total_price: totalPrice,
+        p_payment_method: paymentMethod,
+        p_items: orderItems,
+      });
 
-    if (orderError || !order) {
-      // InternalServerErrorException: DB 쓰기 실패 → 500 응답 (운영 모니터링 대상)
-      throw new InternalServerErrorException(
-        `주문 생성 실패: ${orderError?.message}`,
-      );
+    if (orderError) {
+      this.throwMappedOrderSessionError(orderError.message);
+    }
+    if (!orderRaw) {
+      this.logger.error('ORDER_CREATE_PERSIST_FAILED');
+      throw new InternalServerErrorException('주문을 생성할 수 없습니다.');
     }
 
-    // 4. order_items 테이블 INSERT
-    const orderItemsData = orderItems.map((item) => ({
-      order_id: order.id,
-      menu_item_id: item.menuItemId,
-      quantity: item.quantity,
-      price: item.price,
-    }));
+    // RPC 응답은 JSON 객체이므로 필요한 공개 응답 필드만 좁혀 사용한다.
+    const order = orderRaw as unknown as {
+      id: string;
+      createdAt?: string;
+      created_at?: string;
+    };
 
-    await this.supabase.client
-      .from('order_items')
-      .insert(orderItemsData);
-
-    // 5. CORE-10: 결제 처리 (현재는 가상 결제 시뮬레이션)
+    // 4. CORE-10: 결제 처리 (현재는 가상 결제 시뮬레이션)
     const paymentResult = await this.processPayment(
       order.id,
       totalPrice,
-      dto.paymentMethod,
+      paymentMethod,
     );
 
     return {
@@ -141,42 +187,160 @@ export class OrdersService {
       sessionId: dto.sessionId,
       status: paymentResult.paid ? 'PAID' : 'PENDING',
       totalPrice,
-      paymentMethod: dto.paymentMethod,
+      paymentMethod,
       paymentKey: paymentResult.paymentKey,
       items: orderItems,
-      createdAt: order.created_at,
+      createdAt: order.createdAt ?? order.created_at,
     };
+  }
+
+  private async getOrderSessionWinner(
+    userId: string,
+    sessionId: string,
+  ): Promise<string> {
+    const { data: membership, error: membershipError } =
+      await this.supabase.client
+        .from('session_members')
+        .select('user_id')
+        .eq('session_id', sessionId)
+        .eq('user_id', userId)
+        .maybeSingle();
+
+    if (membershipError) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'ORDER_SESSION_MEMBERSHIP_LOOKUP_FAILED',
+        message: '세션 참여 정보를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    if (!membership) {
+      this.throwOrderSessionNotFound();
+    }
+
+    const { data: session, error: sessionError } = await this.supabase.client
+      .from('sessions')
+      .select('status, winner_restaurant_id')
+      .eq('id', sessionId)
+      .maybeSingle();
+
+    if (sessionError) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'ORDER_SESSION_LOOKUP_FAILED',
+        message: '세션 상태를 확인하지 못했습니다. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    if (!session) {
+      this.throwOrderSessionNotFound();
+    }
+    if (session.status !== 'ORDERED' || !session.winner_restaurant_id) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_SESSION_NOT_READY',
+        message: '식당 선택이 완료된 세션에서만 주문할 수 있어요.',
+      });
+    }
+
+    return session.winner_restaurant_id as string;
+  }
+
+  private throwOrderSessionNotFound(): never {
+    throw new NotFoundException({
+      statusCode: 404,
+      code: 'ORDER_SESSION_NOT_FOUND',
+      message: '세션을 찾을 수 없습니다.',
+    });
+  }
+
+  private throwMappedOrderSessionError(message: string): never {
+    if (
+      message.includes('ORDER_SESSION_NOT_FOUND') ||
+      message.includes('ORDER_SESSION_MEMBER_REQUIRED')
+    ) {
+      this.throwOrderSessionNotFound();
+    }
+    if (message.includes('ORDER_SESSION_NOT_READY')) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_SESSION_NOT_READY',
+        message: '식당 선택이 완료된 세션에서만 주문할 수 있어요.',
+      });
+    }
+    if (message.includes('ORDER_SESSION_RESTAURANT_MISMATCH')) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_SESSION_RESTAURANT_MISMATCH',
+        message: '세션에서 선택한 식당의 메뉴만 주문할 수 있어요.',
+      });
+    }
+
+    this.logger.error('ORDER_CREATE_PERSIST_FAILED');
+    throw new InternalServerErrorException('주문을 생성할 수 없습니다.');
   }
 
   // ── 결제수단 정규화 ────────────────────────────────
   // 클라이언트가 보낸 다양한 표기를 DB ENUM(TOSS/CARD/CASH/SIMULATE) 으로 매핑.
-  // 모르는 값은 SIMULATE 로 기본 처리 (캡스톤 시연 안전 폴백).
-  private normalizePaymentMethod(raw?: string): 'TOSS' | 'CARD' | 'CASH' | 'SIMULATE' {
-    const v = (raw ?? '').toUpperCase();
-    if (v === 'TOSS' || v === 'TRANSFER' || v === 'KAKAOPAY' || v === 'BANK') return 'TOSS';
+  // 알 수 없는 값은 결제 완료 우회로 바꾸지 않고 명시적으로 거절한다.
+  private normalizePaymentMethod(raw?: string): NormalizedPaymentMethod {
+    const v = (raw ?? '').trim().toUpperCase();
+    if (v === 'TOSS' || v === 'TRANSFER' || v === 'KAKAOPAY' || v === 'BANK')
+      return 'TOSS';
     if (v === 'CARD') return 'CARD';
     if (v === 'CASH') return 'CASH';
-    return 'SIMULATE';
+    if (v === 'SIMULATE') return 'SIMULATE';
+    throw new BadRequestException('지원하지 않는 결제 방식입니다.');
+  }
+
+  private assertPaymentMethodAllowed(method: NormalizedPaymentMethod): void {
+    const simulationExplicitlyEnabled =
+      process.env.ALLOW_SIMULATED_PAYMENTS === 'true' &&
+      process.env.NODE_ENV !== 'production';
+    if (method === 'SIMULATE' && !simulationExplicitlyEnabled) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'SIMULATED_PAYMENT_DISABLED',
+        message: '모의 결제가 명시적으로 허용되지 않은 환경입니다.',
+      });
+    }
   }
 
   // ── CORE-10: 결제 처리 레이어 ─────────────────────────
-  // SIMULATE/CASH: 서버에서 즉시 PAID 처리 (테스트/현금 결제)
+  // SIMULATE: 비운영 + ALLOW_SIMULATED_PAYMENTS=true 에서만 즉시 PAID
+  // CASH/CARD/TOSS: 외부 승인 또는 POS 수납 확인 전까지 PENDING 유지
   // TOSS: 프론트가 결제위젯 v2로 승인 요청 → 성공 시
   //       /api/payments/confirm 엔드포인트에서 최종 승인 처리
   //       (이 단계에서는 주문만 PENDING 상태로 둔다)
   private async processPayment(
     orderId: string,
     _amount: number,
-    method: string,
+    method: NormalizedPaymentMethod,
   ): Promise<{ paid: boolean; paymentKey: string | null }> {
-    if (method === 'SIMULATE' || method === 'CASH') {
+    if (method === 'SIMULATE') {
       // 가상 결제: 즉시 성공 처리
       const paymentKey = `sim_${orderId}_${Date.now()}`;
 
-      await this.supabase.client
-        .from('orders')
-        .update({ status: 'PAID', payment_key: paymentKey })
-        .eq('id', orderId);
+      const { data: paidOrder, error: paymentUpdateError } =
+        await this.supabase.client
+          .from('orders')
+          .update({ status: 'PAID', payment_key: paymentKey })
+          .eq('id', orderId)
+          .eq('status', 'PENDING')
+          .select('id, status, payment_key')
+          .single();
+
+      if (
+        paymentUpdateError ||
+        !paidOrder ||
+        paidOrder.status !== 'PAID' ||
+        paidOrder.payment_key !== paymentKey
+      ) {
+        this.logger.error('ORDER_PAYMENT_STATUS_PERSIST_FAILED');
+        throw new InternalServerErrorException(
+          '결제 상태를 저장할 수 없습니다.',
+        );
+      }
 
       return { paid: true, paymentKey };
     }
@@ -289,7 +453,9 @@ export class OrdersService {
     // 주문 아이템 조회 — 2026-05-16: menu_items.prep_time_minutes 도 함께 가져와 ETA 계산
     const { data: items } = await this.supabase.client
       .from('order_items')
-      .select('id, menu_item_id, quantity, price, menu_items(name, prep_time_minutes)')
+      .select(
+        'id, menu_item_id, quantity, price, menu_items(name, prep_time_minutes)',
+      )
       .eq('order_id', orderId);
 
     // 2026-05-16 배민 패턴 — 예상 픽업 시각 계산
@@ -331,8 +497,10 @@ export class OrdersService {
       // 2026-05-15 별점/리뷰 — 손님 어플이 "이미 작성된 리뷰" 인지 판단해
       // 별점 카드 노출 여부를 결정하기 위해 함께 내려보낸다.
       restaurantId: (order as { restaurant_id?: string }).restaurant_id ?? null,
-      reviewScore: (order as { review_score?: number | null }).review_score ?? null,
-      reviewText: (order as { review_text?: string | null }).review_text ?? null,
+      reviewScore:
+        (order as { review_score?: number | null }).review_score ?? null,
+      reviewText:
+        (order as { review_text?: string | null }).review_text ?? null,
       reviewAt: (order as { review_at?: string | null }).review_at ?? null,
       // 2026-05-31 WOW2 — 사장 라이브 카메라 사진 URL (null = 미첨부)
       completionPhotoUrl:
@@ -365,9 +533,7 @@ export class OrdersService {
 
     if (error) {
       // InternalServerErrorException: DB 조회 실패 → 500 응답
-      throw new InternalServerErrorException(
-        `주문 조회 실패: ${error.message}`,
-      );
+      throw new InternalServerErrorException('주문 내역을 불러오지 못했어요.');
     }
 
     return (data ?? []).map((o) => ({
@@ -403,7 +569,8 @@ export class OrdersService {
 
     // 상태 전이 매트릭스 (손님 입장)
     const VALID_TRANSITIONS: Record<string, ReadonlyArray<string>> = {
-      PENDING: ['PAID', 'CANCELLED'],
+      // PAID는 Toss confirm 또는 권한 있는 POS 수납 경계에서만 기록한다.
+      PENDING: ['CANCELLED'],
       PAID: [], // 이후는 POS 권한
       PREPARING: [],
       READY: [],
@@ -421,11 +588,22 @@ export class OrdersService {
       .from('orders')
       .update({ status: dto.status })
       .eq('id', orderId)
+      .eq('status', order.status)
       .select('id, status, updated_at')
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
+    if (error) {
       throw new InternalServerErrorException('주문 상태를 변경하지 못했어요.');
+    }
+    if (!data) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_STATUS_CHANGED',
+        message:
+          '주문 상태가 이미 변경됐습니다. 최신 상태를 다시 확인해주세요.',
+        retryable: true,
+        orderId,
+      });
     }
 
     return { id: data.id, status: data.status, updatedAt: data.updated_at };
@@ -470,9 +648,7 @@ export class OrdersService {
       throw new ForbiddenException('본인 주문에만 리뷰 작성 가능해요.');
     }
     if (order.status !== 'COMPLETED' && order.status !== 'DONE') {
-      throw new BadRequestException(
-        '주문이 완료된 후에 리뷰 작성 가능해요.',
-      );
+      throw new BadRequestException('주문이 완료된 후에 리뷰 작성 가능해요.');
     }
 
     // 리뷰 INSERT/UPDATE (단일 컬럼 update)

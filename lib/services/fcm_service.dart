@@ -75,7 +75,7 @@ class FcmService {
       return token;
     } catch (e) {
       // Firebase 미초기화 / 미지원 플랫폼 등에서 안전하게 swallow
-      debugPrint('[FcmService] registerToken 예외 (무시): $e');
+      debugPrint('[FcmService] REGISTER_TOKEN_FAILED');
       return null;
     }
   }
@@ -99,11 +99,11 @@ class FcmService {
           .timeout(AppConfig.apiTimeout);
       if (response.statusCode != 200 && response.statusCode != 201) {
         debugPrint(
-          '[FcmService] 백엔드 저장 실패 ${response.statusCode}: ${response.body}',
+          '[FcmService] TOKEN_PERSIST_HTTP_${response.statusCode}',
         );
       }
     } catch (e) {
-      debugPrint('[FcmService] 백엔드 저장 예외: $e');
+      debugPrint('[FcmService] TOKEN_PERSIST_FAILED');
     }
   }
 

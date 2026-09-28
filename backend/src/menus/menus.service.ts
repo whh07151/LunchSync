@@ -65,7 +65,7 @@ export class MenusService {
       .maybeSingle();
 
     if (userError) {
-      throw new Error(`사용자 알레르기 조회 실패: ${userError.message}`);
+      throw new Error('MENU_USER_ALLERGY_LOOKUP_FAILED');
     }
     if (!userRow) {
       // 사용자 자체가 없는 경우 — 컨트롤러 단에서 토큰 검증을 통과한 상태이므로
@@ -92,7 +92,7 @@ export class MenusService {
       .eq('restaurant_id', restaurantId);
 
     if (menuError) {
-      throw new Error(`메뉴 알레르기 조회 실패: ${menuError.message}`);
+      throw new Error('MENU_ALLERGY_LOOKUP_FAILED');
     }
 
     // 메뉴가 1개도 없다 — 식당 자체가 진짜 없을 수도 있으므로 한 번 더 확인.
@@ -103,7 +103,7 @@ export class MenusService {
         .eq('id', restaurantId)
         .maybeSingle();
       if (rError) {
-        throw new Error(`식당 확인 실패: ${rError.message}`);
+        throw new Error('MENU_RESTAURANT_LOOKUP_FAILED');
       }
       if (!restaurant) {
         throw new NotFoundException('식당을 찾을 수 없습니다.');

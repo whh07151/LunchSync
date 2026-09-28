@@ -1,4 +1,4 @@
-import { Body, Controller, Post } from '@nestjs/common';
+import { Body, Controller, Post, Req, UseGuards } from '@nestjs/common';
 import {
   IsEmail,
   IsIn,
@@ -9,6 +9,8 @@ import {
 } from 'class-validator';
 import { Throttle } from '@nestjs/throttler';
 import { AuthService } from './auth.service';
+import { JwtAuthGuard } from './jwt-auth.guard';
+import type { AuthedRequestUser } from './jwt.strategy';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 인증 관련 HTTP 엔드포인트
@@ -43,7 +45,9 @@ class EmailSignupDto {
   name: string;
 
   // 역할: 회원가입 화면의 라디오 선택값
-  @IsIn(['CUSTOMER', 'OWNER'], { message: 'role은 CUSTOMER 또는 OWNER여야 합니다.' })
+  @IsIn(['CUSTOMER', 'OWNER'], {
+    message: 'role은 CUSTOMER 또는 OWNER여야 합니다.',
+  })
   role: 'CUSTOMER' | 'OWNER';
 
   // OWNER일 때만 사용
@@ -68,18 +72,13 @@ class EmailLoginDto {
 
 // ── 휴대폰 인증 DTO ────────────────────────────────────
 // Flutter 가 Firebase Phone Auth 로 받은 ID 토큰을 그대로 전달.
-// existingUserId: 로그인된 상태에서 휴대폰만 추가 검증할 때 사용 (없으면 신규/전화로그인).
 class VerifyPhoneDto {
   @IsString()
   @IsNotEmpty({ message: 'Firebase ID 토큰이 비어 있습니다.' })
   idToken: string;
-
-  // 이미 로그인된 사용자가 본인확인 차원으로 휴대폰만 등록할 때 전달.
-  // 미전달 시: phone_number 로 사용자 조회/생성하는 흐름으로 진입.
-  @IsOptional()
-  @IsString()
-  existingUserId?: string;
 }
+
+type AuthedRequest = { user: AuthedRequestUser };
 
 @Controller('auth')
 export class AuthController {
@@ -137,17 +136,25 @@ export class AuthController {
   // ── POST /api/auth/verify-phone ────────────────────────
   // Flutter 가 Firebase Phone Auth 로 받은 ID 토큰을 검증한다.
   //
-  // 동작 분기:
-  //   1) existingUserId 전달  → 로그인 사용자의 휴대폰 본인확인 (phone_verified_at 갱신)
-  //   2) 미전달                → 전화번호로 사용자 조회/생성 → 카카오 로그인과 동일 구조 반환
-  //
-  // 응답 형식: AuthResult (accessToken + nextStep + user) — 카카오/이메일과 동일
+  // 공개 전화 로그인/가입 경로. 호출자가 기존 LunchSync 사용자 ID를 지정할 수
+  // 없으며, 계정은 검증된 Firebase 전화번호로만 결정한다.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
   @Post('verify-phone')
   async verifyPhone(@Body() dto: VerifyPhoneDto) {
-    const result = await this.authService.phoneVerify({
-      idToken: dto.idToken,
-      existingUserId: dto.existingUserId,
-    });
+    const result = await this.authService.phoneVerify(dto.idToken);
+    return { success: true, data: result };
+  }
+
+  // 로그인된 사용자의 계정에 검증된 전화번호를 연결하는 경로. 대상 사용자 ID는
+  // 요청 본문이 아니라 검증된 LunchSync JWT에서만 가져온다.
+  @Throttle({ default: { limit: 10, ttl: 60_000 } })
+  @UseGuards(JwtAuthGuard)
+  @Post('verify-phone/attach')
+  async attachPhone(@Req() req: AuthedRequest, @Body() dto: VerifyPhoneDto) {
+    const result = await this.authService.attachVerifiedPhone(
+      dto.idToken,
+      req.user.userId,
+    );
     return { success: true, data: result };
   }
 }
