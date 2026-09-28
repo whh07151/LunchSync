@@ -20,6 +20,14 @@ class AppConfig {
   static const String kakaoJavaScriptAppKey =
       '3bc7c322f80d6ea1b8dc8eda297c04f3';
 
+  // Maps use a different Kakao app from Login. An absent map key must remain
+  // absent instead of silently using the Login app (which has Maps disabled).
+  static const String _kakaoMapJsKeyOverride = String.fromEnvironment(
+    'KAKAO_MAP_JS_KEY',
+    defaultValue: '',
+  );
+  static String get kakaoMapJavaScriptAppKey => _kakaoMapJsKeyOverride;
+
   /// LunchSync 백엔드 서버 기본 URL
   ///
   /// 기본값은 로컬 서버입니다. 배포 빌드에는 HTTPS BACKEND_URL이 필요합니다.

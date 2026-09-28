@@ -110,7 +110,17 @@ Set-Location backend; npx nest build           # 에러 0건이어야 정상
 
 ### 2) Flutter 웹 (Chrome)
 
-카카오 로그인 redirect URI 와 일치시키기 위해 **포트 8080 고정**, EC2 / DuckDNS 백엔드를 가리키도록 `BACKEND_URL` dart-define 필수입니다. (생략 시 `lib/core/config/app_config.dart` 의 EC2 기본값을 사용합니다.)
+카카오 로그인 redirect URI 및 카카오 지도 JavaScript SDK 허용 도메인과 일치시키기 위해 로컬 웹은 **포트 8080**을 사용합니다. `BACKEND_URL` 생략 시 로컬 백엔드가 기본값입니다. 지도는 로그인 앱과 별도의 카카오맵 사용 앱 JavaScript 키가 필요하며, 키 없이 빌드하면 지도 대신 식당 목록과 안내를 표시합니다.
+
+지도 무료 앱의 JavaScript 키를 Git 제외 `.local/kakao-map-js-key.local`에 저장한 뒤 앱·웹을 빌드합니다. 로그인 앱 키는 그대로 유지됩니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-local-client.ps1 -Target web
+node scripts/local-web.cjs                    # http://localhost:8080
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-local-client.ps1 -Target apk
+```
+
+지도 및 메뉴 데이터 출처와 로컬 카카오 키 설정은 `docs/study/NEARBY_PLACES_AND_MENU_SOURCES_2026-09-28.md`를 참고하세요.
 
 ```powershell
 flutter pub get
