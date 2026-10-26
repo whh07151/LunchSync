@@ -1,0 +1,84 @@
+name: Production API smoke
+
+on:
+  pull_request:
+    paths:
+      - ".github/workflows/production-smoke.yml"
+      - "scripts/validate-health-response.mjs"
+      - "tests/validate-health-response.test.mjs"
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/production-smoke.yml"
+      - "scripts/validate-health-response.mjs"
+      - "tests/validate-health-response.test.mjs"
+  workflow_run:
+    workflows:
+      - Deploy Backend to EC2
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-smoke-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  contract:
+    name: Validate health response contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Run health contract tests
+        run: node --test tests/validate-health-response.test.mjs
+
+  production:
+    name: Check public production health
+    if: github.event_name != 'pull_request'
+    needs: contract
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    env:
+      HEALTH_URL: https://lunchsync-api.duckdns.org/api/health
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Node.js
+        uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: "24"
+
+      - name: Request and validate public health endpoint
+        shell: bash
+        run: |
+          set -euo pipefail
+          response_file="$(mktemp)"
+          http_code="$(curl --silent --show-error --location \
+            --connect-timeout 10 --max-time 30 \
+            --retry 2 --retry-all-errors \
+            --output "$response_file" --write-out "%{http_code}" \
+            "$HEALTH_URL")"
+
+          if [[ "$http_code" != "200" ]]; then
+            echo "Expected HTTP 200 from the public health endpoint, received $http_code."
+            exit 1
+          fi
+
+          node scripts/validate-health-response.mjs < "$response_file"
