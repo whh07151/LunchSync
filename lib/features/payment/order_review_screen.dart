@@ -40,6 +40,7 @@ class OrderReviewScreen extends ConsumerStatefulWidget {
     super.key,
     required this.sessionId,
     required this.restaurantName,
+    this.ordersApi = const OrdersApiService(),
   });
 
   /// 점심 세션 UUID — /api/orders 의 sessionId 로 전달
@@ -48,6 +49,9 @@ class OrderReviewScreen extends ConsumerStatefulWidget {
 
   /// 상단 표시용 식당명 (주문명 orderName 에도 사용)
   final String restaurantName;
+
+  /// 기본값은 실제 API이며, 테스트에서는 지연/오류 응답을 주입할 수 있다.
+  final OrdersApiService ordersApi;
 
   @override
   ConsumerState<OrderReviewScreen> createState() => _OrderReviewScreenState();
@@ -60,13 +64,11 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
   // 에러 메시지 (주문 생성 실패 등)
   String? _errorMessage;
 
-  // Orders API 서비스 싱글턴
-  final OrdersApiService _ordersApi = const OrdersApiService();
-
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
       DebugToast.show(context, 'CU-17');
     });
   }
@@ -107,36 +109,33 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
       // ── 3. 주문 생성 API 호출 ────────────────────────
       // cartProvider 의 CartItem 들을 CreateOrderItem 으로 변환
       final orderItems = cart
-          .map((ci) => CreateOrderItem(
-                menuItemId: ci.item.id,
-                quantity: ci.quantity,
-              ))
+          .map(
+            (ci) =>
+                CreateOrderItem(menuItemId: ci.item.id, quantity: ci.quantity),
+          )
           .toList();
 
-      final result = await _ordersApi.createOrder(
+      final result = await widget.ordersApi.createOrder(
         accessToken: accessToken,
         sessionId: widget.sessionId,
         items: orderItems,
         paymentMethod: 'TOSS',
       );
 
+      if (!mounted) return;
+
       if (result == null) {
         setState(() {
           _isProcessing = false;
-          _errorMessage =
-              '주문 생성에 실패했습니다.\n메뉴가 DB 에 등록되어 있는지 확인해주세요.';
+          _errorMessage = '주문 생성에 실패했습니다.\n메뉴가 DB 에 등록되어 있는지 확인해주세요.';
         });
         return;
       }
 
       // 백엔드가 계산한 총 금액 vs 프론트 계산 금액 비교 (위변조 방지 체크)
       if (result.totalPrice != cartNotifier.totalPrice) {
-        // 서버 금액을 신뢰 — 로그만 남기고 진행
-        // ignore: avoid_print
-        print(
-          '[OrderReview] 금액 불일치: '
-          'server=${result.totalPrice} local=${cartNotifier.totalPrice}',
-        );
+        // 서버 금액을 신뢰하되 원 금액은 진단 로그에 남기지 않는다.
+        debugPrint('[OrderReview] ORDER_TOTAL_MISMATCH');
       }
 
       // ── 4. 리다이렉트 전 상태 백업 ──────────────────
@@ -151,10 +150,7 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
         PaymentWebBridge.setSessionItem('ls_user_name', user.name!);
       }
       if (user.profileImage != null) {
-        PaymentWebBridge.setSessionItem(
-          'ls_user_profile',
-          user.profileImage!,
-        );
+        PaymentWebBridge.setSessionItem('ls_user_profile', user.profileImage!);
       }
       PaymentWebBridge.setSessionItem('ls_order_id', result.id);
       PaymentWebBridge.setSessionItem(
@@ -173,24 +169,26 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
       if (kIsWeb) {
         // 웹: 브라우저 전체 페이지 리다이렉트
         final origin = PaymentWebBridge.origin();
-        final successUrl = Uri.parse(origin).replace(queryParameters: {
-          'paymentStatus': 'success',
-        }).toString();
-        final failUrl = Uri.parse(origin).replace(queryParameters: {
-          'paymentStatus': 'fail',
-        }).toString();
+        final successUrl = Uri.parse(
+          origin,
+        ).replace(queryParameters: {'paymentStatus': 'success'}).toString();
+        final failUrl = Uri.parse(
+          origin,
+        ).replace(queryParameters: {'paymentStatus': 'fail'}).toString();
 
-        final checkoutUrl = Uri.parse('$origin/toss-checkout.html').replace(
-          queryParameters: {
-            'orderId': result.id,
-            'orderName': orderName,
-            'amount': result.totalPrice.toString(),
-            'clientKey': AppConfig.tossClientKey,
-            'customerKey': customerKey,
-            'successUrl': successUrl,
-            'failUrl': failUrl,
-          },
-        ).toString();
+        final checkoutUrl = Uri.parse('$origin/toss-checkout.html')
+            .replace(
+              queryParameters: {
+                'orderId': result.id,
+                'orderName': orderName,
+                'amount': result.totalPrice.toString(),
+                'clientKey': AppConfig.tossClientKey,
+                'customerKey': customerKey,
+                'successUrl': successUrl,
+                'failUrl': failUrl,
+              },
+            )
+            .toString();
 
         PaymentWebBridge.redirect(checkoutUrl);
         // redirect 이후 코드는 실행되지 않음 (페이지 전환됨)
@@ -201,17 +199,19 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
         final successUrlPrefix = '$backendOrigin/payment-success';
         final failUrlPrefix = '$backendOrigin/payment-fail';
 
-        final checkoutUrl = Uri.parse('$backendOrigin/toss-checkout.html').replace(
-          queryParameters: {
-            'orderId': result.id,
-            'orderName': orderName,
-            'amount': result.totalPrice.toString(),
-            'clientKey': AppConfig.tossClientKey,
-            'customerKey': customerKey,
-            'successUrl': '$successUrlPrefix?paymentStatus=success',
-            'failUrl': '$failUrlPrefix?paymentStatus=fail',
-          },
-        ).toString();
+        final checkoutUrl = Uri.parse('$backendOrigin/toss-checkout.html')
+            .replace(
+              queryParameters: {
+                'orderId': result.id,
+                'orderName': orderName,
+                'amount': result.totalPrice.toString(),
+                'clientKey': AppConfig.tossClientKey,
+                'customerKey': customerKey,
+                'successUrl': '$successUrlPrefix?paymentStatus=success',
+                'failUrl': '$failUrlPrefix?paymentStatus=fail',
+              },
+            )
+            .toString();
 
         if (!mounted) return;
         setState(() => _isProcessing = false);
@@ -226,10 +226,24 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
           ),
         );
       }
-    } catch (e) {
+    } on CreateOrderException catch (error) {
+      if (!mounted) return;
       setState(() {
         _isProcessing = false;
-        _errorMessage = '결제 시작 중 오류가 발생했습니다.\n$e';
+        _errorMessage = switch (error.code) {
+          CreateOrderFailureCode.sessionNotFound =>
+            '주문 세션을 찾을 수 없습니다. 세션을 다시 확인해주세요.',
+          CreateOrderFailureCode.sessionNotReady =>
+            '식당 선택이 완료된 세션에서만 주문할 수 있어요.',
+          CreateOrderFailureCode.sessionRestaurantMismatch =>
+            '세션에서 선택한 식당의 메뉴만 주문할 수 있어요.',
+        };
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessing = false;
+        _errorMessage = '결제 시작 중 오류가 발생했습니다. 잠시 후 다시 시도해주세요.';
       });
     }
   }
@@ -266,13 +280,19 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Text('주문 식당', style: AppTextStyles.caption.copyWith(
-                  color: AppColors.textSecondary,
-                )),
+                Text(
+                  '주문 식당',
+                  style: AppTextStyles.caption.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
+                ),
                 const SizedBox(height: 4),
-                Text(widget.restaurantName, style: AppTextStyles.bodyLarge.copyWith(
-                  fontWeight: FontWeight.w700,
-                )),
+                Text(
+                  widget.restaurantName,
+                  style: AppTextStyles.bodyLarge.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
               ],
             ),
           ),
@@ -296,10 +316,8 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
                       vertical: AppSpacing.md,
                     ),
                     itemCount: cart.length,
-                    separatorBuilder: (context, index) => const Divider(
-                      height: 1,
-                      color: AppColors.divider,
-                    ),
+                    separatorBuilder: (context, index) =>
+                        const Divider(height: 1, color: AppColors.divider),
                     itemBuilder: (context, index) {
                       final ci = cart[index];
                       return Padding(

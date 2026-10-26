@@ -76,9 +76,7 @@ export class VotesService {
       if (error.code === '23505') {
         throw new ConflictException('이미 투표했어요.');
       }
-      this.logger.error(
-        `투표 INSERT DB 오류 session=${sessionId} user=${userId}: ${error.message}`,
-      );
+      this.logger.error('VOTE_CREATE_PERSIST_FAILED');
       throw new InternalServerErrorException('투표를 등록하지 못했어요.');
     }
 
@@ -99,7 +97,7 @@ export class VotesService {
       .eq('session_id', sessionId);
 
     if (error) {
-      this.logger.error(`투표 조회 DB 오류 session=${sessionId}: ${error.message}`);
+      this.logger.error('VOTE_LIST_PERSIST_FAILED');
       throw new InternalServerErrorException('투표 현황을 불러오지 못했어요.');
     }
 
@@ -147,10 +145,7 @@ export class VotesService {
     const hostId = String(session.created_by ?? '').trim().toLowerCase();
     const reqId = String(requesterId).trim().toLowerCase();
     if (hostId !== reqId) {
-      this.logger.warn(
-        `[decideManually] 호스트 불일치 session=${sessionId} ` +
-          `host=${hostId || '(empty)'} requester=${reqId}`,
-      );
+      this.logger.warn('VOTE_MANUAL_DECISION_AUTHORIZATION_DENIED');
       throw new ForbiddenException('세션 호스트만 결과를 확정할 수 있어요.');
     }
 
@@ -179,9 +174,7 @@ export class VotesService {
       })
       .eq('id', sessionId);
     if (updateError) {
-      this.logger.error(
-        `[decideManually] winner 업데이트 실패 session=${sessionId}: ${updateError.message}`,
-      );
+      this.logger.error('VOTE_MANUAL_DECISION_PERSIST_FAILED');
       throw new InternalServerErrorException('결과를 확정하지 못했어요.');
     }
 
@@ -222,10 +215,7 @@ export class VotesService {
     const hostId = String(session.created_by ?? '').trim().toLowerCase();
     const reqId = String(requesterId).trim().toLowerCase();
     if (hostId !== reqId) {
-      this.logger.warn(
-        `[tallyAndDecide] 호스트 불일치 session=${sessionId} ` +
-          `host=${hostId || '(empty)'} requester=${reqId}`,
-      );
+      this.logger.warn('VOTE_TALLY_AUTHORIZATION_DENIED');
       throw new ForbiddenException('세션 호스트만 결과를 확정할 수 있어요.');
     }
     if (session.status !== 'VOTING') {
@@ -274,9 +264,7 @@ export class VotesService {
       })
       .eq('id', sessionId);
     if (updateError) {
-      this.logger.error(
-        `세션 winner 업데이트 DB 오류 session=${sessionId}: ${updateError.message}`,
-      );
+      this.logger.error('VOTE_TALLY_PERSIST_FAILED');
       throw new InternalServerErrorException('결과를 확정하지 못했어요.');
     }
 

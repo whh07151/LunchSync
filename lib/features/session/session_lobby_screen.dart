@@ -602,7 +602,7 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
                     try {
                       await Share.share(shareText, subject: 'LunchSync 초대');
                     } catch (e) {
-                      debugPrint('[Lobby] Share.share 실패: $e');
+                      debugPrint('[Lobby] SHARE_FAILED');
                       await Clipboard.setData(
                           ClipboardData(text: shareText));
                       if (!mounted) return;

@@ -63,7 +63,7 @@ class _JoinSessionScreenState extends ConsumerState<JoinSessionScreen> {
       // 1순위: 명시적 ?code= 쿼리
       final fromQuery = uri.queryParameters['code']?.trim();
       if (fromQuery != null && fromQuery.isNotEmpty) {
-        debugPrint('[JoinScreen] URL code 자동 채움(query): $fromQuery');
+        debugPrint('[JoinScreen] INVITE_CODE_PREFILLED_FROM_QUERY');
         _codeController.text = fromQuery;
         return;
       }
@@ -73,14 +73,14 @@ class _JoinSessionScreenState extends ConsumerState<JoinSessionScreen> {
       if (jIdx >= 0 && jIdx + 1 < segments.length) {
         final fromPath = segments[jIdx + 1].trim();
         if (fromPath.isNotEmpty) {
-          debugPrint('[JoinScreen] URL code 자동 채움(path): $fromPath');
+          debugPrint('[JoinScreen] INVITE_CODE_PREFILLED_FROM_PATH');
           _codeController.text = fromPath;
           return;
         }
       }
-    } catch (e) {
+    } catch (_) {
       // Uri.base 가 던질 수 있는 모든 예외 무시 — 빈 입력 폴백 자연스러움
-      debugPrint('[JoinScreen] URL 코드 파싱 실패(무시): $e');
+      debugPrint('[JoinScreen] INVITE_CODE_PARSE_FAILED');
     }
   }
 

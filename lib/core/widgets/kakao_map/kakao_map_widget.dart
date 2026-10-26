@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 
 // 조건부 import:
@@ -5,7 +7,8 @@ import 'package:flutter/material.dart';
 //   - 그 외(모바일)                    → kakao_map_mobile.dart 사용
 // 각 구현 파일은 동일한 시그니처의 `buildKakaoMap()` 함수를 제공해야 함.
 import 'kakao_map_mobile.dart'
-    if (dart.library.html) 'kakao_map_web.dart' as impl;
+    if (dart.library.html) 'kakao_map_web.dart'
+    as impl;
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 카카오맵 위젯 공용 인터페이스
@@ -25,16 +28,12 @@ import 'kakao_map_mobile.dart'
 //
 // 주의:
 //   - 카카오 개발자 콘솔에서 "플랫폼 → Web 사이트 도메인"에 localhost 등록 필요
-//   - JavaScript 앱 키(AppConfig.kakaoJavaScriptAppKey)를 사용
+//   - 지도 사용 앱의 JavaScript 키(AppConfig.kakaoMapJavaScriptAppKey)를 사용
 // ══════════════════════════════════════════════════════════
 
 /// 지도 위에 찍을 핀 하나의 데이터
 class KakaoMapPin {
-  const KakaoMapPin({
-    required this.name,
-    required this.lat,
-    required this.lng,
-  });
+  const KakaoMapPin({required this.name, required this.lat, required this.lng});
 
   /// 핀 클릭 시 말풍선에 표시될 식당 이름
   final String name;
@@ -45,11 +44,7 @@ class KakaoMapPin {
   /// 경도
   final double lng;
 
-  Map<String, dynamic> toJson() => {
-        'name': name,
-        'lat': lat,
-        'lng': lng,
-      };
+  Map<String, dynamic> toJson() => {'name': name, 'lat': lat, 'lng': lng};
 }
 
 /// 카카오맵 공용 위젯
@@ -77,7 +72,7 @@ class KakaoMapWidget extends StatelessWidget {
   /// 식당 핀과 다른 파란색 원형 스타일로 렌더링됨.
   final KakaoMapPin? myLocation;
 
-  /// 카카오 JavaScript 앱 키 (AppConfig.kakaoJavaScriptAppKey)
+  /// 카카오 지도 JavaScript 앱 키 (AppConfig.kakaoMapJavaScriptAppKey)
   final String jsAppKey;
 
   /// 지도 영역 높이 (px)
@@ -111,6 +106,12 @@ class KakaoMapWidget extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (jsAppKey.isEmpty) {
+      return SizedBox(
+        height: height,
+        child: const Center(child: Text('지도 설정이 없어 목록으로 확인해 주세요')),
+      );
+    }
     final center = _computeCenter();
     return SizedBox(
       height: height,
@@ -142,33 +143,11 @@ String buildKakaoMapHtml({
   required int zoomLevel,
   KakaoMapPin? myLocation,
 }) {
-  // 핀 데이터를 JavaScript 배열 리터럴로 직렬화
-  // 예: [{"name":"한솥","lat":37.5,"lng":127.0}, ...]
-  final pinsJson = pins.map((p) {
-    // 따옴표가 포함된 이름이 있을 수 있어 기본적인 이스케이프 처리
-    final escapedName = p.name.replaceAll('"', r'\"');
-    return '{"name":"$escapedName","lat":${p.lat},"lng":${p.lng}}';
-  }).join(',');
-
-  // 내 위치 마커 생성 JS (파란 원 + 하얀 테두리 + 반투명 정확도 원)
-  // 없으면 아예 JS 자체를 주입하지 않음 (비용 절감)
-  final myLocationJs = myLocation == null
-      ? ''
-      : '''
-    // ── 내 위치 마커 (파란 원형 오버레이) ───────────
-    var myPos = new kakao.maps.LatLng(${myLocation.lat}, ${myLocation.lng});
-    var myMarkerEl = document.createElement('div');
-    myMarkerEl.style.cssText = 'width:16px;height:16px;border-radius:50%;' +
-      'background:#2979FF;border:3px solid #fff;' +
-      'box-shadow:0 0 0 4px rgba(41,121,255,0.25);';
-    new kakao.maps.CustomOverlay({
-      map: map,
-      position: myPos,
-      content: myMarkerEl,
-      yAnchor: 0.5,
-      xAnchor: 0.5
-    });
-''';
+  // JSON으로 직렬화하고 '<'를 JS Unicode escape로 바꿔 </script>가
+  // HTML의 현재 script 태그를 끝내지 못하게 한다.
+  final pinsJson = jsonEncode(
+    pins.map((p) => p.toJson()).toList(),
+  ).replaceAll('<', r'\u003C');
 
   return '''
 <!DOCTYPE html>
@@ -184,6 +163,33 @@ String buildKakaoMapHtml({
 <div id="map"></div>
 <script src="https://dapi.kakao.com/v2/maps/sdk.js?appkey=$jsAppKey&autoload=false"></script>
 <script>
+  var lunchSyncMap = null;
+  var lunchSyncLocationOverlay = null;
+  var lunchSyncPendingLocation = null;
+  window.updateLunchSyncLocation = function(lat, lng, recenter) {
+    if (!lunchSyncMap) {
+      lunchSyncPendingLocation = {lat: lat, lng: lng, recenter: recenter};
+      return;
+    }
+    if (lunchSyncLocationOverlay) {
+      lunchSyncLocationOverlay.setMap(null);
+      lunchSyncLocationOverlay = null;
+    }
+    if (lat == null || lng == null) return;
+    var myPos = new kakao.maps.LatLng(lat, lng);
+    var myMarkerEl = document.createElement('div');
+    myMarkerEl.style.cssText = 'width:16px;height:16px;border-radius:50%;' +
+      'background:#2979FF;border:3px solid #fff;' +
+      'box-shadow:0 0 0 4px rgba(41,121,255,0.25);';
+    lunchSyncLocationOverlay = new kakao.maps.CustomOverlay({
+      map: lunchSyncMap,
+      position: myPos,
+      content: myMarkerEl,
+      yAnchor: 0.5,
+      xAnchor: 0.5
+    });
+    if (recenter) lunchSyncMap.setCenter(myPos);
+  };
   kakao.maps.load(function() {
     var container = document.getElementById('map');
     var options = {
@@ -191,8 +197,15 @@ String buildKakaoMapHtml({
       level: $zoomLevel
     };
     var map = new kakao.maps.Map(container, options);
+    lunchSyncMap = map;
+    window.updateLunchSyncLocation(${myLocation?.lat ?? 'null'}, ${myLocation?.lng ?? 'null'}, false);
+    if (lunchSyncPendingLocation) {
+      var pending = lunchSyncPendingLocation;
+      lunchSyncPendingLocation = null;
+      window.updateLunchSyncLocation(pending.lat, pending.lng, pending.recenter);
+    }
 
-    var pins = [$pinsJson];
+    var pins = $pinsJson;
     pins.forEach(function(pin, index) {
       var pos = new kakao.maps.LatLng(pin.lat, pin.lng);
       var marker = new kakao.maps.Marker({ position: pos, map: map });
@@ -213,15 +226,17 @@ String buildKakaoMapHtml({
         yAnchor: 2.6,  // 마커 위쪽으로 살짝 띄움
       });
 
+      var safeName = String(pin.name).replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
       var infowindow = new kakao.maps.InfoWindow({
         content: '<div style="padding:4px 8px;font-size:12px;font-weight:600;">' +
-                 (index + 1) + '. ' + pin.name + '</div>'
+                 (index + 1) + '. ' + safeName + '</div>'
       });
       kakao.maps.event.addListener(marker, 'click', function() {
         infowindow.open(map, marker);
       });
     });
-$myLocationJs
   });
 </script>
 </body>

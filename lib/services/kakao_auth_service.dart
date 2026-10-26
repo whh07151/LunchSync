@@ -1,4 +1,5 @@
 import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:flutter/services.dart' show PlatformException;
 import 'package:kakao_flutter_sdk_user/kakao_flutter_sdk_user.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -23,6 +24,7 @@ class KakaoLoginResult {
   const KakaoLoginResult({
     this.kakaoAccessToken,
     this.errorMessage,
+    this.isCancelled = false,
   });
 
   /// 카카오 SDK 로그인 성공 후 발급된 access token
@@ -32,10 +34,12 @@ class KakaoLoginResult {
   /// 로그인 실패 시 오류 메시지 (사용자에게 표시용)
   final String? errorMessage;
 
+  /// 사용자가 카카오 인증 창을 닫은 경우. 오류 알림을 띄우지 않는다.
+  final bool isCancelled;
+
   /// 로그인 성공 여부
   bool get isSuccess => kakaoAccessToken != null;
 }
-
 
 /// 카카오 인증 관련 기능을 담당하는 서비스 클래스
 class KakaoAuthService {
@@ -56,6 +60,16 @@ class KakaoAuthService {
         // ── 카카오톡 앱으로 로그인 ───────────────────────────
         try {
           await UserApi.instance.loginWithKakaoTalk();
+        } on KakaoAuthException catch (e) {
+          // 사용자가 직접 취소한 경우 다른 로그인 창을 다시 열지 않는다.
+          if (e.error == AuthErrorCause.accessDenied) rethrow;
+          await UserApi.instance.loginWithKakaoAccount();
+        } on KakaoClientException catch (e) {
+          if (e.reason == ClientErrorCause.cancelled) rethrow;
+          await UserApi.instance.loginWithKakaoAccount();
+        } on PlatformException catch (e) {
+          if (isKakaoLoginCancelled(e)) rethrow;
+          await UserApi.instance.loginWithKakaoAccount();
         } catch (e) {
           // 카카오톡 앱이 있어도 로그인 실패하는 경우 (예: 사용자가 취소, 권한 오류 등)
           // → 웹 로그인으로 fallback
@@ -74,18 +88,16 @@ class KakaoAuthService {
       final accessToken = token?.accessToken;
 
       if (accessToken == null) {
-        return const KakaoLoginResult(
-          errorMessage: '카카오 토큰을 가져오지 못했어요.',
-        );
+        return const KakaoLoginResult(errorMessage: '카카오 토큰을 가져오지 못했어요.');
       }
 
       return KakaoLoginResult(kakaoAccessToken: accessToken);
     } catch (e) {
-      // 로그인 전체 실패 (네트워크 오류, 사용자 취소 등)
-      debugPrint('[KakaoAuth] 로그인 실패: $e');
-      return KakaoLoginResult(
-        errorMessage: '카카오 로그인에 실패했어요.\n잠시 후 다시 시도해주세요.',
-      );
+      if (isKakaoLoginCancelled(e)) {
+        return const KakaoLoginResult(isCancelled: true);
+      }
+      debugPrint('[KakaoAuth] LOGIN_FAILED type=${e.runtimeType}');
+      return KakaoLoginResult(errorMessage: kakaoLoginErrorMessage(e));
     }
   }
 
@@ -112,4 +124,34 @@ class KakaoAuthService {
       return false;
     }
   }
+}
+
+bool isKakaoLoginCancelled(Object error) =>
+    (error is KakaoClientException &&
+        error.reason == ClientErrorCause.cancelled) ||
+    (error is KakaoAuthException &&
+        error.error == AuthErrorCause.accessDenied) ||
+    (error is PlatformException && error.code == 'CANCELED');
+
+/// SDK 오류의 상세 내용에는 URL이나 계정 정보가 포함될 수 있어 안전한 안내만 표시한다.
+String kakaoLoginErrorMessage(Object error) {
+  if (error is KakaoClientException &&
+      error.reason == ClientErrorCause.cancelled) {
+    return '카카오 로그인이 취소됐어요.';
+  }
+  if (error is KakaoAuthException) {
+    switch (error.error) {
+      case AuthErrorCause.accessDenied:
+        return '카카오 로그인이 취소됐어요.';
+      case AuthErrorCause.misconfigured:
+        return '현재 웹 주소 또는 앱이 카카오 개발자 설정에 등록되지 않았어요.';
+      case AuthErrorCause.invalidClient:
+        return '카카오 앱 키 설정이 맞지 않아요. 관리자에게 알려주세요.';
+      case AuthErrorCause.unauthorized:
+        return '카카오 로그인 사용 권한을 확인해 주세요.';
+      default:
+        break;
+    }
+  }
+  return '카카오 로그인에 실패했어요. 잠시 후 다시 시도해주세요.';
 }

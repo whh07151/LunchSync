@@ -4,7 +4,7 @@ import { IsIn, IsNumber, IsOptional, IsString, IsNotEmpty } from 'class-validato
 //   429 방지를 위해 GET 만 제외. 등록/상태변경/삭제는 throttle 유지.
 import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { assertPosAccessTo } from '../auth/pos-ownership.util';
+import { PosAccessService } from '../auth/pos-ownership.util';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import { PosReservationsService } from './pos-reservations.service';
 import type { ReservationStatus } from './pos-reservations.service';
@@ -48,7 +48,10 @@ class UpdateStatusBody {
 @Controller('pos/reservations')
 @UseGuards(JwtAuthGuard)
 export class PosReservationsController {
-  constructor(private readonly service: PosReservationsService) {}
+  constructor(
+    private readonly service: PosReservationsService,
+    private readonly posAccess: PosAccessService,
+  ) {}
 
   @SkipThrottle({ default: true, auth: true, signup: true })
   @Get(':restaurantId')
@@ -56,7 +59,7 @@ export class PosReservationsController {
     @Req() req: AuthedRequest,
     @Param('restaurantId') restaurantId: string,
   ) {
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const data = await this.service.list(restaurantId);
     return { success: true, data };
   }
@@ -67,7 +70,7 @@ export class PosReservationsController {
     @Param('restaurantId') restaurantId: string,
     @Body() dto: CreateReservationBody,
   ) {
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const data = await this.service.add(restaurantId, dto);
     return { success: true, data };
   }
@@ -80,7 +83,7 @@ export class PosReservationsController {
     @Body() dto: UpdateStatusBody,
   ) {
     const restaurantId = await this.service.getRestaurantIdByReservationId(id);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const data = await this.service.updateStatus(id, dto.status);
     return { success: true, data };
   }
@@ -92,7 +95,7 @@ export class PosReservationsController {
     @Param('id') id: string,
   ) {
     const restaurantId = await this.service.getRestaurantIdByReservationId(id);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const data = await this.service.remove(id);
     return { success: true, data };
   }

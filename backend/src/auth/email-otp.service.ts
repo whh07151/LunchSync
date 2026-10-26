@@ -1,7 +1,10 @@
 import {
   BadRequestException,
+  ConflictException,
   Injectable,
   Logger,
+  ServiceUnavailableException,
+  UnauthorizedException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 
@@ -39,21 +42,47 @@ export class EmailOtpService {
   ///   2단계: shouldCreateUser=false 로 1차 시도 → auth.users 신규 생성 차단.
   ///   3단계: 1차 거절 시 (auth.users 미존재) shouldCreateUser=true 로 1회 재시도.
   ///   임의 이메일에 무한 OTP 발송하는 스팸 도구화 가능성을 1단계에서 사전 차단.
-  async sendOtp(email: string): Promise<{ sent: true; email: string }> {
+  async sendOtp(
+    userId: string,
+    email: string,
+  ): Promise<{ sent: true; email: string }> {
     // 1) public.users 에 해당 이메일이 존재하는지 먼저 확인 — 가입 안 된 사용자
     //    한테 OTP 보내는 건 의미 없음 + 스팸 도구화 차단
-    const { data: user } = await this.supabase.client
+    const { data: user, error: userError } = await this.supabase.client
       .from('users')
       .select('id, email_verified_at')
-      .eq('email', email)
+      .eq('id', userId)
+      .ilike('email', this.emailLookupPattern(email))
       .maybeSingle();
 
+    if (userError) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'EMAIL_VERIFICATION_LOOKUP_FAILED',
+        message: '이메일 인증 계정을 확인하지 못했습니다. 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
     if (!user) {
-      throw new BadRequestException('가입되지 않은 이메일입니다. 먼저 가입해주세요.');
+      throw new UnauthorizedException({
+        statusCode: 401,
+        code: 'EMAIL_VERIFICATION_TOKEN_INVALID',
+        message: '이메일 인증 세션이 유효하지 않습니다.',
+        retryable: false,
+      });
+    }
+    if (user.email_verified_at) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'EMAIL_ALREADY_VERIFIED',
+        message: '이미 인증된 이메일입니다. 비밀번호로 로그인해주세요.',
+        retryable: false,
+      });
     }
 
     // 2) Supabase Auth 로 OTP 발송 요청 — 우선 shouldCreateUser=false 시도
-    let { error } = await this.supabase.client.auth.signInWithOtp({
+    const authClient = this.supabase.createIsolatedAuthClient();
+    let { error } = await authClient.auth.signInWithOtp({
       email,
       options: { shouldCreateUser: false },
     });
@@ -61,7 +90,7 @@ export class EmailOtpService {
     // 3) auth.users 에 미존재해서 거절된 경우 → 1회만 신규 생성 허용 후 재시도
     //    public.users 가 1단계에서 검증됐으므로 임의 이메일 자동 생성 위험 없음
     if (error) {
-      const result2 = await this.supabase.client.auth.signInWithOtp({
+      const result2 = await authClient.auth.signInWithOtp({
         email,
         options: { shouldCreateUser: true },
       });
@@ -69,7 +98,7 @@ export class EmailOtpService {
     }
 
     if (error) {
-      this.logger.error(`OTP 발송 실패 (${email}): ${error.message}`);
+      this.logger.error('OTP delivery provider rejected the request');
       throw new BadRequestException(
         `OTP 메일 발송에 실패했어요. 잠시 후 다시 시도해주세요.`,
       );
@@ -81,34 +110,81 @@ export class EmailOtpService {
   /// OTP 코드 검증 — 성공 시 public.users.email_verified_at 채움.
   /// 실패 시 BadRequestException.
   async verifyOtp(
+    userId: string,
     email: string,
     code: string,
   ): Promise<{ verified: true; email: string; verifiedAt: string }> {
-    const { error } = await this.supabase.client.auth.verifyOtp({
+    const { data: user, error: userError } = await this.supabase.client
+      .from('users')
+      .select('id, email_verified_at')
+      .eq('id', userId)
+      .ilike('email', this.emailLookupPattern(email))
+      .maybeSingle();
+
+    if (userError) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'EMAIL_VERIFICATION_LOOKUP_FAILED',
+        message: '이메일 인증 계정을 확인하지 못했습니다. 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    if (!user) {
+      throw new UnauthorizedException({
+        statusCode: 401,
+        code: 'EMAIL_VERIFICATION_TOKEN_INVALID',
+        message: '이메일 인증 세션이 유효하지 않습니다.',
+        retryable: false,
+      });
+    }
+    if (user.email_verified_at) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'EMAIL_ALREADY_VERIFIED',
+        message: '이미 인증된 이메일입니다. 비밀번호로 로그인해주세요.',
+        retryable: false,
+      });
+    }
+
+    const authClient = this.supabase.createIsolatedAuthClient();
+    const { error } = await authClient.auth.verifyOtp({
       email,
       token: code,
       type: 'email',
     });
 
     if (error) {
-      this.logger.warn(`OTP 검증 실패 (${email}): ${error.message}`);
+      this.logger.warn('OTP verification rejected');
       throw new BadRequestException('인증 코드가 올바르지 않거나 만료됐어요.');
     }
 
     // public.users.email_verified_at 갱신
     const verifiedAt = new Date().toISOString();
-    const { error: updateError } = await this.supabase.client
+    const { data: updatedUser, error: updateError } =
+      await this.supabase.client
       .from('users')
       .update({ email_verified_at: verifiedAt })
-      .eq('email', email);
+      .eq('id', userId)
+      .ilike('email', this.emailLookupPattern(email))
+      .is('email_verified_at', null)
+      .select('id')
+      .maybeSingle();
 
-    if (updateError) {
-      // 검증은 성공했으니 사용자에게는 성공 응답. DB 갱신 실패는 로그만.
-      this.logger.error(
-        `email_verified_at 갱신 실패 (${email}): ${updateError.message}`,
-      );
+    if (updateError || !updatedUser) {
+      this.logger.error('email_verified_at 갱신 실패');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'EMAIL_VERIFICATION_SYNC_PENDING',
+        message:
+          '인증은 완료됐지만 계정 상태 저장을 확인하지 못했습니다. 잠시 후 로그인해주세요.',
+        retryable: true,
+      });
     }
 
     return { verified: true, email, verifiedAt };
+  }
+
+  private emailLookupPattern(email: string): string {
+    return email.trim().replace(/[\\%_]/g, '\\$&');
   }
 }

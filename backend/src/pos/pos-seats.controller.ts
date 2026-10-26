@@ -6,7 +6,7 @@ import { Type } from 'class-transformer';
 //   에서 제외. JWT + assertPosAccessTo 로 본인 매장만 접근하므로 영향 한정.
 import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { assertPosAccessTo } from '../auth/pos-ownership.util';
+import { PosAccessService } from '../auth/pos-ownership.util';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import { PosSeatsService } from './pos-seats.service';
 import type { UpsertSeatDto } from './pos-seats.service';
@@ -49,7 +49,10 @@ class UpdateSeatDto {
 @Controller('pos/seats')
 @UseGuards(JwtAuthGuard)
 export class PosSeatsController {
-  constructor(private readonly seatsService: PosSeatsService) {}
+  constructor(
+    private readonly seatsService: PosSeatsService,
+    private readonly posAccess: PosAccessService,
+  ) {}
 
   @SkipThrottle({ default: true, auth: true, signup: true })
   @Get(':restaurantId')
@@ -57,7 +60,7 @@ export class PosSeatsController {
     @Req() req: AuthedRequest,
     @Param('restaurantId') restaurantId: string,
   ) {
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const data = await this.seatsService.listSeats(restaurantId);
     return { success: true, data };
   }
@@ -69,7 +72,7 @@ export class PosSeatsController {
     @Param('restaurantId') restaurantId: string,
     @Body() dto: CreateSeatDto,
   ) {
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const data = await this.seatsService.addSeat(restaurantId, dto.label);
     return { success: true, data };
   }
@@ -82,7 +85,7 @@ export class PosSeatsController {
     @Body() dto: UpdateSeatDto,
   ) {
     const restaurantId = await this.seatsService.getRestaurantIdBySeatId(seatId);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const data = await this.seatsService.updateSeat(seatId, dto as UpsertSeatDto);
     return { success: true, data };
   }
@@ -94,7 +97,7 @@ export class PosSeatsController {
     @Param('seatId') seatId: string,
   ) {
     const restaurantId = await this.seatsService.getRestaurantIdBySeatId(seatId);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const data = await this.seatsService.removeSeat(seatId);
     return { success: true, data };
   }

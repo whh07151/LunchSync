@@ -18,7 +18,7 @@ import {
   Min,
 } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
-import { assertPosAccessTo } from '../auth/pos-ownership.util';
+import { PosAccessService } from '../auth/pos-ownership.util';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import {
   CreateMenuDto,
@@ -65,14 +65,17 @@ class UpdateMenuRequestDto implements UpdateMenuDto {
 @Controller('pos/menus')
 @UseGuards(JwtAuthGuard)
 export class PosMenusController {
-  constructor(private readonly posMenusService: PosMenusService) {}
+  constructor(
+    private readonly posMenusService: PosMenusService,
+    private readonly posAccess: PosAccessService,
+  ) {}
 
   @Get(':restaurantId')
   async list(
     @Req() req: AuthedRequest,
     @Param('restaurantId') restaurantId: string,
   ) {
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posMenusService.list(restaurantId);
     return { success: true, data: result };
   }
@@ -83,7 +86,7 @@ export class PosMenusController {
     @Param('restaurantId') restaurantId: string,
     @Body() dto: CreateMenuRequestDto,
   ) {
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posMenusService.create(restaurantId, dto);
     return { success: true, data: result };
   }
@@ -96,7 +99,7 @@ export class PosMenusController {
     @Body() dto: UpdateMenuRequestDto,
   ) {
     const restaurantId = await this.posMenusService.getRestaurantIdByMenuId(menuId);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posMenusService.update(menuId, dto);
     return { success: true, data: result };
   }
@@ -108,7 +111,7 @@ export class PosMenusController {
     @Param('id') menuId: string,
   ) {
     const restaurantId = await this.posMenusService.getRestaurantIdByMenuId(menuId);
-    assertPosAccessTo(req.user, restaurantId);
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
     const result = await this.posMenusService.delete(menuId);
     return { success: true, data: result };
   }

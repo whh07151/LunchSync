@@ -1,8 +1,17 @@
-import { Controller, Get, Param, Query, UseGuards } from '@nestjs/common';
+import {
+  Controller,
+  ForbiddenException,
+  Get,
+  Param,
+  Query,
+  Req,
+  UseGuards,
+} from '@nestjs/common';
 import { IsOptional, IsString, IsNumberString } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RestaurantsService } from './restaurants.service';
 import { OrdersService } from '../orders/orders.service';
+import type { AuthedRequestUser } from '../auth/jwt.strategy';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 식당/메뉴 관련 HTTP 엔드포인트
@@ -105,20 +114,15 @@ export class RestaurantsController {
   //   민감정보가 아니라 차단하지 않음. 다만 userId 미지정 시는 400.
   @Get(':id/loyalty')
   async getLoyalty(
+    @Req() req: { user: AuthedRequestUser },
     @Param('id') restaurantId: string,
-    @Query('userId') userId?: string,
   ) {
-    if (!userId || userId.trim().length === 0) {
-      // BadRequest 대신 success:false + 0 으로 graceful 처리도 가능하지만,
-      // 컨트랙트 명확성 우선 — 호출부가 userId 누락 시 즉시 알 수 있어야 함.
-      return {
-        success: false,
-        error: 'userId 쿼리 파라미터가 필요합니다.',
-      };
+    if (req.user.type !== 'USER' || !req.user.userId) {
+      throw new ForbiddenException('사용자 계정으로만 조회할 수 있습니다.');
     }
     const result = await this.restaurantsService.getLoyalty(
       restaurantId,
-      userId,
+      req.user.userId,
     );
     return { success: true, data: result };
   }

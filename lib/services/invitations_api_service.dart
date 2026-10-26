@@ -62,7 +62,7 @@ class InvitationsApiService {
       }
       return null;
     } catch (e) {
-      debugPrint('[InvitationsApiService] createInvitation 에러: $e');
+      debugPrint('[InvitationsApiService] CREATE_INVITATION_FAILED');
       return null;
     }
   }

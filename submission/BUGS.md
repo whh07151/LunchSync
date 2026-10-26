@@ -6,8 +6,9 @@
 - 폰: Galaxy S23 FE (`R5CX42N0YHF`) USB 디버깅 허용 완료
 - adb: `C:\Users\whh07\AppData\Local\Android\Sdk\platform-tools\adb.exe`
 - 폰 자동 화면 꺼짐: 30분으로 늘려둠
-- 설치된 APK: `app-release.apk` (EC2 백엔드 `https://lunchsync-api.duckdns.org/api` 연결)
-- 패키지명: `com.example.capstone`
+- 이전에 기록된 기기 APK: `app-release.apk` (EC2 백엔드 `https://lunchsync-api.duckdns.org/api` 연결,
+  이번 마이그레이션 뒤 재설치·실행 여부는 미확인)
+- 현재 소스 패키지명: `com.whh07151.lunchsync`
 
 ## 🔁 다음 시작 방법 (간단)
 1. 폰 잠금 풀고 LunchSync 앱 켜기

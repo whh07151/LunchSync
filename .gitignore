@@ -1,4 +1,6 @@
 # Miscellaneous
+.local/
+output/playwright/
 *.class
 *.log
 *.pyc

@@ -35,7 +35,7 @@ class AuthResponse {
   });
 
   final String accessToken; // LunchSync 자체 JWT
-  final bool isNewUser;     // true: 신규 가입자
+  final bool isNewUser; // true: 신규 가입자
 
   /// 서버가 지정한 다음 화면.
   /// "PROFILE_SETUP"  → CU-03 기본 프로필 설정 (신규 손님)
@@ -45,8 +45,8 @@ class AuthResponse {
   /// "OWNER_HOME"     → 사장 홈 (승인 완료된 OWNER)
   final String nextStep;
 
-  final String userId;       // Supabase users.id (UUID)
-  final String name;         // 표시 이름
+  final String userId; // Supabase users.id (UUID)
+  final String name; // 표시 이름
   final String? profileImage;
 
   /// 유저 역할: CUSTOMER | OWNER
@@ -62,7 +62,8 @@ class AuthResponse {
     return AuthResponse(
       accessToken: json['accessToken'] as String,
       isNewUser: json['isNewUser'] as bool,
-      nextStep: json['nextStep'] as String? ??
+      nextStep:
+          json['nextStep'] as String? ??
           (json['isNewUser'] as bool ? 'PROFILE_SETUP' : 'HOME'),
       userId: user['id'] as String,
       name: user['name'] as String,
@@ -73,34 +74,52 @@ class AuthResponse {
   }
 }
 
-
 class AuthApiService {
-  const AuthApiService();
+  const AuthApiService({http.Client? client}) : _client = client;
+
+  final http.Client? _client;
 
   // ── POST /api/auth/kakao ──────────────────────────────
   // 카카오 access token을 서버에 전달해서 LunchSync JWT를 받아옴
-  Future<AuthResponse?> loginWithKakao(String kakaoAccessToken) async {
+  Future<AuthSignupResult> loginWithKakao(String kakaoAccessToken) async {
     try {
-      final response = await http
-          .post(
-            Uri.parse('${AppConfig.backendBaseUrl}/auth/kakao'),
-            headers: {'Content-Type': 'application/json'},
-            body: jsonEncode({'kakaoAccessToken': kakaoAccessToken}),
-          )
-          .timeout(AppConfig.apiTimeout);
+      final url = Uri.parse('${AppConfig.backendBaseUrl}/auth/kakao');
+      final headers = {'Content-Type': 'application/json'};
+      final body = jsonEncode({'kakaoAccessToken': kakaoAccessToken});
+      final request = _client == null
+          ? http.post(url, headers: headers, body: body)
+          : _client.post(url, headers: headers, body: body);
+      final response = await request.timeout(AppConfig.apiTimeout);
 
       debugPrint('[AuthApiService] kakao 상태: ${response.statusCode}');
 
       if (response.statusCode == 200 || response.statusCode == 201) {
         final body = jsonDecode(response.body) as Map<String, dynamic>;
         final data = body['data'] as Map<String, dynamic>;
-        return AuthResponse.fromJson(data);
+        return AuthSignupResult.success(AuthResponse.fromJson(data));
       }
 
-      return null;
-    } catch (e) {
-      debugPrint('[AuthApiService] kakao 에러: $e');
-      return null;
+      final message =
+          extractApiErrorMessage(response.body) ??
+          (response.statusCode >= 500
+              ? '카카오 로그인 서버에 문제가 생겼어요. 잠시 후 다시 시도해주세요.'
+              : '카카오 로그인에 실패했어요. 다시 시도해주세요.');
+      return AuthSignupResult.failure(message);
+    } on FormatException {
+      debugPrint('[AuthApiService] KAKAO_LOGIN_INVALID_RESPONSE');
+      return AuthSignupResult.failure(
+        '카카오 로그인 응답을 읽지 못했어요. 앱과 서버 버전을 확인해 주세요.',
+      );
+    } on TypeError {
+      debugPrint('[AuthApiService] KAKAO_LOGIN_INVALID_RESPONSE');
+      return AuthSignupResult.failure(
+        '카카오 로그인 응답을 읽지 못했어요. 앱과 서버 버전을 확인해 주세요.',
+      );
+    } catch (_) {
+      debugPrint('[AuthApiService] KAKAO_LOGIN_FAILED');
+      return AuthSignupResult.failure(
+        '카카오 로그인 서버에 연결하지 못했어요. 네트워크를 확인하고 다시 시도해주세요.',
+      );
     }
   }
 
@@ -146,33 +165,34 @@ class AuthApiService {
 
       // 에러 메시지 추출 (NestJS ValidationPipe / Exception 응답 구조)
       // 공용 헬퍼가 message 가 String / List<String> 양쪽을 모두 처리.
-      final message =
-          extractApiErrorMessage(response.body) ?? '회원가입에 실패했습니다.';
+      final message = extractApiErrorMessage(response.body) ?? '회원가입에 실패했습니다.';
 
       return AuthSignupResult.failure(message);
-    } catch (e) {
-      return AuthSignupResult.failure('서버 연결에 실패했어요. ($e)');
+    } catch (_) {
+      return AuthSignupResult.failure('서버 연결에 실패했어요. 잠시 후 다시 시도해주세요.');
     }
   }
 
   // ── POST /api/auth/verify-phone ────────────────────────
   // Firebase Phone Auth 로 받은 ID 토큰을 백엔드에 전달.
-  // existingUserId 가 있으면 "본인확인 모드" — 현재 사용자에 휴대폰 붙이기.
-  // 없으면 "전화 로그인/가입 모드" — 휴대폰 번호로 사용자 조회/생성.
+  // accessToken 이 있으면 인증된 "본인확인 모드", 없으면 공개 전화
+  // 로그인/가입 모드다. 기존 사용자 ID는 서버로 보내지 않는다.
   Future<AuthSignupResult> verifyPhone({
     required String firebaseIdToken,
-    String? existingUserId,
+    String? accessToken,
   }) async {
     try {
       final body = <String, dynamic>{'idToken': firebaseIdToken};
-      if (existingUserId != null) {
-        body['existingUserId'] = existingUserId;
-      }
+      final isAttach = accessToken != null && accessToken.isNotEmpty;
+      final path = isAttach ? 'verify-phone/attach' : 'verify-phone';
 
       final response = await http
           .post(
-            Uri.parse('${AppConfig.backendBaseUrl}/auth/verify-phone'),
-            headers: {'Content-Type': 'application/json'},
+            Uri.parse('${AppConfig.backendBaseUrl}/auth/$path'),
+            headers: {
+              'Content-Type': 'application/json',
+              if (isAttach) 'Authorization': 'Bearer $accessToken',
+            },
             body: jsonEncode(body),
           )
           .timeout(AppConfig.apiTimeout);
@@ -186,12 +206,11 @@ class AuthApiService {
       }
 
       // NestJS 에러 메시지 추출 (단일 String 또는 ValidationPipe 의 List<String>)
-      final message =
-          extractApiErrorMessage(response.body) ?? '휴대폰 인증에 실패했어요.';
+      final message = extractApiErrorMessage(response.body) ?? '휴대폰 인증에 실패했어요.';
 
       return AuthSignupResult.failure(message);
-    } catch (e) {
-      return AuthSignupResult.failure('서버 연결에 실패했어요. ($e)');
+    } catch (_) {
+      return AuthSignupResult.failure('서버 연결에 실패했어요. 잠시 후 다시 시도해주세요.');
     }
   }
 
@@ -221,16 +240,27 @@ class AuthApiService {
       }
 
       // NestJS 에러 메시지 추출 (단일 String 또는 ValidationPipe 의 List<String>)
-      final message =
-          extractApiErrorMessage(response.body) ?? '로그인에 실패했습니다.';
+      final message = extractApiErrorMessage(response.body) ?? '로그인에 실패했습니다.';
+      String? errorCode;
+      String? verificationToken;
+      try {
+        final errorBody = jsonDecode(response.body) as Map<String, dynamic>;
+        errorCode = errorBody['code'] as String?;
+        verificationToken = errorBody['verificationToken'] as String?;
+      } catch (_) {
+        // A non-JSON proxy error still follows the generic failure path.
+      }
 
-      return AuthSignupResult.failure(message);
-    } catch (e) {
-      return AuthSignupResult.failure('서버 연결에 실패했어요. ($e)');
+      return AuthSignupResult.failure(
+        message,
+        errorCode: errorCode,
+        verificationToken: verificationToken,
+      );
+    } catch (_) {
+      return AuthSignupResult.failure('서버 연결에 실패했어요. 잠시 후 다시 시도해주세요.');
     }
   }
 }
-
 
 // ══════════════════════════════════════════════════════════
 // AuthSignupResult: 회원가입/이메일 로그인 응답 래퍼
@@ -243,17 +273,32 @@ class AuthSignupResult {
     required this.isSuccess,
     this.response,
     this.errorMessage,
+    this.errorCode,
+    this.verificationToken,
   });
 
   factory AuthSignupResult.success(AuthResponse response) =>
       AuthSignupResult._(isSuccess: true, response: response);
 
-  factory AuthSignupResult.failure(String message) =>
-      AuthSignupResult._(isSuccess: false, errorMessage: message);
+  factory AuthSignupResult.failure(
+    String message, {
+    String? errorCode,
+    String? verificationToken,
+  }) => AuthSignupResult._(
+    isSuccess: false,
+    errorMessage: message,
+    errorCode: errorCode,
+    verificationToken: verificationToken,
+  );
 
   final bool isSuccess;
   final AuthResponse? response;
   final String? errorMessage;
+  final String? errorCode;
+  final String? verificationToken;
+
+  bool get requiresEmailVerification =>
+      errorCode == 'EMAIL_VERIFICATION_REQUIRED';
 }
 
 // ══════════════════════════════════════════════════════════
@@ -283,22 +328,25 @@ class DevSeedLoginService {
         final nextStep = role == 'OWNER'
             ? (status == 'APPROVED' ? 'OWNER_HOME' : 'OWNER_PENDING')
             : 'HOME';
-        return AuthSignupResult.success(AuthResponse(
-          accessToken: data['accessToken'] as String,
-          isNewUser: false,
-          nextStep: nextStep,
-          userId: data['userId'] as String,
-          name: data['name'] as String? ?? '시연 사용자',
-          role: role,
-          status: status,
-        ));
+        return AuthSignupResult.success(
+          AuthResponse(
+            accessToken: data['accessToken'] as String,
+            isNewUser: false,
+            nextStep: nextStep,
+            userId: data['userId'] as String,
+            name: data['name'] as String? ?? '시연 사용자',
+            role: role,
+            status: status,
+          ),
+        );
       }
 
       return AuthSignupResult.failure(
-        extractApiErrorMessage(response.body) ?? '시드 로그인 실패 (${response.statusCode})',
+        extractApiErrorMessage(response.body) ??
+            '시드 로그인 실패 (${response.statusCode})',
       );
-    } catch (e) {
-      debugPrint('[DevSeedLoginService] 에러: $e');
+    } catch (_) {
+      debugPrint('[DevSeedLoginService] LOGIN_FAILED');
       return AuthSignupResult.failure('시드 로그인 중 오류가 발생했어요.');
     }
   }

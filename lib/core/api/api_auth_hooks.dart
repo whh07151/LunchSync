@@ -50,7 +50,7 @@ class ApiAuthHooks {
     try {
       cb();
     } catch (e) {
-      debugPrint('[ApiAuthHooks] onUnauthorized 콜백 오류 (무시): $e');
+      debugPrint('[ApiAuthHooks] UNAUTHORIZED_CALLBACK_FAILED');
     }
   }
 

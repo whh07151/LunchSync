@@ -75,9 +75,12 @@ D:\LunchSyncFr\
 
 ### 사전 준비
 
-- Node.js 20+, npm
+- Node.js 22+, npm
+- 백엔드는 Firebase Auth/FCM만 사용하므로 `backend/.npmrc`에서 사용하지 않는
+  Firebase Firestore/Cloud Storage 선택 의존성을 설치하지 않습니다.
 - Flutter 3.x 안정 채널 (Dart 3+)
-- `backend/.env` 값 확보 (팀원에게 공유 받음, 또는 `backend/.env.example` 참고)
+- `backend/.env.example`을 기준으로 한 로컬 설정과 승인된 비밀 관리자 또는
+  런타임 환경 변수 주입 경로
 - Supabase 프로젝트 접근 권한 + 최신 마이그레이션 적용 상태
 - (선택) Android 실기기 USB 디버깅, Chrome (웹 결제 테스트)
 
@@ -107,7 +110,17 @@ Set-Location backend; npx nest build           # 에러 0건이어야 정상
 
 ### 2) Flutter 웹 (Chrome)
 
-카카오 로그인 redirect URI 와 일치시키기 위해 **포트 8080 고정**, EC2 / DuckDNS 백엔드를 가리키도록 `BACKEND_URL` dart-define 필수입니다. (생략 시 `lib/core/config/app_config.dart` 의 EC2 기본값을 사용합니다.)
+카카오 로그인 redirect URI 및 카카오 지도 JavaScript SDK 허용 도메인과 일치시키기 위해 로컬 웹은 **포트 8080**을 사용합니다. `BACKEND_URL` 생략 시 로컬 백엔드가 기본값입니다. 지도는 로그인 앱과 별도의 카카오맵 사용 앱 JavaScript 키가 필요하며, 키 없이 빌드하면 지도 대신 식당 목록과 안내를 표시합니다.
+
+지도 무료 앱의 JavaScript 키를 Git 제외 `.local/kakao-map-js-key.local`에 저장한 뒤 앱·웹을 빌드합니다. 로그인 앱 키는 그대로 유지됩니다.
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-local-client.ps1 -Target web
+node scripts/local-web.cjs                    # http://localhost:8080
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-local-client.ps1 -Target apk
+```
+
+지도 및 메뉴 데이터 출처와 로컬 카카오 키 설정은 `docs/study/NEARBY_PLACES_AND_MENU_SOURCES_2026-09-28.md`를 참고하세요.
 
 ```powershell
 flutter pub get
@@ -152,12 +165,13 @@ flutter analyze                                # 에러 0건이어야 정상
 |---|---|---|
 | `PORT` | NestJS 리스닝 포트 | 기본 3000 |
 | `SUPABASE_URL` | Supabase 프로젝트 URL | 필수 |
-| `SUPABASE_ANON_KEY` | Supabase anon 키 | `.env.example` 에 명시 |
-| `SUPABASE_SERVICE_ROLE_KEY` | RLS 우회용 service_role 키 | **서버 전용** · `.env.example` 미포함이므로 직접 추가 |
+| `SUPABASE_SERVICE_ROLE_KEY` | RLS 우회용 service_role 키 | **서버 전용** · 승인된 비밀 관리자에서 런타임 환경 변수로 주입하고 파일·메신저·문서에 실값을 남기지 않음 |
+| `SUPABASE_ANON_KEY` | sessionless OTP Auth client 키 | 권장 · 미설정 호환 경로는 service-role 사용 |
 | `JWT_SECRET` | 자체 JWT 서명 시크릿 | 필수 |
 | `JWT_EXPIRES_IN` | JWT 만료 (기본 `7d`) | |
 | `TOSS_SECRET_KEY` | Toss Payments 시크릿 키 | 테스트는 `test_sk_...` |
 | `TOSS_API_BASE_URL` | Toss API 베이스 | 기본 `https://api.tosspayments.com` |
+| `TOSS_API_TIMEOUT_MS` | 결제 승인 응답 제한 시간(100~60000ms) | 기본 `10000` |
 | `NAVER_CLIENT_ID` / `NAVER_CLIENT_SECRET` | 네이버 검색 API (식당 메타) | crawl 모듈에서 사용 |
 | `KAKAO_REST_API_KEY` | 카카오 로컬 API (좌표 / 식당) | crawl · recommendations 폴백 |
 | `GEMINI_API_KEY` | Gemini LLM API 키 | 미설정 시 AI 메뉴/식당 폴백 비활성 |
@@ -166,9 +180,16 @@ flutter analyze                                # 에러 0건이어야 정상
 | `FIREBASE_ADMIN_KEY_PATH` | Firebase Admin 서비스 계정 JSON 경로 | 미설정 시 Phone Auth / FCM 푸시 비활성 |
 | `CORS_ALLOWED_ORIGINS` | 운영 모드 CORS 허용 origin (쉼표) | `NODE_ENV=production` 일 때만 활성 |
 | `NODE_ENV` | `production` 설정 시 에러 메시지 마스킹 + CORS 화이트리스트 적용 | |
+| `POS_SHARED_PIN_LOGIN_ENABLED` / `POS_PIN` | 공용 PIN POS 시연 | 비운영에서 명시적으로 켠 경우만 허용 |
+| `ALLOW_SIMULATED_PAYMENTS` | 고객 모의 결제 | 비운영에서 정확히 `true`인 경우만 허용 |
+| `ALLOW_REFUND_SIMULATION` | 모의 결제 환불 시연 | 실제 결제키에는 적용 불가 |
+| `ALLOW_POS_CARD_SIMULATION` | POS CARD 수납 시연 | 비운영에서 정확히 `true`인 경우만 허용 |
 | `RECO_V3_ENABLED` | 추천 v3 (친구 가중치 등) on/off | `'true'` 일 때 활성 |
 
-> `.env.example` 에 누락된 키(`SUPABASE_SERVICE_ROLE_KEY`, `GEMINI_*`, `FIREBASE_*`, `CORS_*`, `RECO_V3_*`)는 팀 노션 / 팀원 공유 채널에서 받아 직접 추가해야 합니다.
+> `.env.example` 에 누락된 키(`GEMINI_*`, `FIREBASE_*`, `CORS_*`, `RECO_V3_*`)는
+> 환경별 설정 절차에 따라 추가합니다. `SUPABASE_SERVICE_ROLE_KEY` 실값은 승인된
+> 비밀 관리자 또는 배포 플랫폼의 보호된 환경 변수에서 서버 런타임에만 주입하며,
+> Notion·메신저·공유 문서·Git에는 복사하지 않습니다.
 
 Flutter 측 키(카카오 앱 키, Toss 클라이언트 키)는 `lib/core/config/app_config.dart` 에 하드코딩되어 있고 이 파일은 `.gitignore` 처리 상태입니다.
 
@@ -180,16 +201,59 @@ Flutter 측 키(카카오 앱 키, Toss 클라이언트 키)는 `lib/core/config
 
 배포 원칙은 memory 의 `feedback_aws_deploy.md` 에 정리된 대로 **로컬에서 빌드 성공 + 핵심 흐름 검증이 끝난 코드만 배포**합니다.
 
-대략적인 절차 (구체 명령은 운영자만 사용):
+대략적인 절차 (구체 명령은 승인된 운영자만 사용):
 
-1. `main` (또는 머지 대상 브랜치)에 push → CI 빌드 확인
-2. EC2 에 SSH 접속 → `git pull` → `npm ci` → `npx nest build`
-3. 새 마이그레이션이 있다면 Supabase 대시보드에서 `backend/scripts/migrations/<날짜>-*.sql` 수동 실행
-4. `pm2 restart <프로세스명>` (혹은 동등 명령)
-5. Flutter 앱(또는 LSPOS) 빌드는 dart-define `BACKEND_URL=https://<DuckDNS>/api` 로 재빌드
-6. 손님 / 사장 두 흐름을 실기기에서 한 번씩 검증 (홈 → 세션 → 투표 → 주문 → 결제)
+1. 머지 대상 브랜치의 CI와 로컬 검증 결과를 확인
+2. 비운영 PostgreSQL 리허설 환경에
+   `backend/scripts/migrations/2026-07-27-create-order-with-items-v2.sql` 적용
+3. 이어서
+   `backend/scripts/migrations/2026-07-29-schema-introspection-function-signatures.sql`
+   적용
+4. 비운영 환경에서 정확한 6-인자 주문 RPC, `SECURITY INVOKER`, 최소 실행 ACL과
+   스키마 introspection 응답을 검사
+5. 리허설이 통과한 뒤 승인된 운영자가 실제 백엔드가 연결할 대상 PostgreSQL에
+   검토된 두 마이그레이션을 2026-07-27 → 2026-07-29 순서로 적용
+6. 같은 대상 DB에서 정확한 함수 시그니처, `PUBLIC`/`anon`/`authenticated`
+   실행 권한 회수, `service_role` 실행 권한과 `check_schema_resources()`
+   introspection 응답을 다시 확인
+7. 대상 DB 검증이 끝난 뒤에만 EC2 백엔드 코드 갱신 → `npm ci` →
+   `npx nest build` →
+   `pm2 restart <프로세스명>`(또는 동등 명령)
+8. Flutter 앱(또는 LSPOS)은
+   `BACKEND_URL=https://<DuckDNS>/api`로 빌드
+9. 손님 / 사장 흐름과 `SIMULATE`/`CASH`, Toss·`CARD`의 `PENDING` → 외부 승인
+   흐름을 비운영 환경에서 확인
 
-> `<DuckDNS-도메인>` 실값과 PM2 프로세스 이름, 키 보관 경로는 팀 운영 채널에 별도 공유합니다.
+6-인자 RPC를 호출하는 백엔드를 두 마이그레이션보다 먼저 배포하지 않습니다.
+실제 대상 DB 마이그레이션과 백엔드 배포는 승인된 운영자의 남은 작업이며, 이
+변경 작성·검증 과정에서는 실행하지 않았습니다.
+`<DuckDNS-도메인>`과 PM2 프로세스 이름은 승인된 운영 런북에서 확인하고, 비밀
+값은 승인된 비밀 관리자나 배포 플랫폼의 보호된 환경 변수로만 주입합니다.
+
+주문 생성·스키마 헬스체크 변경의 핵심 확인 파일:
+
+- `backend/scripts/migrations/2026-07-27-create-order-with-items-v2.sql`
+- `backend/scripts/migrations/2026-07-29-schema-introspection-function-signatures.sql`
+- `backend/src/orders/orders.controller.ts`
+- `backend/src/orders/orders.service.ts`
+- `backend/src/orders/orders.consistency.spec.ts`
+- `backend/src/app.module.ts`
+- `backend/src/supabase/schema-healthcheck.service.ts`
+- `backend/src/supabase/schema-healthcheck.service.spec.ts`
+- `backend/package.json`
+- `backend/test/jest-postgres.json`
+- `backend/test/orders.postgres-spec.ts`
+- `backend/test/support/disposable-postgres.ts`
+
+2026-07-29 현재 체크포인트에서 기본 Jest는 **7개 스위트·47개 테스트**, 실제
+PostgreSQL 계약 검사는 **2개 스위트·5개 테스트**, NestJS 빌드는 통과했습니다.
+이는 비운영 일회용 PostgreSQL 검증 결과이며 운영 DB 마이그레이션이나 라이브 결제
+검증을 뜻하지 않습니다.
+
+2026-08-05 인증·POS·결제 하드닝 체크포인트는 기본 Jest **26개 스위트·152개
+테스트**, NestJS build, Flutter **12개 테스트**, Dart analyze를 통과했습니다.
+Docker Desktop Linux 엔진이 꺼져 있어 변경된 PostgreSQL 전용 검사는 재실행하지
+않았으며, 실제 Toss 호출·원격 DB 변경·배포는 수행하지 않았습니다.
 
 ---
 
@@ -197,10 +261,11 @@ Flutter 측 키(카카오 앱 키, Toss 클라이언트 키)는 `lib/core/config
 
 `CLAUDE.md` 의 핵심 규칙이며 위반 시 PostgREST 가 누락 컬럼을 silent 하게 무시해 "코드는 정상인데 DB 는 비어있는" 사고가 발생합니다 (2026-05-13 `image_url` 사고 사례).
 
-- 새 컬럼 / 테이블을 `select` 또는 `insert` 에 추가할 때는 **반드시 같은 PR 에 DDL 마이그레이션을 동봉**합니다.
-- 마이그레이션 위치: `backend/scripts/migrations/YYYY-MM-DD-<설명>.sql`
-- 모든 DDL 은 멱등 패턴 — `CREATE TABLE IF NOT EXISTS`, `ALTER TABLE ... ADD COLUMN IF NOT EXISTS`, `CREATE OR REPLACE FUNCTION`
-- 마이그레이션 추가 시 `backend/scripts/migrations/2026-05-14-verify-schema.sql` 검증 쿼리도 갱신
+- 새 Supabase 컬럼·테이블·함수는 먼저 `supabase/schemas/` 선언형 스키마에 반영합니다.
+- Docker가 준비된 비운영 환경에서 Supabase CLI diff로 migration을 생성하고,
+  reset·pgTAP·schema diff 없음까지 확인합니다. migration을 손으로 작성하지 않습니다.
+- `backend/scripts/migrations/`는 기존 legacy 이력의 참고 위치이며 새 선언형 변경의
+  source of truth가 아닙니다.
 - 운영 적용: Supabase 대시보드에서 수동 실행 → verify-schema 한 번 더 돌려 확인
 
 ---

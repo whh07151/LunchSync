@@ -9,10 +9,13 @@
     <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
 
     <application
-        android:label="capstone"
+        android:label="LunchSync"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher"
-        android:usesCleartextTraffic="true">
+        android:allowBackup="false"
+        android:dataExtractionRules="@xml/data_extraction_rules"
+        android:fullBackupContent="false"
+        android:usesCleartextTraffic="false">
         <activity
             android:name=".MainActivity"
             android:exported="true"
@@ -43,7 +46,7 @@
                 <category android:name="android.intent.category.DEFAULT" />
                 <category android:name="android.intent.category.BROWSABLE" />
                 <!-- kakao{앱키}://oauth 형태의 딥링크를 이 Activity가 처리 -->
-                <data android:scheme="kakao1a8f618f7a89644f824c091c4c9c085a"
+                <data android:scheme="kakao95889654e8fdb27056189f4579a78116"
                       android:host="oauth"/>
             </intent-filter>
         </activity>
