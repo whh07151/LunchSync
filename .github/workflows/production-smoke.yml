@@ -68,13 +68,38 @@ jobs:
       - name: Request and validate public health endpoint
         shell: bash
         run: |
-          set -euo pipefail
+          set -u -o pipefail
           response_file="$(mktemp)"
+          trap 'rm -f "$response_file"' EXIT
+          health_host="$(node -e 'console.log(new URL(process.env.HEALTH_URL).hostname)')"
+
+          echo "Resolving $health_host before the HTTP request:"
+          if ! getent ahosts "$health_host" | awk '{ print $1 }' | sort -u; then
+            echo "DNS lookup failed for $health_host."
+          fi
+
+          set +e
           http_code="$(curl --silent --show-error --location \
             --connect-timeout 10 --max-time 30 \
             --retry 2 --retry-all-errors \
             --output "$response_file" --write-out "%{http_code}" \
             "$HEALTH_URL")"
+          curl_status=$?
+          set -e
+
+          if [[ "$curl_status" -ne 0 ]]; then
+            echo "curl failed with exit status $curl_status before a valid HTTP response."
+            if timeout 10 bash -c 'exec 3<>"/dev/tcp/$1/443"' _ "$health_host"; then
+              echo "TCP connection to $health_host:443 succeeded."
+              echo "Inspecting the TLS handshake:"
+              timeout 10 openssl s_client \
+                -connect "${health_host}:443" -servername "$health_host" \
+                -brief </dev/null || true
+            else
+              echo "TCP connection to $health_host:443 failed or timed out."
+            fi
+            exit "$curl_status"
+          fi
 
           if [[ "$http_code" != "200" ]]; then
             echo "Expected HTTP 200 from the public health endpoint, received $http_code."
