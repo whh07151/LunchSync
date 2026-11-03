@@ -146,11 +146,11 @@ class _PhoneVerifyScreenState extends ConsumerState<PhoneVerifyScreen> {
         _isSending = false;
         _error = _humanizeFirebaseError(e);
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _isSending = false;
-        _error = '인증번호 발송 중 오류가 발생했어요. ($e)';
+        _error = '인증번호 발송 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.';
       });
     }
   }
@@ -200,11 +200,11 @@ class _PhoneVerifyScreenState extends ConsumerState<PhoneVerifyScreen> {
         _isVerifying = false;
         _error = _humanizeFirebaseError(e);
       });
-    } catch (e) {
+    } catch (_) {
       if (!mounted) return;
       setState(() {
         _isVerifying = false;
-        _error = '인증 중 오류가 발생했어요. ($e)';
+        _error = '인증 중 오류가 발생했어요. 잠시 후 다시 시도해주세요.';
       });
     }
   }
@@ -231,7 +231,9 @@ class _PhoneVerifyScreenState extends ConsumerState<PhoneVerifyScreen> {
   Future<void> _callBackendVerify(String idToken) async {
     final result = await _authApi.verifyPhone(
       firebaseIdToken: idToken,
-      existingUserId: widget.existingUserId,
+      accessToken: widget.existingUserId == null
+          ? null
+          : ref.read(userProvider).accessToken,
     );
 
     if (!mounted) return;

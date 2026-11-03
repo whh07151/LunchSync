@@ -157,6 +157,7 @@ class MenuItemDto {
     this.category,
     this.description,
     this.imageUrl,
+    this.source,
   });
 
   final String id;
@@ -165,6 +166,8 @@ class MenuItemDto {
   final String? category;
   final String? description;
   final String? imageUrl;
+  /// MANUAL, CRAWL_NAVER, AI_GEMINI 또는 UNKNOWN. 확인 시각은 아직 없음.
+  final String? source;
 
   factory MenuItemDto.fromJson(Map<String, dynamic> json) {
     return MenuItemDto(
@@ -174,6 +177,7 @@ class MenuItemDto {
       category: json['category'] as String?,
       description: json['description'] as String?,
       imageUrl: json['imageUrl'] as String?,
+      source: json['source'] as String?,
     );
   }
 }
@@ -199,6 +203,9 @@ class RestaurantsApiService {
     String? category,
     int? maxPrice,
     int? limit,
+    double? lat,
+    double? lng,
+    int? radius,
     bool throwOnError = false,
   }) async {
     try {
@@ -206,6 +213,11 @@ class RestaurantsApiService {
       if (category != null) params['category'] = category;
       if (maxPrice != null) params['maxPrice'] = maxPrice.toString();
       if (limit != null) params['limit'] = limit.toString();
+      if (lat != null && lng != null) {
+        params['lat'] = lat.toString();
+        params['lng'] = lng.toString();
+        if (radius != null) params['radius'] = radius.toString();
+      }
 
       final uri = Uri.parse('${AppConfig.backendBaseUrl}/restaurants')
           .replace(queryParameters: params.isNotEmpty ? params : null);
@@ -226,7 +238,7 @@ class RestaurantsApiService {
       }
       return [];
     } catch (e) {
-      debugPrint('[RestaurantsApiService] getRestaurants 에러: $e');
+      debugPrint('[RestaurantsApiService] GET_RESTAURANTS_FAILED');
       // 네트워크 오류를 호출 측에 알려야 하는 경우(토너먼트 등)는 재던짐.
       if (throwOnError && e is ApiNetworkException) rethrow;
       return [];
@@ -256,7 +268,7 @@ class RestaurantsApiService {
       }
       return null;
     } catch (e) {
-      debugPrint('[RestaurantsApiService] getRestaurantById 에러: $e');
+      debugPrint('[RestaurantsApiService] GET_RESTAURANT_FAILED');
       return null;
     }
   }
@@ -270,12 +282,11 @@ class RestaurantsApiService {
   Future<LoyaltyDto?> getLoyalty({
     required String accessToken,
     required String restaurantId,
-    required String userId,
   }) async {
     try {
       final uri = Uri.parse(
         '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/loyalty',
-      ).replace(queryParameters: {'userId': userId});
+      );
 
       final response = await ApiRetry.get(
         uri,
@@ -294,7 +305,7 @@ class RestaurantsApiService {
       }
       return null;
     } catch (e) {
-      debugPrint('[RestaurantsApiService] getLoyalty 에러: $e');
+      debugPrint('[RestaurantsApiService] GET_LOYALTY_FAILED');
       return null;
     }
   }
@@ -326,7 +337,7 @@ class RestaurantsApiService {
       }
       return [];
     } catch (e) {
-      debugPrint('[RestaurantsApiService] getMenus 에러: $e');
+      debugPrint('[RestaurantsApiService] GET_MENUS_FAILED');
       // 네트워크 오류를 호출 측에 알려야 하는 경우(메뉴 토너먼트 등)는 재던짐.
       if (throwOnError && e is ApiNetworkException) rethrow;
       return [];

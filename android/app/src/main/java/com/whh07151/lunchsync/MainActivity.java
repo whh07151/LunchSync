@@ -1,4 +1,4 @@
-package com.example.capstone;
+package com.whh07151.lunchsync;
 
 import io.flutter.embedding.android.FlutterActivity;
 

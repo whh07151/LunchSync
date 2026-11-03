@@ -128,7 +128,7 @@ class _RecommendationMapScreenState
             child: KakaoMapWidget(
               pins: pins,
               myLocation: _myLocationPin,
-              jsAppKey: AppConfig.kakaoJavaScriptAppKey,
+              jsAppKey: AppConfig.kakaoMapJavaScriptAppKey,
               height: double.infinity,
               zoomLevel: 4,
             ),
@@ -153,8 +153,10 @@ class _RecommendationMapScreenState
                       shape: const CircleBorder(),
                       elevation: 2,
                       child: IconButton(
-                        icon: const Icon(Icons.arrow_back_ios_new_rounded,
-                            size: 18),
+                        icon: const Icon(
+                          Icons.arrow_back_ios_new_rounded,
+                          size: 18,
+                        ),
                         onPressed: () => Navigator.of(context).pop(),
                       ),
                     ),

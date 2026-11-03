@@ -64,7 +64,7 @@ export class PosReservationsService {
       .limit(200);
 
     if (error) {
-      throw new Error(`예약 조회 실패: ${error.message}`);
+      throw new Error('POS_RESERVATION_LOOKUP_FAILED');
     }
     return (data ?? []).map((r) => this.toDto(r));
   }
@@ -91,7 +91,7 @@ export class PosReservationsService {
       .single();
 
     if (error || !data) {
-      throw new Error(`예약 추가 실패: ${error?.message}`);
+      throw new Error('POS_RESERVATION_CREATE_FAILED');
     }
     return this.toDto(data);
   }
@@ -124,7 +124,7 @@ export class PosReservationsService {
       .eq('id', id);
 
     if (error) {
-      throw new Error(`예약 삭제 실패: ${error.message}`);
+      throw new Error('POS_RESERVATION_DELETE_FAILED');
     }
     return { id, deleted: true };
   }

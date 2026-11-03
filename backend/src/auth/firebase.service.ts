@@ -23,7 +23,7 @@ import {
   UnauthorizedException,
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import * as admin from 'firebase-admin';
+import type { App, ServiceAccount } from 'firebase-admin/app';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -32,15 +32,18 @@ export class FirebaseService implements OnModuleInit {
   private readonly logger = new Logger(FirebaseService.name);
 
   // Firebase Admin App 인스턴스 — 모듈당 1개만 초기화 (싱글톤)
-  private app: admin.app.App | null = null;
+  private app: App | null = null;
 
   constructor(private readonly config: ConfigService) {}
 
   // ── NestJS 라이프사이클: 모듈 로드 시 Firebase 초기화 ──
   // OnModuleInit 으로 한 번만 실행. 이미 초기화돼 있으면 기존 app 재사용.
-  onModuleInit(): void {
-    if (admin.apps.length > 0) {
-      this.app = admin.app();
+  async onModuleInit(): Promise<void> {
+    const { cert, getApp, getApps, initializeApp } = await import(
+      'firebase-admin/app'
+    );
+    if (getApps().length > 0) {
+      this.app = getApp();
       this.logger.log('Firebase Admin SDK already initialized — 기존 app 재사용');
       return;
     }
@@ -63,25 +66,21 @@ export class FirebaseService implements OnModuleInit {
       : path.resolve(process.cwd(), keyPath);
 
     if (!fs.existsSync(absoluteKeyPath)) {
-      this.logger.error(
-        `Firebase 서비스 계정 키 파일을 찾을 수 없음: ${absoluteKeyPath}`,
-      );
+      this.logger.error('FIREBASE_SERVICE_ACCOUNT_FILE_MISSING');
       return;
     }
 
     // JSON 파일을 동기 로드 (앱 부팅 1회만 실행되므로 동기 안전)
     const serviceAccount = JSON.parse(
       fs.readFileSync(absoluteKeyPath, 'utf-8'),
-    ) as admin.ServiceAccount;
+    ) as ServiceAccount;
 
-    this.app = admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount),
+    this.app = initializeApp({
+      credential: cert(serviceAccount),
       projectId,
     });
 
-    this.logger.log(
-      `Firebase Admin SDK 초기화 완료 — projectId=${projectId}`,
-    );
+    this.logger.log('FIREBASE_ADMIN_INITIALIZED');
   }
 
   // ── ID 토큰 검증 ───────────────────────────────────────
@@ -106,16 +105,15 @@ export class FirebaseService implements OnModuleInit {
     }
 
     try {
-      const decoded = await admin.auth(this.app).verifyIdToken(idToken);
+      const { getAuth } = await import('firebase-admin/auth');
+      const decoded = await getAuth(this.app).verifyIdToken(idToken);
       return {
         uid: decoded.uid,
         // phone_number 는 Phone Auth 로 로그인한 경우에만 채워짐
         phoneNumber: (decoded.phone_number as string | undefined) ?? null,
       };
-    } catch (err) {
-      this.logger.warn(
-        `Firebase ID 토큰 검증 실패: ${(err as Error).message}`,
-      );
+    } catch {
+      this.logger.warn('FIREBASE_ID_TOKEN_VERIFICATION_FAILED');
       throw new UnauthorizedException('유효하지 않은 Firebase 토큰입니다.');
     }
   }
@@ -148,7 +146,8 @@ export class FirebaseService implements OnModuleInit {
     }
 
     try {
-      await admin.messaging(this.app).send({
+      const { getMessaging } = await import('firebase-admin/messaging');
+      await getMessaging(this.app).send({
         token: params.token,
         notification: {
           title: params.title,
@@ -161,11 +160,9 @@ export class FirebaseService implements OnModuleInit {
         },
       });
       return true;
-    } catch (err) {
+    } catch {
       // 토큰 만료(UNREGISTERED) 등은 정상적인 케이스 — 경고만 남기고 false 반환
-      this.logger.warn(
-        `FCM 송신 실패: ${(err as Error).message}`,
-      );
+      this.logger.warn('FIREBASE_PUSH_SEND_FAILED');
       return false;
     }
   }

@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
+import '../../providers/user_provider.dart';
 import '../../services/email_otp_api_service.dart';
 
 // ══════════════════════════════════════════════════════════
@@ -12,11 +13,8 @@ import '../../services/email_otp_api_service.dart';
 //   회원가입 직후 (signup_screen → 가입 성공 → 본 화면 진입)
 //   - 진입 시 자동으로 sendOtp(email) 호출 → Supabase Auth 가 메일 발송
 //   - 사용자가 메일에서 받은 6자리 코드 입력 → verifyOtp 호출
-//   - 검증 성공 시 백엔드가 users.email_verified_at 갱신
-//
-// 강제 아님 (캡스톤 시연 편의):
-//   - "나중에 인증하기" 버튼으로 건너뛰기 가능
-//   - 둘 다 onComplete(nextStep) 콜백 호출 → main.dart 라우터가 다음 화면 결정
+//   - 검증 성공 시 백엔드가 users.email_verified_at 갱신 후 일반 JWT 발급
+//   - 일반 JWT를 저장한 뒤 main.dart 라우터가 다음 화면 결정
 //
 // 재발송:
 //   - "다시 보내기" 버튼은 30초 쿨다운 후 활성화 (Supabase rate-limit 보호)
@@ -26,15 +24,20 @@ class EmailOtpScreen extends ConsumerStatefulWidget {
   const EmailOtpScreen({
     super.key,
     required this.email,
-    required this.nextStep,
+    required this.verificationToken,
     required this.onComplete,
+    this.otpService = const EmailOtpApiService(),
   });
 
   /// 인증할 이메일 (가입 시 입력한 값)
   final String email;
 
-  /// 검증/건너뛰기 후 라우팅할 다음 단계 (signup 응답의 nextStep 그대로 전달)
-  final String nextStep;
+  /// 비밀번호 확인 또는 가입 직후 받은 10분짜리 이메일 검증 전용 JWT.
+  /// 일반 API 토큰으로 저장하지 않고 이 화면의 OTP 요청에만 사용한다.
+  final String verificationToken;
+
+  /// 기본은 실제 API 서비스이며, 위젯 테스트에서는 결정적 fake를 주입한다.
+  final EmailOtpApiService otpService;
 
   /// 화면 종료 콜백 — main.dart 의 _handleLoginSuccess 와 동일 시그니처
   final void Function({required String nextStep}) onComplete;
@@ -44,8 +47,6 @@ class EmailOtpScreen extends ConsumerStatefulWidget {
 }
 
 class _EmailOtpScreenState extends ConsumerState<EmailOtpScreen> {
-  static const _otpService = EmailOtpApiService();
-
   final _codeController = TextEditingController();
   bool _isVerifying = false;
   bool _isResending = false;
@@ -54,8 +55,8 @@ class _EmailOtpScreenState extends ConsumerState<EmailOtpScreen> {
   int _resendCooldown = 0;
   Timer? _cooldownTimer;
 
-  String? _info;   // 정보성 메시지 (메일 발송됨 등)
-  String? _error;  // 에러 메시지 (코드 불일치 등)
+  String? _info; // 정보성 메시지 (메일 발송됨 등)
+  String? _error; // 에러 메시지 (코드 불일치 등)
 
   @override
   void initState() {
@@ -79,7 +80,10 @@ class _EmailOtpScreenState extends ConsumerState<EmailOtpScreen> {
       _error = null;
     });
 
-    final result = await _otpService.sendOtp(widget.email);
+    final result = await widget.otpService.sendOtp(
+      widget.email,
+      widget.verificationToken,
+    );
 
     if (!mounted) return;
     setState(() {
@@ -120,26 +124,34 @@ class _EmailOtpScreenState extends ConsumerState<EmailOtpScreen> {
       _error = null;
     });
 
-    final result = await _otpService.verifyOtp(widget.email, code);
+    final result = await widget.otpService.verifyOtp(
+      widget.email,
+      code,
+      widget.verificationToken,
+    );
 
     if (!mounted) return;
     setState(() => _isVerifying = false);
 
     if (result.success) {
+      final authResponse = result.authResponse;
+      if (authResponse == null) {
+        setState(() => _error = '인증은 처리됐지만 로그인 정보를 확인하지 못했어요. 다시 로그인해주세요.');
+        return;
+      }
+
+      await ref.read(userProvider.notifier).setUser(authResponse);
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(result.message ?? '이메일 인증 완료'),
           backgroundColor: AppColors.success,
         ),
       );
-      widget.onComplete(nextStep: widget.nextStep);
+      widget.onComplete(nextStep: authResponse.nextStep);
     } else {
       setState(() => _error = result.message);
     }
-  }
-
-  void _skipVerification() {
-    widget.onComplete(nextStep: widget.nextStep);
   }
 
   @override
@@ -227,8 +239,9 @@ class _EmailOtpScreenState extends ConsumerState<EmailOtpScreen> {
                 const SizedBox(height: AppSpacing.sm),
                 Text(
                   _info!,
-                  style: AppTextStyles.caption
-                      .copyWith(color: AppColors.textSecondary),
+                  style: AppTextStyles.caption.copyWith(
+                    color: AppColors.textSecondary,
+                  ),
                   textAlign: TextAlign.center,
                 ),
               ],
@@ -250,8 +263,7 @@ class _EmailOtpScreenState extends ConsumerState<EmailOtpScreen> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: primary,
                   foregroundColor: Colors.white,
-                  padding:
-                      const EdgeInsets.symmetric(vertical: AppSpacing.md),
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
                 ),
                 child: _isVerifying
                     ? const SizedBox(
@@ -259,8 +271,9 @@ class _EmailOtpScreenState extends ConsumerState<EmailOtpScreen> {
                         height: 18,
                         child: CircularProgressIndicator(
                           strokeWidth: 2,
-                          valueColor:
-                              AlwaysStoppedAnimation<Color>(Colors.white),
+                          valueColor: AlwaysStoppedAnimation<Color>(
+                            Colors.white,
+                          ),
                         ),
                       )
                     : const Text(
@@ -277,25 +290,12 @@ class _EmailOtpScreenState extends ConsumerState<EmailOtpScreen> {
                     ? null
                     : _sendOtp,
                 style: OutlinedButton.styleFrom(
-                  padding:
-                      const EdgeInsets.symmetric(vertical: AppSpacing.sm),
+                  padding: const EdgeInsets.symmetric(vertical: AppSpacing.sm),
                 ),
                 child: Text(
                   _resendCooldown > 0
                       ? '다시 보내기 ($_resendCooldown초)'
                       : (_isResending ? '발송 중...' : '인증 메일 다시 보내기'),
-                ),
-              ),
-
-              const SizedBox(height: AppSpacing.lg),
-
-              // ── 건너뛰기 ────────────────────────────────
-              TextButton(
-                onPressed: _skipVerification,
-                child: Text(
-                  '나중에 인증하기',
-                  style: AppTextStyles.bodyMedium
-                      .copyWith(color: AppColors.textSecondary),
                 ),
               ),
             ],

@@ -1,8 +1,9 @@
-import { Controller, Get } from '@nestjs/common';
+import { Controller, Get, HttpException, HttpStatus } from '@nestjs/common';
 // 2026-05-15 자율 E2E 회귀 발견: /api/health 가 글로벌 throttle 에 걸려 429 반환.
 // 모니터링 엔드포인트는 throttle 적용 대상이 아님 → @SkipThrottle 적용.
 import { SkipThrottle } from '@nestjs/throttler';
 import { AppService } from './app.service';
+import { SchemaHealthcheckService } from './supabase/schema-healthcheck.service';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 루트 컨트롤러 + 헬스체크 엔드포인트
@@ -18,9 +19,10 @@ import { AppService } from './app.service';
 @Controller()
 export class AppController {
   // 서버 부팅 시점 — uptime 계산 기준
-  private readonly startedAt = Date.now();
-
-  constructor(private readonly appService: AppService) {}
+  constructor(
+    private readonly appService: AppService,
+    private readonly schemaHealthcheck: SchemaHealthcheckService,
+  ) {}
 
   @Get()
   getHello(): string {
@@ -35,16 +37,26 @@ export class AppController {
   @SkipThrottle({ default: true, auth: true, signup: true })
   @Get('health')
   health() {
-    const mem = process.memoryUsage();
     return {
       status: 'ok',
-      uptimeSeconds: Math.floor((Date.now() - this.startedAt) / 1000),
-      memoryMB: {
-        rss: Math.round(mem.rss / 1024 / 1024),
-        heapUsed: Math.round(mem.heapUsed / 1024 / 1024),
-      },
       timestamp: new Date().toISOString(),
-      nodeVersion: process.version,
     };
+  }
+
+  @SkipThrottle({ default: true, auth: true, signup: true })
+  @Get('ready')
+  ready() {
+    const schema = this.schemaHealthcheck.getReadinessStatus();
+    const response = {
+      status: schema.ready ? 'ok' : 'not_ready',
+      checks: { schema },
+      timestamp: new Date().toISOString(),
+    };
+
+    if (!schema.ready) {
+      throw new HttpException(response, HttpStatus.SERVICE_UNAVAILABLE);
+    }
+
+    return response;
   }
 }

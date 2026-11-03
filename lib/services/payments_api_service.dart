@@ -96,22 +96,18 @@ class PaymentsApiService {
         // 크래시. 결제 금액만 소비되고 결과 화면 진입 실패하는 회귀 차단.
         final data = json['data'] as Map<String, dynamic>?;
         if (data == null) {
-          debugPrint(
-            '[PaymentsApiService] confirmPayment 응답에 data 필드 누락: '
-            '${response.body}',
-          );
+          debugPrint('[PaymentsApiService] CONFIRM_PAYMENT_DATA_MISSING');
           return null;
         }
         return ConfirmPaymentResult.fromJson(data);
       }
 
       debugPrint(
-        '[PaymentsApiService] confirmPayment 실패: '
-        '${response.statusCode} ${response.body}',
+        '[PaymentsApiService] CONFIRM_PAYMENT_HTTP_${response.statusCode}',
       );
       return null;
     } catch (e) {
-      debugPrint('[PaymentsApiService] confirmPayment 에러: $e');
+      debugPrint('[PaymentsApiService] CONFIRM_PAYMENT_FAILED');
       return null;
     }
   }

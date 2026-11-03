@@ -54,7 +54,7 @@ export class FriendsService {
       .maybeSingle();
 
     if (findError) {
-      this.logger.error(`친구 조회 실패: ${findError.message}`);
+      this.logger.error('FRIEND_LOOKUP_PERSIST_FAILED');
       throw new InternalServerErrorException('친구를 찾는 중 오류가 났어요.');
     }
     if (!friendUser) {
@@ -81,7 +81,7 @@ export class FriendsService {
       if (insertError.code === '23505') {
         throw new ConflictException('이미 친구로 등록되어 있어요.');
       }
-      this.logger.error(`친구 INSERT 실패: ${insertError.message}`);
+      this.logger.error('FRIEND_CREATE_PERSIST_FAILED');
       throw new InternalServerErrorException('친구를 추가하지 못했어요.');
     }
 
@@ -107,7 +107,7 @@ export class FriendsService {
       .order('created_at', { ascending: false });
 
     if (error) {
-      this.logger.error(`친구 목록 조회 실패: ${error.message}`);
+      this.logger.error('FRIEND_LIST_PERSIST_FAILED');
       throw new InternalServerErrorException('친구 목록을 불러오지 못했어요.');
     }
 
@@ -142,7 +142,7 @@ export class FriendsService {
       );
 
     if (error) {
-      this.logger.error(`친구 삭제 실패: ${error.message}`);
+      this.logger.error('FRIEND_DELETE_PERSIST_FAILED');
       throw new InternalServerErrorException('친구를 삭제하지 못했어요.');
     }
 

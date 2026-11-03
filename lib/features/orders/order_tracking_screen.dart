@@ -166,13 +166,9 @@ class _OrderTrackingScreenState extends ConsumerState<OrderTrackingScreen>
     String token,
     OrderDetailDto order,
   ) async {
-    final userId = ref.read(userProvider).userId;
-    if (userId == null || userId.isEmpty) return;
-
     final loyalty = await _restaurantsApi.getLoyalty(
       accessToken: token,
       restaurantId: order.restaurantId!,
-      userId: userId,
     );
 
     if (!mounted || loyalty == null || loyalty.visitCount <= 0) return;

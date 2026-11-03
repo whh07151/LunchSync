@@ -18,8 +18,7 @@ class PosLoginDto {
   /// 단말 식별 라벨 (예: "카운터1", "주방POS") — 선택. 운영 로그용
   @IsOptional() @IsString() terminalName?: string;
 
-  /// POS 단말 PIN (2026-05-12 추가) — 환경변수 POS_PIN 설정 시 필수 검증.
-  /// 시드 매장 UUID 가 노출되어도 PIN 모르면 토큰 발급 불가.
+  /// 비운영 시연 전용 공용 PIN. production에서는 이 로그인 방식 자체가 비활성.
   @IsOptional() @IsString() pin?: string;
 }
 
@@ -33,7 +32,7 @@ export class PosAuthController {
   constructor(private readonly posAuthService: PosAuthService) {}
 
   // ── POS 단말 로그인 ────────────────────────────────────
-  // restaurantId 가 유효하면 type=POS JWT 발급. LSPOS 의 useAuth 가
+  // 비운영에서 명시적으로 활성화된 경우에만 type=POS JWT 발급. LSPOS 의 useAuth 가
   // localStorage 에 accessToken 저장 → client.ts 가 Bearer 헤더 자동 주입.
   //
   // 부르트포스 차단 (2026-05-12): IP 당 분당 5회 제한.
@@ -64,7 +63,10 @@ export class PosAuthController {
   @Throttle({ default: { limit: 30, ttl: 60_000 } })
   @Post('login-owner')
   async loginOwner(@Body() dto: PosOwnerLoginDto) {
-    const result = await this.posAuthService.loginOwner(dto.email, dto.password);
+    const result = await this.posAuthService.loginOwner(
+      dto.email,
+      dto.password,
+    );
     return { success: true, data: result };
   }
 }

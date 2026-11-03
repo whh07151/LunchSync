@@ -14,6 +14,7 @@ import {
   PosRestaurantsService,
 } from './pos-restaurants.service';
 import type { AuthedRequestUser } from '../auth/jwt.strategy';
+import { PosAccessService } from '../auth/pos-ownership.util';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 사장 계정 기반 식당 등록/조회 HTTP 엔드포인트
@@ -42,7 +43,10 @@ class CreateRestaurantRequestDto implements CreateRestaurantDto {
 @Controller('pos')
 @UseGuards(JwtAuthGuard)
 export class PosRestaurantsController {
-  constructor(private readonly service: PosRestaurantsService) {}
+  constructor(
+    private readonly service: PosRestaurantsService,
+    private readonly posAccess: PosAccessService,
+  ) {}
 
   // ── POST /api/pos/restaurants — 식당 등록 ─────────────
   // 사장이 LSPOS 최초 진입 시 식당 정보를 입력해 DB에 저장.
@@ -55,6 +59,7 @@ export class PosRestaurantsController {
     if (req.user.type !== 'USER' || !req.user.userId) {
       throw new BadRequestException('사용자 계정(USER)으로만 식당을 등록할 수 있습니다.');
     }
+    await this.posAccess.assertApprovedOwner(req.user.userId);
     const result = await this.service.create(req.user.userId, dto);
     return { success: true, data: result };
   }
@@ -66,6 +71,7 @@ export class PosRestaurantsController {
     if (req.user.type !== 'USER' || !req.user.userId) {
       throw new BadRequestException('사용자 계정(USER)으로만 조회할 수 있습니다.');
     }
+    await this.posAccess.assertApprovedOwner(req.user.userId);
     const result = await this.service.getMyRestaurant(req.user.userId);
     return { success: true, data: result };
   }

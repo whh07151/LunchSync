@@ -85,7 +85,7 @@ class PosMenusApiService {
           .map(PosMenuItem.fromJson)
           .toList(growable: false);
     } catch (e) {
-      debugPrint('[PosMenusApiService] list 에러: $e');
+      debugPrint('[PosMenusApiService] LIST_MENUS_FAILED');
       return const [];
     }
   }

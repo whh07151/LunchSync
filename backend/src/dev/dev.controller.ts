@@ -88,11 +88,7 @@ export class DevController {
     @Req() req: { user: { userId: string } },
     @Body() dto: PromoteToOwnerDto,
   ) {
-    if (process.env.DEV_PROMOTE_ENABLED !== 'true') {
-      throw new ForbiddenException(
-        'dev promote 라우트가 비활성 상태입니다. EC2 .env 에 DEV_PROMOTE_ENABLED=true 추가 후 재시작하세요.',
-      );
-    }
+    this.assertDevRoutesEnabled();
 
     const userId = req.user.userId;
     const targetRole = dto.role ?? 'OWNER';
@@ -142,11 +138,7 @@ export class DevController {
   // 같은 분리 시연이 필요한 경우 활용. DEV_PROMOTE_ENABLED 미설정 시 즉시 거절.
   @Post('login-as-seed')
   async loginAsSeed(@Body() dto: LoginAsSeedDto) {
-    if (process.env.DEV_PROMOTE_ENABLED !== 'true') {
-      throw new ForbiddenException(
-        'dev 라우트 비활성. EC2 .env 에 DEV_PROMOTE_ENABLED=true 추가 후 재시작 필요.',
-      );
-    }
+    this.assertDevRoutesEnabled();
 
     const meta = SEED_USER_MAP[dto.seedKey];
     if (!meta) {
@@ -183,5 +175,14 @@ export class DevController {
         restaurantId: user.restaurant_id,
       },
     };
+  }
+
+  private assertDevRoutesEnabled(): void {
+    if (
+      process.env.NODE_ENV === 'production' ||
+      process.env.DEV_PROMOTE_ENABLED !== 'true'
+    ) {
+      throw new ForbiddenException('개발 전용 라우트가 비활성 상태입니다.');
+    }
   }
 }

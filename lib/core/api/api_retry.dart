@@ -85,7 +85,7 @@ class ApiRetry {
         if (response.statusCode >= 500 && attempt < maxAttempts) {
           lastError = 'HTTP ${response.statusCode}';
           debugPrint(
-            '[ApiRetry] $uri → ${response.statusCode} (재시도 $attempt/$maxAttempts)',
+            '[ApiRetry] HTTP_RETRY_${response.statusCode}_$attempt',
           );
           await _wait(attempt);
           continue;
@@ -106,7 +106,7 @@ class ApiRetry {
       // 여기 도달 = 일시적 오류 발생. 마지막 시도가 아니면 백오프 후 재시도.
       if (attempt < maxAttempts) {
         debugPrint(
-          '[ApiRetry] $uri 일시 오류: $lastError (재시도 $attempt/$maxAttempts)',
+          '[ApiRetry] NETWORK_RETRY_$attempt',
         );
         await _wait(attempt);
       }

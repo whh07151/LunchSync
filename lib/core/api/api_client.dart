@@ -183,16 +183,16 @@ class ApiClient {
       };
       response = await future.timeout(AppConfig.apiTimeout);
     } on TimeoutException {
-      debugPrint('[ApiClient] $method $path timeout');
+      debugPrint('[ApiClient] HTTP_TIMEOUT');
       return ApiResult.failure(const ApiError(
         type: ApiErrorType.timeout,
         message: 'timeout',
       ));
-    } catch (e) {
-      debugPrint('[ApiClient] $method $path network error: $e');
-      return ApiResult.failure(ApiError(
+    } catch (_) {
+      debugPrint('[ApiClient] HTTP_NETWORK_FAILED');
+      return ApiResult.failure(const ApiError(
         type: ApiErrorType.network,
-        message: e.toString(),
+        message: 'network failed',
       ));
     }
 
@@ -201,8 +201,8 @@ class ApiClient {
       if (AppConfig.autoLogoutOn401 && onUnauthorized != null) {
         try {
           onUnauthorized!();
-        } catch (e) {
-          debugPrint('[ApiClient] onUnauthorized 콜백 오류 (무시): $e');
+        } catch (_) {
+          debugPrint('[ApiClient] UNAUTHORIZED_CALLBACK_FAILED');
         }
       }
       return ApiResult.failure(const ApiError(
@@ -218,8 +218,8 @@ class ApiClient {
       if (response.body.isNotEmpty) {
         parsed = jsonDecode(response.body) as Map<String, dynamic>;
       }
-    } catch (e) {
-      debugPrint('[ApiClient] $method $path JSON 파싱 실패: $e');
+    } catch (_) {
+      debugPrint('[ApiClient] HTTP_RESPONSE_PARSE_FAILED');
       return ApiResult.failure(ApiError(
         type: ApiErrorType.parse,
         message: 'parse failed',

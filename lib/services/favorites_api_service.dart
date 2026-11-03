@@ -86,11 +86,11 @@ class FavoritesApiService {
         return list;
       }
       debugPrint(
-        '[FavoritesApi] add 실패: ${response.statusCode} ${response.body}',
+        '[FavoritesApi] ADD_FAVORITE_HTTP_${response.statusCode}',
       );
       return null;
     } catch (e) {
-      debugPrint('[FavoritesApi] add 예외: $e');
+      debugPrint('[FavoritesApi] ADD_FAVORITE_FAILED');
       return null;
     }
   }
@@ -119,11 +119,11 @@ class FavoritesApiService {
         return list;
       }
       debugPrint(
-        '[FavoritesApi] remove 실패: ${response.statusCode} ${response.body}',
+        '[FavoritesApi] REMOVE_FAVORITE_HTTP_${response.statusCode}',
       );
       return null;
     } catch (e) {
-      debugPrint('[FavoritesApi] remove 예외: $e');
+      debugPrint('[FavoritesApi] REMOVE_FAVORITE_FAILED');
       return null;
     }
   }
@@ -147,11 +147,11 @@ class FavoritesApiService {
         return list;
       }
       debugPrint(
-        '[FavoritesApi] list 실패: ${response.statusCode} ${response.body}',
+        '[FavoritesApi] LIST_FAVORITES_HTTP_${response.statusCode}',
       );
       return const [];
     } catch (e) {
-      debugPrint('[FavoritesApi] list 예외: $e');
+      debugPrint('[FavoritesApi] LIST_FAVORITES_FAILED');
       return const [];
     }
   }

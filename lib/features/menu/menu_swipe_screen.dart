@@ -165,8 +165,7 @@ class _MenuSwipeScreenState extends ConsumerState<MenuSwipeScreen>
     await prefs.setStringList(key, merged);
 
     debugPrint(
-      '[MenuSwipeScreen] 찜 저장 완료: key=$key '
-      '+${_pendingFavoriteIds.length}개, total=${merged.length}',
+      '[MenuSwipeScreen] FAVORITES_PERSISTED_${_pendingFavoriteIds.length}',
     );
     _pendingFavoriteIds.clear();
   }
@@ -282,19 +281,19 @@ class _MenuSwipeScreenState extends ConsumerState<MenuSwipeScreen>
 
     switch (action) {
       case _SwipeAction.pass:
-        debugPrint('[MenuSwipeScreen] PASS: ${menu.name}');
+        debugPrint('[MenuSwipeScreen] MENU_PASSED');
         break;
       case _SwipeAction.like:
         _likedCount++;
         _pendingFavoriteIds.add(menu.id);
         _showQuickToast('찜했어요 ❤️', AppColors.background);
-        debugPrint('[MenuSwipeScreen] LIKE: ${menu.name}');
+        debugPrint('[MenuSwipeScreen] MENU_LIKED');
         break;
       case _SwipeAction.addToCart:
         _addedToCartCount++;
         ref.read(cartProvider.notifier).addItem(menu);
         _showQuickToast('장바구니에 담았어요 🛒', AppColors.background);
-        debugPrint('[MenuSwipeScreen] ADD_TO_CART: ${menu.name}');
+        debugPrint('[MenuSwipeScreen] MENU_ADDED_TO_CART');
         break;
     }
 
@@ -658,7 +657,7 @@ class _MenuSwipeScreenState extends ConsumerState<MenuSwipeScreen>
             child: Opacity(
               opacity: _leftProgress,
               child: _overlayLabel(
-                text: 'PASS',
+                text: '넘기기',
                 color: AppColors.error,
                 rotateDeg: -15,
               ),
@@ -672,7 +671,7 @@ class _MenuSwipeScreenState extends ConsumerState<MenuSwipeScreen>
             child: Opacity(
               opacity: _rightProgress,
               child: _overlayLabel(
-                text: 'LIKE',
+                text: '좋아요',
                 color: const Color(0xFFE91E63), // 표준 핑크 — 토큰 미정의
                 rotateDeg: 15,
               ),
@@ -688,7 +687,7 @@ class _MenuSwipeScreenState extends ConsumerState<MenuSwipeScreen>
               opacity: _upProgress,
               child: Center(
                 child: _overlayLabel(
-                  text: 'CART',
+                  text: '담기',
                   color: Theme.of(context).colorScheme.primary,
                   rotateDeg: 0,
                 ),

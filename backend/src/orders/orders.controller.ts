@@ -10,18 +10,20 @@ import {
 } from '@nestjs/common';
 import {
   IsString,
+  IsUUID,
   IsNotEmpty,
   IsArray,
   ValidateNested,
   IsInt,
   IsOptional,
+  IsIn,
   Min,
   Max,
   ArrayMinSize,
   ArrayMaxSize,
   MaxLength,
 } from 'class-validator';
-import { Type } from 'class-transformer';
+import { Transform, Type } from 'class-transformer';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrdersService } from './orders.service';
 
@@ -42,7 +44,7 @@ class OrderItemDto {
 }
 
 class CreateOrderDto {
-  @IsString() @IsNotEmpty() sessionId: string;
+  @IsUUID() @IsNotEmpty() sessionId: string;
 
   // 2026-05-13 보안 패치: 한 주문에 메뉴 1~100개로 제한 (DoS 방어)
   @IsArray()
@@ -54,11 +56,16 @@ class CreateOrderDto {
 
   @IsOptional()
   @IsString()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsIn(['TOSS', 'TRANSFER', 'KAKAOPAY', 'BANK', 'CARD', 'CASH', 'SIMULATE'])
   paymentMethod?: string; // CARD | TRANSFER | CASH | SIMULATE
 }
 
 class UpdateOrderStatusDto {
-  @IsString() @IsNotEmpty() status: string;
+  // 고객은 결제 완료 상태를 직접 만들 수 없다. 결제 승인은 payments/POS 경계 소유.
+  @IsString() @IsNotEmpty() @IsIn(['CANCELLED']) status: 'CANCELLED';
 }
 
 // 2026-05-15 별점/리뷰 (배민 패턴)
@@ -80,7 +87,7 @@ export class OrdersController {
     const result = await this.ordersService.createOrder(req.user.userId, {
       sessionId: dto.sessionId,
       items: dto.items,
-      paymentMethod: dto.paymentMethod ?? 'SIMULATE',
+      paymentMethod: dto.paymentMethod ?? 'TOSS',
     });
     return { success: true, data: result };
   }

@@ -196,7 +196,7 @@ class PosApiService {
           .map(PosOrder.fromJson)
           .toList(growable: false);
     } catch (e) {
-      debugPrint('[PosApiService] getOrders 에러: $e');
+      debugPrint('[PosApiService] GET_ORDERS_FAILED');
       return const [];
     }
   }
@@ -227,7 +227,7 @@ class PosApiService {
       }
       return PosStats.empty;
     } catch (e) {
-      debugPrint('[PosApiService] getStats 에러: $e');
+      debugPrint('[PosApiService] GET_STATS_FAILED');
       return PosStats.empty;
     }
   }
@@ -304,7 +304,7 @@ class PosApiService {
           .map(PosOrder.fromJson)
           .toList(growable: false);
     } catch (e) {
-      debugPrint('[PosApiService] getPaymentHistory 에러: $e');
+      debugPrint('[PosApiService] GET_PAYMENT_HISTORY_FAILED');
       return const [];
     }
   }
@@ -329,7 +329,7 @@ class PosApiService {
       ApiAuthHooks.check(response.statusCode);
       return response.statusCode == 200 || response.statusCode == 201;
     } catch (e) {
-      debugPrint('[PosApiService] refundSim 에러: $e');
+      debugPrint('[PosApiService] REFUND_SIMULATION_FAILED');
       return false;
     }
   }

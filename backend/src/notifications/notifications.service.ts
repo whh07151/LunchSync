@@ -54,7 +54,7 @@ export class NotificationsService {
 
     if (error) {
       // 500: 알림 SELECT 실패 → 운영팀 알람용
-      throw new InternalServerErrorException(`알림 조회 실패: ${error.message}`);
+      throw new InternalServerErrorException('알림을 불러오지 못했어요.');
     }
 
     return (data ?? []).map((n) => ({
@@ -97,7 +97,7 @@ export class NotificationsService {
 
     if (error) {
       throw new InternalServerErrorException(
-        `전체 읽음 처리 실패: ${error.message}`,
+        '알림을 모두 읽음 처리하지 못했어요.',
       );
     }
 
@@ -131,9 +131,7 @@ export class NotificationsService {
       .single();
 
     if (error || !data) {
-      throw new InternalServerErrorException(
-        `알림 생성 실패: ${error?.message}`,
-      );
+      throw new InternalServerErrorException('알림을 만들지 못했어요.');
     }
 
     // ── FCM 푸시 송신 (best-effort) ──────────────────────
@@ -184,11 +182,9 @@ export class NotificationsService {
         body: params.body,
         data: params.data,
       });
-    } catch (err) {
+    } catch {
       // FCM 송신은 best-effort — 실패해도 비즈니스 흐름 계속 진행
-      this.logger.warn(
-        `FCM 푸시 송신 시도 중 오류 (무시): ${(err as Error).message}`,
-      );
+      this.logger.warn('NOTIFICATION_PUSH_SEND_FAILED');
     }
   }
 }

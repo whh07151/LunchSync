@@ -11,7 +11,7 @@ import '../../core/debug/debug_toast.dart';
 //   - 로고: primary 원형 + 살짝 그림자 + 아이콘
 //   - 슬로건: 2줄, 부드러운 톤
 //   - 권한 안내: 흰 카드 + 아이콘 + 짧은 설명
-//   - CTA: 카카오 공식 노랑(#FEE500) + 둘러보기 텍스트 버튼
+//   - CTA: 로그인 화면 진입 (카카오/이메일/휴대폰 선택)
 //
 // 일관성 규칙:
 //   - 모든 픽셀은 AppSpacing/AppRadius 토큰만 사용
@@ -20,18 +20,12 @@ import '../../core/debug/debug_toast.dart';
 //
 // 동작 흐름:
 //   onStart  → 로그인 화면 (카카오/이메일/휴대폰 선택)
-//   onBrowse → 둘러보기 모드 (로그인 없이 진입)
 // ══════════════════════════════════════════════════════════
 
 class SplashScreen extends StatefulWidget {
-  const SplashScreen({
-    super.key,
-    required this.onStart,
-    required this.onBrowse,
-  });
+  const SplashScreen({super.key, required this.onStart});
 
   final VoidCallback onStart;
-  final VoidCallback onBrowse;
 
   @override
   State<SplashScreen> createState() => _SplashScreenState();
@@ -118,11 +112,7 @@ class _SplashScreenState extends State<SplashScreen>
         ],
       ),
       child: const Center(
-        child: Icon(
-          Icons.lunch_dining_rounded,
-          size: 48,
-          color: Colors.white,
-        ),
+        child: Icon(Icons.lunch_dining_rounded, size: 48, color: Colors.white),
       ),
     );
   }
@@ -221,7 +211,7 @@ class _SplashScreenState extends State<SplashScreen>
     );
   }
 
-  // ── 하단 CTA — 카카오 노랑 버튼 + 둘러보기 텍스트 버튼 ────
+  // ── 하단 CTA — 실제 지원하는 로그인 화면으로 이동 ────
   Widget _buildButtons() {
     return Column(
       children: [
@@ -231,37 +221,19 @@ class _SplashScreenState extends State<SplashScreen>
           child: ElevatedButton.icon(
             onPressed: widget.onStart,
             style: ElevatedButton.styleFrom(
-              // 카카오 공식 색상 (변경 금지)
-              backgroundColor: const Color(0xFFFEE500),
-              foregroundColor: const Color(0xFF3C1E1E),
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              foregroundColor: Theme.of(context).colorScheme.onPrimary,
               elevation: 0,
               shape: RoundedRectangleBorder(
                 borderRadius: BorderRadius.circular(AppRadius.button),
               ),
             ),
-            icon: const Icon(Icons.chat_bubble_rounded, size: 20),
+            icon: const Icon(Icons.login_rounded, size: 20),
             label: Text(
-              '카카오로 시작하기',
+              '로그인·회원가입',
               style: AppTextStyles.buttonLarge.copyWith(
-                color: const Color(0xFF3C1E1E),
+                color: Theme.of(context).colorScheme.onPrimary,
               ),
-            ),
-          ),
-        ),
-        const SizedBox(height: AppSpacing.sm),
-        TextButton(
-          onPressed: widget.onBrowse,
-          style: TextButton.styleFrom(
-            foregroundColor: AppColors.textSecondary,
-            padding: const EdgeInsets.symmetric(
-              horizontal: AppSpacing.md,
-              vertical: AppSpacing.sm,
-            ),
-          ),
-          child: Text(
-            '먼저 둘러볼게요',
-            style: AppTextStyles.buttonMedium.copyWith(
-              color: AppColors.textSecondary,
             ),
           ),
         ),

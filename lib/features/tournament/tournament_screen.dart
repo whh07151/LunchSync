@@ -694,7 +694,7 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
           }
         })
         .catchError((Object e) {
-          debugPrint('[TournamentScreen] 우승 결과 적재 예외: $e');
+          debugPrint('[TournamentScreen] RESULT_PERSIST_FAILED');
         });
   }
 
@@ -711,7 +711,7 @@ class _TournamentScreenState extends ConsumerState<TournamentScreen>
       // share_plus 10.1.x — 정적 Share.share() 호출(wrapped_screen 동일 패턴).
       await Share.share(text, subject: '점심 토너먼트 우승');
     } catch (e) {
-      debugPrint('[TournamentScreen] share 실패: $e');
+      debugPrint('[TournamentScreen] SHARE_FAILED');
     }
   }
 

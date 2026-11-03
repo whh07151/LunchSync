@@ -1,5 +1,7 @@
-import { Controller, Get, Param, UseGuards } from '@nestjs/common';
+import { Controller, Get, Param, Req, UseGuards } from '@nestjs/common';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
+import { SessionAccessService } from '../auth/session-access.service';
+import type { AuthedRequestUser } from '../auth/jwt.strategy';
 import { RecommendationsService } from './recommendations.service';
 
 // ══════════════════════════════════════════════════════════
@@ -21,10 +23,15 @@ import { RecommendationsService } from './recommendations.service';
 export class RecommendationsController {
   constructor(
     private readonly recommendationsService: RecommendationsService,
+    private readonly sessionAccess: SessionAccessService,
   ) {}
 
   @Get(':id/recommendations')
-  async getRecommendations(@Param('id') sessionId: string) {
+  async getRecommendations(
+    @Req() req: { user: AuthedRequestUser },
+    @Param('id') sessionId: string,
+  ) {
+    await this.sessionAccess.assertMember(sessionId, req.user.userId);
     // 서비스는 봉투 형태(items + metadata)를 돌려준다.
     // 컨트롤러에서 기존 응답 키마 호환을 위해 data + metadata 두 레벨로 펼친다.
     const result =

@@ -66,17 +66,14 @@ class MenusApiService {
   /// [accessToken]
   ///   - userProvider.accessToken — 누락 시 호출 자체 건너뛰는 책임은 호출부.
   ///
-  /// [userId]
-  ///   - userProvider.userId — 본인의 알레르기를 기준으로 검증.
   Future<List<MenuAllergenConflictDto>> checkAllergens({
     required String accessToken,
     required String restaurantId,
-    required String userId,
   }) async {
     try {
       final uri = Uri.parse(
         '${AppConfig.backendBaseUrl}/menus/restaurant/$restaurantId/check-allergens',
-      ).replace(queryParameters: {'userId': userId});
+      );
 
       final response = await ApiRetry.get(
         uri,
@@ -100,7 +97,7 @@ class MenusApiService {
               MenuAllergenConflictDto.fromJson(e as Map<String, dynamic>))
           .toList();
     } catch (e) {
-      debugPrint('[MenusApiService] checkAllergens 에러: $e');
+      debugPrint('[MenusApiService] CHECK_ALLERGENS_FAILED');
       return const [];
     }
   }

@@ -67,7 +67,7 @@ export class PosSeatsService {
       .order('sort_order', { ascending: true });
 
     if (error) {
-      throw new Error(`좌석 조회 실패: ${error.message}`);
+      throw new Error('POS_SEAT_LOOKUP_FAILED');
     }
 
     return (data ?? []).map((s) => this.toDto(s));
@@ -94,7 +94,7 @@ export class PosSeatsService {
       .single();
 
     if (error || !data) {
-      throw new Error(`좌석 추가 실패: ${error?.message}`);
+      throw new Error('POS_SEAT_CREATE_FAILED');
     }
     return this.toDto(data);
   }
@@ -146,7 +146,7 @@ export class PosSeatsService {
       .eq('id', seatId);
 
     if (error) {
-      throw new Error(`좌석 삭제 실패: ${error.message}`);
+      throw new Error('POS_SEAT_DELETE_FAILED');
     }
     return { id: seatId, deleted: true };
   }

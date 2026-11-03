@@ -14,6 +14,7 @@ import { PosReservationsController } from './pos-reservations.controller';
 import { PosReservationsService } from './pos-reservations.service';
 import { PosRestaurantsController } from './pos-restaurants.controller';
 import { PosRestaurantsService } from './pos-restaurants.service';
+import { PosAccessService } from '../auth/pos-ownership.util';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 점주앱/POS 모듈
@@ -59,6 +60,7 @@ import { PosRestaurantsService } from './pos-restaurants.service';
     PosSeatsService,
     PosReservationsService,
     PosRestaurantsService,
+    PosAccessService,
   ],
 })
 export class PosModule {}

@@ -34,8 +34,8 @@ export interface UpdateUserDto {
 // 2026-05-31 CU-04 — PATCH /users/me/preferences 요청 바디 타입.
 // 추천 엔진이 직접 읽는 구조화 데이터.
 export interface UpdatePreferencesDto {
-  tasteTags?: string[];          // 좋아하는 맛 태그
-  allergens?: string[];          // 알레르기 식재료 (후보군 제외)
+  tasteTags?: string[]; // 좋아하는 맛 태그
+  allergens?: string[]; // 알레르기 식재료 (후보군 제외)
   dislikedCategories?: string[]; // 비선호 카테고리 (점수 감점/제외)
 }
 
@@ -61,6 +61,27 @@ export class UsersService {
       throw new NotFoundException('유저를 찾을 수 없습니다.');
     }
 
+    // restaurants.owner_user_id가 점주 소유권의 기준이다. 신규 등록 경로는
+    // 이 컬럼을 즉시 기록하므로 users.restaurant_id가 아직 NULL이어도 앱이
+    // 정상 매장 ID를 받는다. canonical 매핑이 없는 기존 데이터만 legacy 값을 쓴다.
+    let restaurantId = data.restaurant_id as string | null;
+    if (data.role === 'OWNER') {
+      const { data: ownedRestaurant, error: restaurantError } =
+        await this.supabase.client
+          .from('restaurants')
+          .select('id')
+          .eq('owner_user_id', userId)
+          .maybeSingle();
+
+      if (restaurantError) {
+        this.logger.error('USER_OWNER_MAPPING_LOOKUP_FAILED');
+        throw new InternalServerErrorException(
+          '매장 연결 정보를 확인할 수 없습니다.',
+        );
+      }
+      restaurantId = ownedRestaurant?.id ?? restaurantId;
+    }
+
     // DB snake_case → 응답 camelCase 변환
     return {
       id: data.id,
@@ -78,8 +99,8 @@ export class UsersService {
       phoneNumber: data.phone_number,
       businessName: data.business_name,
       businessNumber: data.business_number,
-      // OWNER ↔ 운영 식당 매핑 (NULL이면 아직 매장 미연결 — 운영자가 콘솔에서 매핑)
-      restaurantId: data.restaurant_id,
+      // canonical owner_user_id를 우선하고, 기존 users.restaurant_id를 보조로 사용.
+      restaurantId,
       allergies: data.allergies ?? [],
       dislikes: data.dislikes ?? [],
       // 2026-05-31 CU-04 — 추천 엔진이 읽는 구조화 취향 데이터
@@ -97,15 +118,18 @@ export class UsersService {
     const updateData: Record<string, unknown> = {};
     if (dto.name !== undefined) updateData.name = dto.name;
     if (dto.org !== undefined) updateData.org = dto.org;
-    if (dto.profileImage !== undefined) updateData.profile_image = dto.profileImage;
+    if (dto.profileImage !== undefined)
+      updateData.profile_image = dto.profileImage;
     if (dto.radius !== undefined) updateData.radius = dto.radius;
     if (dto.budget !== undefined) updateData.budget = dto.budget;
     if (dto.speed !== undefined) updateData.speed = dto.speed;
     if (dto.allergies !== undefined) updateData.allergies = dto.allergies;
     if (dto.dislikes !== undefined) updateData.dislikes = dto.dislikes;
     // OWNER 전용 — DB 컬럼명도 snake_case
-    if (dto.businessName !== undefined) updateData.business_name = dto.businessName;
-    if (dto.businessNumber !== undefined) updateData.business_number = dto.businessNumber;
+    if (dto.businessName !== undefined)
+      updateData.business_name = dto.businessName;
+    if (dto.businessNumber !== undefined)
+      updateData.business_number = dto.businessNumber;
 
     const { data, error } = await this.supabase.client
       .from('users')
@@ -117,7 +141,7 @@ export class UsersService {
       .single();
 
     if (error || !data) {
-      throw new Error(`프로필 수정 실패: ${error?.message}`);
+      throw new Error('USER_PROFILE_UPDATE_FAILED');
     }
 
     return {
@@ -182,10 +206,8 @@ export class UsersService {
       .single();
 
     if (error || !data) {
-      this.logger.error(`취향 설정 저장 실패: ${error?.message}`);
-      throw new InternalServerErrorException(
-        '취향 설정을 저장하지 못했어요.',
-      );
+      this.logger.error('USER_PREFERENCE_PERSIST_FAILED');
+      throw new InternalServerErrorException('취향 설정을 저장하지 못했어요.');
     }
 
     return {
@@ -211,7 +233,7 @@ export class UsersService {
       .eq('id', userId);
 
     if (error) {
-      throw new Error(`FCM 토큰 저장 실패: ${error.message}`);
+      throw new Error('USER_FCM_TOKEN_PERSIST_FAILED');
     }
   }
 
@@ -267,10 +289,8 @@ export class UsersService {
       .eq('id', userId);
 
     if (updateError) {
-      this.logger.error(`즐겨찾기 추가 실패: ${updateError.message}`);
-      throw new InternalServerErrorException(
-        '즐겨찾기를 추가하지 못했어요.',
-      );
+      this.logger.error('USER_FAVORITE_ADD_PERSIST_FAILED');
+      throw new InternalServerErrorException('즐겨찾기를 추가하지 못했어요.');
     }
 
     return next;
@@ -309,10 +329,8 @@ export class UsersService {
       .eq('id', userId);
 
     if (updateError) {
-      this.logger.error(`즐겨찾기 제거 실패: ${updateError.message}`);
-      throw new InternalServerErrorException(
-        '즐겨찾기를 제거하지 못했어요.',
-      );
+      this.logger.error('USER_FAVORITE_REMOVE_PERSIST_FAILED');
+      throw new InternalServerErrorException('즐겨찾기를 제거하지 못했어요.');
     }
 
     return next;
@@ -321,9 +339,7 @@ export class UsersService {
   // ── GET /users/me/favorites ──────────────────────────────
   // 내 즐겨찾기 식당 목록 (식당 정보 join).
   // restaurants 의 image_url/rating 등 모든 필드 포함.
-  async listFavorites(
-    userId: string,
-  ): Promise<
+  async listFavorites(userId: string): Promise<
     Array<{
       id: string;
       name: string;
@@ -355,16 +371,14 @@ export class UsersService {
       .in('id', ids);
 
     if (restError) {
-      this.logger.error(`즐겨찾기 식당 조회 실패: ${restError.message}`);
+      this.logger.error('USER_FAVORITE_RESTAURANT_LOOKUP_FAILED');
       throw new InternalServerErrorException(
         '즐겨찾기 식당을 불러오지 못했어요.',
       );
     }
 
     // 추가 순서 보존 (ids 배열 순서대로) — 가장 최근이 마지막
-    const byId = new Map(
-      (restaurants ?? []).map((r: any) => [r.id, r]),
-    );
+    const byId = new Map((restaurants ?? []).map((r: any) => [r.id, r]));
 
     return ids
       .map((id) => byId.get(id))

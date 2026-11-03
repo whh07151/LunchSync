@@ -82,7 +82,7 @@ class GeolocationService {
       );
       return position;
     } catch (e) {
-      debugPrint('[GeolocationService] 위치 조회 에러: $e');
+      debugPrint('[GeolocationService] LOCATION_LOOKUP_FAILED');
       return null;
     }
   }
@@ -137,7 +137,7 @@ class GeolocationService {
         ),
       );
     } catch (e) {
-      debugPrint('[GeolocationService:stream] 스트림 에러: $e');
+      debugPrint('[GeolocationService:stream] LOCATION_STREAM_FAILED');
     }
   }
 }

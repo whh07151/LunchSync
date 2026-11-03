@@ -64,7 +64,7 @@ export class PosMenusService {
       .order('price');
 
     if (error) {
-      throw new Error(`메뉴 조회 실패: ${error.message}`);
+      throw new Error('POS_MENU_LOOKUP_FAILED');
     }
 
     return (data ?? []).map((m) => ({
@@ -108,7 +108,7 @@ export class PosMenusService {
       .single();
 
     if (error || !data) {
-      throw new Error(`메뉴 추가 실패: ${error?.message}`);
+      throw new Error('POS_MENU_CREATE_FAILED');
     }
 
     return this.toResponse(data);

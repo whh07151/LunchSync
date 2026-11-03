@@ -1,0 +1,47 @@
+name: Verify LunchSync
+
+on:
+  pull_request:
+  push:
+    branches:
+      - agent/reliability-observability
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backend:
+    name: Backend tests and build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: backend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.11.1
+          cache: npm
+          cache-dependency-path: backend/package-lock.json
+      - run: npm ci
+      - run: npm test -- --runInBand
+      - run: npm run build
+
+  mobile:
+    name: Flutter tests, analysis, and debug APK
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: 3.41.6
+          cache: true
+      - run: flutter pub get
+      - run: flutter test test/widget_test.dart --reporter expanded
+      - run: dart analyze --fatal-infos
+      - run: flutter build apk --debug

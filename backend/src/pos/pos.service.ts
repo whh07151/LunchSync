@@ -1,8 +1,11 @@
 import {
+  ConflictException,
+  ForbiddenException,
   Injectable,
   InternalServerErrorException,
   Logger,
   NotFoundException,
+  ServiceUnavailableException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { PaymentsService } from '../payments/payments.service';
@@ -117,7 +120,7 @@ export class PosService {
     }
 
     if (error) {
-      throw new Error(`주문 조회 실패: ${error.message}`);
+      throw new Error('POS_ORDER_LOOKUP_FAILED');
     }
 
     return (data ?? []).map((o: any) => {
@@ -304,7 +307,7 @@ export class PosService {
     }
 
     if (error) {
-      throw new Error(`결제 내역 조회 실패: ${error.message}`);
+      throw new Error('POS_PAYMENT_HISTORY_LOOKUP_FAILED');
     }
 
     return (data ?? []).map((o: any) => {
@@ -362,10 +365,22 @@ export class PosService {
     status: string;
     refundedAt: string;
   }> {
+    const simulationEnabled =
+      process.env.ALLOW_REFUND_SIMULATION === 'true' &&
+      process.env.NODE_ENV !== 'production';
+    if (!simulationEnabled) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'REFUND_SIMULATION_DISABLED',
+        message: '환불 시뮬레이션이 허용되지 않은 환경입니다.',
+        retryable: false,
+      });
+    }
+
     // 1) 주문 존재 + 현재 상태 확인 (이미 REFUNDED 면 idempotent 반환).
     const { data: existing, error: readError } = await this.supabase.client
       .from('orders')
-      .select('id, status, updated_at')
+      .select('id, status, updated_at, payment_key, payment_method')
       .eq('id', orderId)
       .single();
 
@@ -382,6 +397,19 @@ export class PosService {
       };
     }
 
+    const isSimulatedPayment =
+      existing.payment_method === 'SIMULATE' ||
+      existing.payment_key?.startsWith('sim_');
+    if (!isSimulatedPayment) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'REAL_PAYMENT_REQUIRES_PROVIDER_REFUND',
+        message: '실제 결제 주문은 결제사 환불 경로를 사용해야 합니다.',
+        retryable: false,
+        orderId,
+      });
+    }
+
     // 2) 환불 시뮬 가능 상태 검증.
     //    PAID 이상 + 진행 단계 모두 허용 (시연용이므로 관대하게).
     //    PENDING(결제 전) 은 환불 대상 자체가 없으므로 거절.
@@ -392,9 +420,13 @@ export class PosService {
       'COMPLETED',
     ]);
     if (!refundableStatuses.has(existing.status)) {
-      throw new InternalServerErrorException(
-        `${existing.status} 상태인 주문은 환불 시뮬할 수 없습니다.`,
-      );
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_NOT_REFUNDABLE_IN_SIMULATION',
+        message: `${existing.status} 상태인 주문은 환불 시뮬할 수 없습니다.`,
+        retryable: false,
+        orderId,
+      });
     }
 
     // 3) status 만 REFUNDED 로 변경 — 실제 토스 cancel API 호출 X.
@@ -403,18 +435,31 @@ export class PosService {
       .from('orders')
       .update({ status: 'REFUNDED', updated_at: new Date().toISOString() })
       .eq('id', orderId)
+      .eq('status', existing.status)
+      .eq('payment_key', existing.payment_key)
       .select('id, status, updated_at')
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
-      throw new InternalServerErrorException(
-        `환불 시뮬 실패: ${error?.message ?? 'unknown'}`,
-      );
+    if (error) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'REFUND_SIMULATION_DB_SYNC_FAILED',
+        message: '환불 시뮬레이션 상태를 저장하지 못했습니다.',
+        retryable: true,
+        orderId,
+      });
+    }
+    if (!data || data.status !== 'REFUNDED') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_STATUS_CHANGED',
+        message: '주문 상태가 동시에 변경되어 환불 시뮬레이션을 적용하지 않았습니다.',
+        retryable: true,
+        orderId,
+      });
     }
 
-    this.logger.log(
-      `[refundSim] order=${orderId} status=PAID/COMPLETED → REFUNDED (시뮬)`,
-    );
+    this.logger.log('POS_SIMULATED_REFUND_COMPLETED');
 
     return {
       id: data.id,
@@ -445,11 +490,39 @@ export class PosService {
     //
     // 2026-05-31 WOW#5: COMPLETED 진입 직후 단골 알림 발송 판단을 위해
     // restaurant_id 도 함께 select.
-    const { data: prevOrder } = await this.supabase.client
+    const { data: prevOrder, error: readError } = await this.supabase.client
       .from('orders')
-      .select('user_id, status, restaurant_id')
+      .select('id, user_id, status, restaurant_id, updated_at')
       .eq('id', orderId)
       .single();
+
+    if (readError || !prevOrder) {
+      throw new NotFoundException('주문을 찾을 수 없습니다.');
+    }
+
+    if (prevOrder.status === status) {
+      return {
+        id: prevOrder.id,
+        status: prevOrder.status,
+        updatedAt: prevOrder.updated_at,
+        alreadyApplied: true,
+      };
+    }
+
+    const allowedNextStatus: Record<string, string> = {
+      PAID: 'PREPARING',
+      PREPARING: 'READY',
+      READY: 'COMPLETED',
+    };
+    if (allowedNextStatus[prevOrder.status] !== status) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'INVALID_ORDER_STATUS_TRANSITION',
+        message: `${prevOrder.status} 상태에서 ${status} 상태로 변경할 수 없습니다.`,
+        retryable: false,
+        orderId,
+      });
+    }
 
     const { data, error } = await this.supabase.client
       .from('orders')
@@ -457,11 +530,41 @@ export class PosService {
       //   생성시각 그대로 고정됨(결제관리 오늘집계/통계 처리시간 부정확). 명시적으로 갱신.
       .update({ status, updated_at: new Date().toISOString() })
       .eq('id', orderId)
+      .eq('status', prevOrder.status)
       .select('id, status, updated_at')
-      .single();
+      .maybeSingle();
 
-    if (error || !data) {
-      throw new NotFoundException('주문을 찾을 수 없습니다.');
+    if (error) {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'ORDER_STATUS_DB_SYNC_FAILED',
+        message: '주문 상태를 저장하지 못했습니다. 다시 시도해주세요.',
+        retryable: true,
+        orderId,
+      });
+    }
+    if (!data || data.status !== status) {
+      const { data: reconciled } = await this.supabase.client
+        .from('orders')
+        .select('id, status, updated_at')
+        .eq('id', orderId)
+        .maybeSingle();
+      if (reconciled?.status === status) {
+        return {
+          id: reconciled.id,
+          status: reconciled.status,
+          updatedAt: reconciled.updated_at,
+          alreadyApplied: true,
+          reconciled: true,
+        };
+      }
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_STATUS_CHANGED',
+        message: '주문 상태가 동시에 변경되어 요청을 적용하지 않았습니다.',
+        retryable: true,
+        orderId,
+      });
     }
 
     // 알림 송신 — best-effort (실패해도 응답 정상)
@@ -488,8 +591,7 @@ export class PosService {
         } catch (notifErr: any) {
           // 알림 실패는 주문 상태 변경에 영향 없음 — 로그만
           this.logger.warn(
-            `[updateOrderStatus] 알림 송신 실패 order=${orderId} ` +
-              `status=${status} error=${notifErr?.message}`,
+            `POS_ORDER_STATUS_NOTIFICATION_FAILED status=${status}`,
           );
         }
       }
@@ -540,16 +642,12 @@ export class PosService {
               },
             });
             this.logger.log(
-              `[loyalty] VIP 알림 발송 user=${prevOrder.user_id} ` +
-                `restaurant=${prevOrder.restaurant_id} visits=${visits} rank=${rank}`,
+              `POS_LOYALTY_NOTIFICATION_SENT visits=${visits} rank=${rank}`,
             );
           }
         } catch (loyaltyErr: any) {
           // 단골 알림 실패는 전체 흐름을 막지 않음 — 로그만.
-          this.logger.warn(
-            `[loyalty] 단골 알림 발송 실패 order=${orderId} ` +
-              `error=${loyaltyErr?.message}`,
-          );
+          this.logger.warn('POS_LOYALTY_NOTIFICATION_FAILED');
         }
       }
     }
@@ -581,16 +679,39 @@ export class PosService {
       throw new NotFoundException('주문을 찾을 수 없습니다.');
     }
 
+    // 응답 유실 뒤 같은 취소를 재시도해도 실패로 바꾸지 않는다.
+    if (order.status === 'CANCELLED') {
+      const wasSimulated = order.payment_key?.startsWith('sim_') ?? false;
+      return {
+        id: orderId,
+        status: 'CANCELLED',
+        refundAmount: order.total_price,
+        refundMethod: wasSimulated
+          ? 'SIMULATED'
+          : order.payment_key
+            ? 'TOSS_CANCEL'
+            : 'NO_PAYMENT_KEY',
+        reason: reason ?? '점주 취소',
+        alreadyCancelled: true,
+        reconciled: true,
+      };
+    }
+
     // 2) 거절 가능 상태 검증
     //   - CANCELLED / COMPLETED / DONE / PREPARING / READY 모두 거절 불가
     //   - PAID / PENDING 만 거절 가능 (조리 시작 전)
     //   - 2026-05-31: 옛 ACCEPTED 표기는 발급 자체가 안 되므로 제거.
     const cancelableStatuses = new Set(['PAID', 'PENDING']);
     if (!cancelableStatuses.has(order.status)) {
-      throw new InternalServerErrorException(
-        `이미 ${order.status} 상태인 주문은 취소할 수 없습니다. ` +
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'ORDER_NOT_CANCELLABLE',
+        message:
+          `이미 ${order.status} 상태인 주문은 취소할 수 없습니다. ` +
           '조리 시작 후엔 거절 불가입니다.',
-      );
+        retryable: false,
+        orderId,
+      });
     }
 
     // 3) 환불 우선 호출 (payment_key 있으면)
@@ -620,26 +741,115 @@ export class PosService {
         refundResult = await this.paymentsService.cancelPayment(
           order.payment_key,
           reason ?? '점주 취소',
+          orderId,
         );
       } catch (refundError: any) {
-        this.logger.error(
-          `환불 실패 — status 미변경 유지: order=${orderId} ` +
-            `payment_key=${order.payment_key} error=${refundError?.message}`,
-        );
+        this.logger.error('POS_REFUND_FAILED_STATUS_UNCHANGED');
         // 원자성 — 실제 결제 환불 실패 시 status 도 변경하지 않고 예외 전파.
         throw refundError;
       }
     } else if (isSimulated) {
-      this.logger.log(
-        `SIMULATE 결제 — 토스 cancel 스킵, 즉시 CANCELLED: order=${orderId}`,
-      );
+      this.logger.log('POS_SIMULATED_PAYMENT_CANCELLED');
     }
 
     // 4) 환불 성공(또는 payment_key 없음) → 상태 CANCELLED 로 변경
-    await this.supabase.client
+    const cancelUpdate = this.supabase.client
       .from('orders')
       .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
-      .eq('id', orderId);
+      .eq('id', orderId)
+      .eq('status', order.status);
+    const snapshotMatchedUpdate =
+      order.payment_key === null || order.payment_key === undefined
+        ? cancelUpdate.is('payment_key', null)
+        : cancelUpdate.eq('payment_key', order.payment_key);
+    const { data: cancelledOrder, error: cancelUpdateError } =
+      await snapshotMatchedUpdate
+      .select('id, status')
+      .maybeSingle();
+
+    if (
+      cancelUpdateError ||
+      !cancelledOrder ||
+      cancelledOrder.status !== 'CANCELLED'
+    ) {
+      const externalRefundCompleted = refundResult !== null;
+
+      // 같은 주문의 동시 취소 요청이 모두 결제사에서 멱등 성공한 뒤,
+      // 한 요청만 조건부 UPDATE를 선점할 수 있다. 0-row 또는 불확실한
+      // UPDATE 오류가 나도 현재 DB가 이미 CANCELLED라면 성공으로 조정한다.
+      const { data: reconciledOrder, error: reconcileError } =
+        await this.supabase.client
+          .from('orders')
+          .select('id, status, total_price, payment_key')
+          .eq('id', orderId)
+          .maybeSingle();
+
+      if (!reconcileError && reconciledOrder?.status === 'CANCELLED') {
+        this.logger.warn('POS_CANCEL_STATUS_ALREADY_RECONCILED');
+        return {
+          id: orderId,
+          status: 'CANCELLED',
+          refundAmount: refundResult?.cancelAmount ?? order.total_price,
+          refundMethod: refundResult ? 'TOSS_CANCEL' : 'NO_PAYMENT_KEY',
+          canceledAt: refundResult?.canceledAt,
+          reason: reason ?? '점주 취소',
+          reconciled: true,
+        };
+      }
+
+      if (externalRefundCompleted && order.payment_key) {
+        const refundReconciled =
+          await this.reconcileRefundedOrderToCancelled(
+            orderId,
+            order.payment_key,
+          );
+        if (refundReconciled) {
+          this.logger.warn('POS_REFUND_PREPARATION_RACE_RECONCILED');
+          return {
+            id: orderId,
+            status: 'CANCELLED',
+            refundAmount: refundResult?.cancelAmount ?? order.total_price,
+            refundMethod: 'TOSS_CANCEL',
+            canceledAt: refundResult?.canceledAt,
+            reason: reason ?? '점주 취소',
+            reconciled: true,
+            fulfillmentRaceReconciled: true,
+          };
+        }
+      }
+
+      // PENDING/no-key 스냅샷 뒤 Toss 승인이 먼저 PAID/key를 기록한 경우,
+      // 오래된 취소로 PAID를 덮지 않고 최신 결제키를 다시 읽어 환불한다.
+      if (
+        !externalRefundCompleted &&
+        !reconcileError &&
+        reconciledOrder?.status === 'PAID' &&
+        typeof reconciledOrder.payment_key === 'string' &&
+        reconciledOrder.payment_key.length > 0
+      ) {
+        this.logger.warn('POS_CANCEL_PAYMENT_RACE_RETRYING');
+        return this.cancelOrder(orderId, reason);
+      }
+
+      this.logger.error(
+        `POS_CANCEL_STATUS_PERSIST_FAILED externalRefundCompleted=${externalRefundCompleted} ` +
+          `dbError=${cancelUpdateError ? 'present' : 'none'} ` +
+          `matchedRow=${cancelledOrder ? 'yes' : 'no'} ` +
+          `reconcileError=${reconcileError ? 'present' : 'none'}`,
+      );
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: externalRefundCompleted
+          ? 'REFUND_COMPLETED_DB_SYNC_PENDING'
+          : 'ORDER_CANCEL_DB_SYNC_FAILED',
+        message: externalRefundCompleted
+          ? '환불은 완료됐지만 주문 상태 저장을 확인하지 못했습니다. 같은 주문으로 다시 시도해주세요.'
+          : '주문 취소 상태를 저장하지 못했습니다. 다시 시도해주세요.',
+        retryable: true,
+        reconciliationRequired: externalRefundCompleted,
+        orderId,
+      });
+    }
 
     return {
       id: orderId,
@@ -649,6 +859,51 @@ export class PosService {
       canceledAt: refundResult?.canceledAt,
       reason: reason ?? '점주 취소',
     };
+  }
+
+  // 외부 환불은 완료됐지만 조리 상태 전이가 먼저 DB를 선점한 경우의
+  // 단기 안전망. 최신 상태/결제키를 매번 다시 확인하고 제한 횟수 CAS한다.
+  // 장기적으로는 REFUNDING 상태 + durable reconciliation worker가 필요하다.
+  private async reconcileRefundedOrderToCancelled(
+    orderId: string,
+    paymentKey: string,
+  ): Promise<boolean> {
+    const reconcilableStatuses = new Set([
+      'PAID',
+      'PREPARING',
+      'READY',
+      'COMPLETED',
+    ]);
+
+    for (let attempt = 0; attempt < 5; attempt += 1) {
+      const { data: current, error: readError } = await this.supabase.client
+        .from('orders')
+        .select('id, status, payment_key')
+        .eq('id', orderId)
+        .maybeSingle();
+      if (readError || !current) return false;
+      if (current.status === 'CANCELLED') return true;
+      if (
+        current.payment_key !== paymentKey ||
+        !reconcilableStatuses.has(current.status)
+      ) {
+        return false;
+      }
+
+      const { data: cancelled, error: updateError } =
+        await this.supabase.client
+          .from('orders')
+          .update({ status: 'CANCELLED', updated_at: new Date().toISOString() })
+          .eq('id', orderId)
+          .eq('status', current.status)
+          .eq('payment_key', paymentKey)
+          .select('id, status')
+          .maybeSingle();
+      if (updateError) return false;
+      if (cancelled?.status === 'CANCELLED') return true;
+    }
+
+    return false;
   }
 
   // ══════════════════════════════════════════════════════════
@@ -695,11 +950,10 @@ export class PosService {
       .maybeSingle();
 
     if (error) {
-      this.logger.error(
-        `[updateTodaysNote] 업데이트 실패 restaurant=${restaurantId} error=${error.message}`,
+      this.logger.error('POS_TODAYS_NOTE_PERSIST_FAILED');
+      throw new InternalServerErrorException(
+        '오늘의 안내를 저장하지 못했습니다.',
       );
-      // 컬럼 미존재 등 DB 측 오류는 그대로 전파해 디버깅 용이.
-      throw error;
     }
     if (!data) {
       throw new NotFoundException('식당을 찾을 수 없습니다.');
@@ -791,13 +1045,8 @@ export class PosService {
       });
 
     if (uploadError) {
-      this.logger.error(
-        `Storage 업로드 실패: order=${orderId} path=${objectPath} ` +
-          `error=${uploadError.message}`,
-      );
-      throw new InternalServerErrorException(
-        `사진 업로드 실패: ${uploadError.message}`,
-      );
+      this.logger.error('POS_COMPLETION_PHOTO_UPLOAD_FAILED');
+      throw new InternalServerErrorException('사진을 업로드하지 못했습니다.');
     }
 
     // 4) public URL 획득 — bucket 이 public 이면 즉시 사용 가능한 영구 URL
@@ -821,10 +1070,7 @@ export class PosService {
       .single();
 
     if (updateError || !updated) {
-      this.logger.error(
-        `orders.completion_photo_url 갱신 실패: order=${orderId} ` +
-          `error=${updateError?.message}`,
-      );
+      this.logger.error('POS_COMPLETION_PHOTO_PERSIST_FAILED');
       throw new InternalServerErrorException(
         '사진 URL 저장에 실패했습니다.',
       );
@@ -853,10 +1099,7 @@ export class PosService {
       }
     } catch (notifErr: any) {
       // 알림 실패는 사진 업로드 흐름에 영향 없음 — 로그만
-      this.logger.warn(
-        `[saveCompletionPhoto] 푸시 송신 실패 order=${orderId} ` +
-          `error=${notifErr?.message}`,
-      );
+      this.logger.warn('POS_COMPLETION_PHOTO_NOTIFICATION_FAILED');
     }
 
     return {
@@ -903,6 +1146,22 @@ export class PosService {
     paymentMethod: string;
     approvedAt: string;
   }> {
+    if (
+      method === 'CARD' &&
+      !(
+        process.env.ALLOW_POS_CARD_SIMULATION === 'true' &&
+        process.env.NODE_ENV !== 'production'
+      )
+    ) {
+      throw new ForbiddenException({
+        statusCode: 403,
+        code: 'POS_CARD_SIMULATION_DISABLED',
+        message: '실제 POS 카드 승인 연동 전에는 카드 결제 시뮬레이션을 사용할 수 없습니다.',
+        retryable: false,
+        orderId,
+      });
+    }
+
     // 1) 주문 존재 + 현재 상태 사전 확인 (idempotent 분기).
     const { data: existing, error: readError } = await this.supabase.client
       .from('orders')
@@ -924,7 +1183,7 @@ export class PosService {
     ]);
     if (paidStatuses.has(existing.status)) {
       this.logger.log(
-        `[chargeViaPosToss] idempotent — order=${orderId} 이미 ${existing.status}`,
+        `POS_PAYMENT_ALREADY_FINALIZED status=${existing.status}`,
       );
       return {
         orderId: existing.id,
@@ -962,23 +1221,58 @@ export class PosService {
       .from('orders')
       .update({ status: 'PAID', payment_method: paymentMethod, updated_at: nowIso })
       .eq('id', orderId)
+      .eq('status', 'PENDING')
       .select('id, status, payment_method, updated_at')
-      .single();
+      .maybeSingle();
 
-    if (updateError || !updated) {
-      this.logger.error(
-        `[chargeViaPosToss] UPDATE 실패 order=${orderId} ` +
-          `method=${method} error=${updateError?.message}`,
-      );
-      throw new InternalServerErrorException(
-        `POS 결제 실패: ${updateError?.message ?? 'unknown'}`,
-      );
+    if (updateError) {
+      this.logger.error(`POS_PAYMENT_STATUS_PERSIST_FAILED method=${method}`);
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'POS_PAYMENT_DB_SYNC_FAILED',
+        message: 'POS 결제 상태를 저장하지 못했습니다. 다시 시도해주세요.',
+        retryable: true,
+        orderId,
+      });
     }
 
-    this.logger.log(
-      `[chargeViaPosToss] order=${orderId} PENDING → PAID ` +
-        `method=${paymentMethod} (시뮬)`,
-    );
+    if (
+      !updated ||
+      updated.status !== 'PAID' ||
+      updated.payment_method !== paymentMethod
+    ) {
+      const { data: reconciled, error: reconcileError } =
+        await this.supabase.client
+          .from('orders')
+          .select('id, status, payment_method, updated_at')
+          .eq('id', orderId)
+          .maybeSingle();
+
+      if (
+        !reconcileError &&
+        reconciled &&
+        paidStatuses.has(reconciled.status) &&
+        reconciled.payment_method === paymentMethod
+      ) {
+        return {
+          orderId: reconciled.id,
+          status: reconciled.status,
+          paymentMethod: reconciled.payment_method,
+          approvedAt: reconciled.updated_at,
+        };
+      }
+
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'POS_PAYMENT_STATE_CHANGED',
+        message:
+          '주문 상태가 동시에 변경되어 POS 결제를 적용하지 않았습니다. 최신 주문 상태를 확인해주세요.',
+        retryable: false,
+        orderId,
+      });
+    }
+
+    this.logger.log(`POS_SIMULATED_PAYMENT_COMPLETED method=${paymentMethod}`);
 
     return {
       orderId: updated.id,

@@ -87,7 +87,7 @@ class NotificationsApiService {
       }
       return [];
     } catch (e) {
-      debugPrint('[NotificationsApiService] getMyNotifications 에러: $e');
+      debugPrint('[NotificationsApiService] GET_NOTIFICATIONS_FAILED');
       return [];
     }
   }
