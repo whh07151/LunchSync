@@ -9,6 +9,7 @@ import {
   ServiceUnavailableException,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
+import { syncPaidOrderPostActions } from './paid-order-post-actions';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 주문/결제 비즈니스 로직
@@ -25,6 +26,8 @@ export interface CreateOrderDto {
   sessionId: string;
   items: { menuItemId: string; quantity: number }[];
   paymentMethod: string; // CARD | TRANSFER | CASH | SIMULATE
+  diningType?: 'DINE_IN' | 'TAKEOUT';
+  customerNote?: string | null;
 }
 
 export interface UpdateOrderStatusDto {
@@ -43,6 +46,8 @@ export class OrdersService {
   async createOrder(userId: string, dto: CreateOrderDto) {
     const paymentMethod = this.normalizePaymentMethod(dto.paymentMethod);
     this.assertPaymentMethodAllowed(paymentMethod);
+    const diningType = this.normalizeDiningType(dto.diningType);
+    const customerNote = this.normalizeCustomerNote(dto.customerNote);
     const winnerRestaurantId = await this.getOrderSessionWinner(
       userId,
       dto.sessionId,
@@ -151,13 +156,15 @@ export class OrdersService {
     // 3. orders + order_items 원자적 생성
     // PostgreSQL 함수 안에서 어느 INSERT든 실패하면 주문 전체가 롤백된다.
     const { data: orderRaw, error: orderError } =
-      await this.supabase.client.rpc('create_order_with_items', {
+      await this.supabase.client.rpc('create_order_with_options', {
         p_session_id: dto.sessionId,
         p_user_id: userId,
         p_restaurant_id: restaurantId,
         p_total_price: totalPrice,
         p_payment_method: paymentMethod,
         p_items: orderItems,
+        p_dining_type: diningType,
+        p_customer_note: customerNote,
       });
 
     if (orderError) {
@@ -182,6 +189,11 @@ export class OrdersService {
       paymentMethod,
     );
 
+    // 5. 선결제 완료 시 주문자 카트 차감 및 매장 식사용 방문 예약 요청 1회 후처리
+    const postResult = paymentResult.paid
+      ? await syncPaidOrderPostActions(this.supabase.client, this.logger, order.id)
+      : { reservationSynced: false, cartSynced: false };
+
     return {
       id: order.id,
       sessionId: dto.sessionId,
@@ -189,6 +201,9 @@ export class OrdersService {
       totalPrice,
       paymentMethod,
       paymentKey: paymentResult.paymentKey,
+      diningType,
+      customerNote,
+      ...postResult,
       items: orderItems,
       createdAt: order.createdAt ?? order.created_at,
     };
@@ -278,6 +293,28 @@ export class OrdersService {
 
     this.logger.error('ORDER_CREATE_PERSIST_FAILED');
     throw new InternalServerErrorException('주문을 생성할 수 없습니다.');
+  }
+
+  private normalizeDiningType(raw?: string): 'DINE_IN' | 'TAKEOUT' {
+    if (raw === undefined || raw === null || raw === '') return 'DINE_IN';
+    const v = String(raw).trim().toUpperCase();
+    if (v === 'DINE_IN' || v === 'TAKEOUT') return v;
+    throw new BadRequestException(
+      '이용 방식은 DINE_IN 또는 TAKEOUT 이어야 합니다.',
+    );
+  }
+
+  private normalizeCustomerNote(raw?: string | null): string | null {
+    if (raw === undefined || raw === null) return null;
+    if (typeof raw !== 'string') {
+      throw new BadRequestException('요청사항은 문자열이어야 합니다.');
+    }
+    const trimmed = raw.trim();
+    if (trimmed.length === 0) return null;
+    if (trimmed.length > 300) {
+      throw new BadRequestException('요청사항은 300자 이내여야 합니다.');
+    }
+    return trimmed;
   }
 
   // ── 결제수단 정규화 ────────────────────────────────
@@ -437,6 +474,28 @@ export class OrdersService {
       order.review_at = null;
     }
 
+    // dining_type / customer_note 별도 안전 조회
+    let diningType: 'DINE_IN' | 'TAKEOUT' = 'DINE_IN';
+    let customerNote: string | null = null;
+    try {
+      const { data: optRaw } = await this.supabase.client
+        .from('orders')
+        .select('dining_type, customer_note')
+        .eq('id', orderId)
+        .single();
+      if (optRaw) {
+        const opt = optRaw as {
+          dining_type?: string | null;
+          customer_note?: string | null;
+        };
+        if (opt.dining_type === 'TAKEOUT') diningType = 'TAKEOUT';
+        customerNote = opt.customer_note ?? null;
+      }
+    } catch {
+      diningType = 'DINE_IN';
+      customerNote = null;
+    }
+
     // 본인 주문이 아니면 같은 세션 멤버인지 확인
     if (order.user_id !== requesterId) {
       const { data: membership } = await this.supabase.client
@@ -497,6 +556,8 @@ export class OrdersService {
       // 2026-05-15 별점/리뷰 — 손님 어플이 "이미 작성된 리뷰" 인지 판단해
       // 별점 카드 노출 여부를 결정하기 위해 함께 내려보낸다.
       restaurantId: (order as { restaurant_id?: string }).restaurant_id ?? null,
+      diningType,
+      customerNote,
       reviewScore:
         (order as { review_score?: number | null }).review_score ?? null,
       reviewText:
@@ -526,23 +587,125 @@ export class OrdersService {
 
     const { data, error } = await this.supabase.client
       .from('orders')
-      .select('id, session_id, status, total_price, created_at')
+      .select(
+        'id, session_id, status, total_price, created_at, review_score, restaurants(name), order_items(quantity, menu_items(name))',
+      )
       .eq('user_id', userId)
       .gte('created_at', today.toISOString())
       .order('created_at', { ascending: false });
 
     if (error) {
-      // InternalServerErrorException: DB 조회 실패 → 500 응답
       throw new InternalServerErrorException('주문 내역을 불러오지 못했어요.');
     }
 
-    return (data ?? []).map((o) => ({
+    return (data ?? []).map((o: any) => this.mapOrderSummaryRow(o));
+  }
+
+  // ── GET /orders/history — 과거 포함 전체 주문 기록 조회 ──
+  async getOrderHistory(userId: string) {
+    const { data, error } = await this.supabase.client
+      .from('orders')
+      .select(
+        'id, session_id, status, total_price, created_at, review_score, restaurants(name), order_items(quantity, menu_items(name))',
+      )
+      .eq('user_id', userId)
+      .order('created_at', { ascending: false })
+      .limit(50);
+
+    if (error) {
+      throw new InternalServerErrorException('주문 기록을 불러오지 못했어요.');
+    }
+
+    return (data ?? []).map((o: any) => this.mapOrderSummaryRow(o));
+  }
+
+  private mapOrderSummaryRow(o: any) {
+    const rawItems = Array.isArray(o.order_items) ? o.order_items : [];
+    const itemsSummary = rawItems
+      .map(
+        (it: any) =>
+          `${it.menu_items?.name ?? '메뉴'} x${Number(it.quantity ?? 1)}`,
+      )
+      .join(', ');
+    return {
       id: o.id,
       sessionId: o.session_id,
       status: o.status,
-      totalPrice: o.total_price,
+      totalPrice: Number(o.total_price ?? 0),
       createdAt: o.created_at,
-    }));
+      restaurantName: o.restaurants?.name ?? '한성대 점심싱크 본점',
+      itemsSummary: itemsSummary || null,
+      reviewScore:
+        typeof o.review_score === 'number' ? Number(o.review_score) : null,
+    };
+  }
+
+  // ── GET /orders/session/:sessionId — 같은 방 동료들의 주문 현황 공유 ──
+  async getSessionOrders(sessionId: string, requesterId: string) {
+    const { data: membership, error: memberError } = await this.supabase.client
+      .from('session_members')
+      .select('user_id')
+      .eq('session_id', sessionId)
+      .eq('user_id', requesterId)
+      .maybeSingle();
+
+    if (memberError) {
+      this.logger.error('ORDER_SESSION_ORDERS_MEMBERSHIP_LOOKUP_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'ORDER_SESSION_ORDERS_MEMBERSHIP_LOOKUP_FAILED',
+        message: '세션 참여 정보를 확인하지 못했어요.',
+        retryable: true,
+      });
+    }
+    if (!membership) {
+      throw new ForbiddenException('세션 멤버만 주문 현황을 조회할 수 있어요.');
+    }
+
+    const { data: orders, error } = await this.supabase.client
+      .from('orders')
+      .select(
+        'id, session_id, user_id, status, total_price, created_at, users(name), order_items(quantity, price, menu_items(name))',
+      )
+      .eq('session_id', sessionId)
+      .neq('status', 'CANCELLED')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      this.logger.error('ORDER_SESSION_ORDERS_LOOKUP_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'ORDER_SESSION_ORDERS_LOOKUP_FAILED',
+        message: '세션 주문 현황을 불러오지 못했어요.',
+        retryable: true,
+      });
+    }
+    if (!orders) {
+      return [];
+    }
+
+    return (orders as any[]).map((o) => {
+      const rawItems = Array.isArray(o.order_items) ? o.order_items : [];
+      const items = rawItems.map((it: any) => ({
+        menuName: it.menu_items?.name ?? '메뉴',
+        quantity: Number(it.quantity ?? 1),
+        price: Number(it.price ?? 0),
+      }));
+      const summary = items
+        .map((i: any) => `${i.menuName} x${i.quantity}`)
+        .join(', ');
+      return {
+        id: o.id,
+        sessionId: o.session_id,
+        userId: o.user_id,
+        userName: o.users?.name ?? '동료',
+        status: o.status,
+        totalPrice: Number(o.total_price ?? 0),
+        itemsSummary: summary,
+        items,
+        createdAt: o.created_at,
+      };
+    });
   }
 
   // ── PATCH /orders/:id/status ──────────────────────────

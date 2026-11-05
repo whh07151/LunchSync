@@ -47,6 +47,7 @@ class Session {
     this.returnMinutes,
     this.memo,
     this.createdAt,
+    this.inviteCode,
   });
 
   final String id;
@@ -62,6 +63,7 @@ class Session {
   final int? returnMinutes;     // 복귀 여유 시간 (분)
   final String? memo;           // 자유 메모
   final String? createdAt;
+  final String? inviteCode;     // 활성 초대 코드 (로비 재진입 시에도 유지)
 
   factory Session.fromJson(Map<String, dynamic> json) {
     // createdBy: 백엔드가 { id, name } 객체로 내려줌
@@ -84,6 +86,7 @@ class Session {
       returnMinutes: json['returnMinutes'] as int?,
       memo: json['memo'] as String?,
       createdAt: json['createdAt'] as String?,
+      inviteCode: json['inviteCode'] as String?,
     );
   }
 }

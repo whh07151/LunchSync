@@ -83,6 +83,7 @@ class AppConfig {
           uri.hasFragment) {
         throw StateError('Release requires an explicit HTTPS BACKEND_URL.');
       }
+      return urlOverride;
     }
     return urlOverride.isNotEmpty
         ? urlOverride

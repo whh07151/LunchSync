@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { SupabaseService } from '../supabase/supabase.service';
+import { syncPaidOrderPostActions } from '../orders/paid-order-post-actions';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 토스페이먼츠 결제 승인/조회 비즈니스 로직
@@ -89,7 +90,7 @@ export class PaymentsService {
       });
     }
 
-    if (order.status === 'PAID') {
+    if (['PAID', 'PREPARING', 'READY', 'COMPLETED'].includes(order.status)) {
       if (order.payment_key !== dto.paymentKey) {
         throw new ConflictException({
           statusCode: 409,
@@ -101,13 +102,15 @@ export class PaymentsService {
         });
       }
 
-      // 이미 승인된 주문 — 중복 호출은 조용히 성공 처리
+      // 이미 승인된 주문 — 중복 호출은 조용히 성공 처리하되 누락된 후처리(예약/카트)는 멱등 재시도
+      const postSync = await syncPaidOrderPostActions(this.supabase.client, this.logger, order.id);
       return {
         alreadyPaid: true,
         reconciled: true,
         orderId: order.id,
-        status: 'PAID',
+        status: order.status,
         paymentKey: order.payment_key,
+        ...postSync,
       };
     }
 
@@ -277,6 +280,7 @@ export class PaymentsService {
         reconciledOrder.payment_key === dto.paymentKey
       ) {
         this.logger.warn('PAYMENT_STATUS_ALREADY_RECONCILED');
+        const postSync = await syncPaidOrderPostActions(this.supabase.client, this.logger, dto.orderId);
         return {
           alreadyPaid: true,
           reconciled: true,
@@ -286,6 +290,7 @@ export class PaymentsService {
           method: tossResponse?.method,
           approvedAt: tossResponse?.approvedAt,
           totalAmount: tossResponse?.totalAmount,
+          ...postSync,
         };
       }
 
@@ -335,6 +340,8 @@ export class PaymentsService {
       });
     }
 
+    const postSync = await syncPaidOrderPostActions(this.supabase.client, this.logger, dto.orderId);
+
     return {
       alreadyPaid: false,
       orderId: dto.orderId,
@@ -343,6 +350,7 @@ export class PaymentsService {
       method: tossResponse?.method,
       approvedAt: tossResponse?.approvedAt,
       totalAmount: tossResponse?.totalAmount,
+      ...postSync,
     };
   }
 

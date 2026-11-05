@@ -51,7 +51,7 @@ const _kDefaultReturnMinutes = SessionDefaults.returnMinutes;       // 30분
 ///   - 너무 길면 권한 거부/스트림 이슈 시 사용자가 "세션 생성 중..." 로딩에 갇힘.
 ///   - GeolocationService 내부에도 동일한 timeLimit 을 넘겨 외부/내부가 일치하게 함
 ///     (이전: 외부 8s vs 내부 10s 로 내부 타임아웃이 죽은 코드였음).
-const _kGpsLookupTimeout = Duration(seconds: 8);
+const _kGpsLookupTimeout = Duration(milliseconds: 1200);
 
 class SessionCreateScreen extends ConsumerStatefulWidget {
   const SessionCreateScreen({super.key});

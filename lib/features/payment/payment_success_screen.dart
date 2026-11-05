@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/components/components.dart';
@@ -7,7 +8,9 @@ import '../../providers/cart_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/payments_api_service.dart';
 import '../home/home_screen.dart';
+import '../orders/order_tracking_screen.dart';
 import 'payment_web_bridge.dart';
+import 'order_cart_snapshot.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-19 결제 성공 화면 + 최종 승인 호출
@@ -36,6 +39,7 @@ class PaymentSuccessScreen extends ConsumerStatefulWidget {
     required this.paymentKey,
     required this.orderId,
     required this.amount,
+    this.cartSnapshot,
   });
 
   /// 토스가 발급한 결제 고유 키 (URL 쿼리에서 추출)
@@ -46,6 +50,7 @@ class PaymentSuccessScreen extends ConsumerStatefulWidget {
 
   /// 결제 금액 (URL 쿼리에서 추출)
   final int amount;
+  final OrderCartSnapshot? cartSnapshot;
 
   @override
   ConsumerState<PaymentSuccessScreen> createState() =>
@@ -58,9 +63,29 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
   // 승인 호출 상태
   bool _isConfirming = true;
   bool _confirmed = false;
+  bool _isSimulatedTest = false;
   String? _errorMessage;
-  String? _method;      // 토스가 알려준 결제수단
-  String? _approvedAt;  // 승인 시각
+  String? _method; // 토스가 알려준 결제수단
+  String? _approvedAt; // 승인 시각
+
+  void _consumeOrderSnapshot() {
+    final supplied = widget.cartSnapshot;
+    final snapshot = supplied?.orderId == widget.orderId
+        ? supplied
+        : OrderCartSnapshot.decode(
+            PaymentWebBridge.getSessionItem(
+              OrderCartSnapshot.storageKey(widget.orderId),
+            ),
+            widget.orderId,
+          );
+    if (snapshot == null) return;
+    ref
+        .read(cartProvider.notifier)
+        .consumeOrderSnapshot(widget.orderId, snapshot.items);
+    PaymentWebBridge.removeSessionItem(
+      OrderCartSnapshot.storageKey(widget.orderId),
+    );
+  }
 
   @override
   void initState() {
@@ -93,8 +118,7 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
       if (!mounted) return;
       setState(() {
         _isConfirming = false;
-        _errorMessage =
-            '로그인 정보가 만료되었습니다.\n홈으로 돌아가 다시 로그인해주세요.';
+        _errorMessage = '로그인 정보가 만료되었습니다.\n홈으로 돌아가 다시 로그인해주세요.';
       });
       return;
     }
@@ -102,6 +126,28 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
     // userProvider 에 JWT 복원 (다른 API 호출이 뒤이어 일어날 경우 대비)
     // NOTE: setUser 는 AuthResponse 를 받으므로 여기서는 직접 주입 불가.
     //       confirm API 호출에만 accessToken 을 직접 넘긴다.
+
+    if (widget.paymentKey.startsWith('sim_')) {
+      if (kReleaseMode) {
+        if (!mounted) return;
+        setState(() {
+          _isConfirming = false;
+          _confirmed = false;
+          _errorMessage = '정식 릴리스 환경에서는 테스트 모의결제를 사용할 수 없습니다.';
+        });
+        return;
+      }
+      _consumeOrderSnapshot();
+      if (!mounted) return;
+      setState(() {
+        _isConfirming = false;
+        _confirmed = true;
+        _isSimulatedTest = true;
+        _method = '개발·테스트용 모의결제 (SIMULATE · 실결제 미발생)';
+        _approvedAt = DateTime.now().toIso8601String().substring(0, 19);
+      });
+      return;
+    }
 
     final result = await _paymentsApi.confirmPayment(
       accessToken: savedJwt,
@@ -126,10 +172,13 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
     // ⚠️ ls_jwt / ls_user_* 는 그대로 유지 (로그인 상태 유지용).
     //    _RootNavigator 가 앱 재기동 시 이 값으로 userProvider 를 복원합니다.
     //    실제 로그아웃 시에만 이 값들을 제거합니다.
-    ref.read(cartProvider.notifier).clear();
-    PaymentWebBridge.removeSessionItem('ls_order_id');
-    PaymentWebBridge.removeSessionItem('ls_order_amount');
-    PaymentWebBridge.removeSessionItem('ls_order_name');
+    _consumeOrderSnapshot();
+    if (PaymentWebBridge.getSessionItem('ls_order_id') == widget.orderId) {
+      PaymentWebBridge.removeSessionItem('ls_order_id');
+      PaymentWebBridge.removeSessionItem('ls_order_amount');
+      PaymentWebBridge.removeSessionItem('ls_order_name');
+      PaymentWebBridge.removeSessionItem('ls_order_items');
+    }
     // 주소창에서 결제 쿼리 제거 (뒤로가기 시 재호출 방지)
     PaymentWebBridge.clearQueryParams();
 
@@ -181,12 +230,12 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
                         ),
                       )
                     : _confirmed
-                        ? const AppSuccessOverlay(size: 140)
-                        : Icon(
-                            Icons.error_rounded,
-                            size: 96,
-                            color: AppColors.error,
-                          ),
+                    ? const AppSuccessOverlay(size: 140)
+                    : Icon(
+                        Icons.error_rounded,
+                        size: 96,
+                        color: AppColors.error,
+                      ),
               ),
               const SizedBox(height: AppSpacing.lg),
 
@@ -194,7 +243,11 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
               Text(
                 _isConfirming
                     ? '결제를 확인하고 있어요...'
-                    : (_confirmed ? '결제가 완료됐어요' : '결제 승인 실패'),
+                    : (_confirmed
+                          ? (_isSimulatedTest
+                                ? '테스트 모의결제 완료 (실결제 미발생)'
+                                : '결제가 완료됐어요')
+                          : '결제 승인 실패'),
                 textAlign: TextAlign.center,
                 style: AppTextStyles.heading2,
               ),
@@ -202,7 +255,9 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
               if (_confirmed) ...[
                 const SizedBox(height: AppSpacing.sm + 4),
                 Text(
-                  '${_formatPrice(widget.amount)}원 결제 완료',
+                  _isSimulatedTest
+                      ? '${_formatPrice(widget.amount)}원 (개발·테스트용 가상 처리)'
+                      : '${_formatPrice(widget.amount)}원 결제 완료',
                   textAlign: TextAlign.center,
                   style: AppTextStyles.bodyLarge.copyWith(
                     color: AppColors.textSecondary,
@@ -244,11 +299,24 @@ class _PaymentSuccessScreenState extends ConsumerState<PaymentSuccessScreen> {
               const SizedBox(height: AppSpacing.xl + 8),
 
               // ── 액션 버튼 ──────────────────────────────
-              if (!_isConfirming)
-                AppPrimaryButton(
-                  label: _confirmed ? '홈으로' : '홈으로 돌아가기',
-                  onPressed: _goHome,
-                ),
+              if (!_isConfirming) ...[
+                if (_confirmed) ...[
+                  AppPrimaryButton(
+                    label: '실시간 주문·조리 현황 보기',
+                    onPressed: () {
+                      Navigator.of(context).pushReplacement(
+                        MaterialPageRoute(
+                          builder: (_) =>
+                              OrderTrackingScreen(orderId: widget.orderId),
+                        ),
+                      );
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  AppOutlinedButton(label: '홈으로 돌아가기', onPressed: _goHome),
+                ] else
+                  AppPrimaryButton(label: '홈으로 돌아가기', onPressed: _goHome),
+              ],
             ],
           ),
         ),

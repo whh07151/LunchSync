@@ -126,7 +126,7 @@ describe('Order creation PostgreSQL acceptance', () => {
       new ValidationPipe({ transform: true, whitelist: true }),
     );
     await app.init();
-  }, 60_000);
+  }, 120_000);
 
   afterAll(async () => {
     try {

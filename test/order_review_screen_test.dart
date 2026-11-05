@@ -43,6 +43,8 @@ class _FakeOrdersApiService extends OrdersApiService {
     required String sessionId,
     required List<CreateOrderItem> items,
     String paymentMethod = 'TOSS',
+    String diningType = 'DINE_IN',
+    String? customerNote,
   }) {
     return _createOrder();
   }
@@ -75,6 +77,54 @@ Future<void> _startPayment(
 }
 
 void main() {
+  for (final width in [360.0, 390.0]) {
+    testWidgets('주문 옵션은 폭 $width 및 큰 글자에서도 넘치지 않는다', (tester) async {
+      tester.view.physicalSize = Size(width, 800);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      await tester.pumpWidget(_testApp(_FakeOrdersApiService(() async => null)));
+      await tester.pump();
+      await tester.ensureVisible(find.byType(TextField));
+      await tester.pump();
+      expect(find.text('1,000원 결제하기'), findsOneWidget);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('모의결제 화면 전환은 주문 스냅샷만 한 번 차감한다', (tester) async {
+    final response = Completer<CreateOrderResult?>();
+    await tester.pumpWidget(
+      _testApp(_FakeOrdersApiService(() => response.future)),
+    );
+    final scope = ProviderScope.containerOf(
+      tester.element(find.byType(OrderReviewScreen)),
+    );
+    await tester.tap(find.text('🧪 개발·테스트용 모의결제 (실결제 미발생)'));
+    await tester.pump();
+    await tester.tap(find.text('1,000원 결제하기'));
+    await tester.pump();
+    scope.read(cartProvider.notifier).addItem(_menuItem);
+    response.complete(
+      const CreateOrderResult(
+        id: 'order',
+        sessionId: 'session-id',
+        status: 'PAID',
+        totalPrice: 1000,
+        paymentMethod: 'SIMULATE',
+        paymentKey: 'sim_order',
+      ),
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump();
+    expect(scope.read(cartProvider.notifier).quantityOf(_menuItem.id), 1);
+    expect(find.text('테스트 모의결제 완료 (실결제 미발생)'), findsOneWidget);
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
   group('OrderReviewScreen 주문 생성 오류', () {
     final controlledMessages = <CreateOrderFailureCode, String>{
       CreateOrderFailureCode.sessionNotFound:

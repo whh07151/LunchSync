@@ -10,6 +10,7 @@ import '../../models/restaurant.dart';
 import '../../providers/user_provider.dart';
 import '../../services/geolocation_service.dart';
 import '../../services/recommendations_api_service.dart';
+import '../../services/restaurants_api_service.dart';
 import '../../services/sessions_api_service.dart';
 import '../decide/decide_screen.dart';
 import '../map/recommendation_map_screen.dart';
@@ -61,6 +62,26 @@ class RecommendationListScreen extends ConsumerStatefulWidget {
 class _RecommendationListScreenState
     extends ConsumerState<RecommendationListScreen> {
   static const _api = RecommendationsApiService();
+  static const _restaurantsApi = RestaurantsApiService();
+
+  Map<String, RestaurantSeatSummaryDto> _seatSummaries = const {};
+
+  Future<void> _loadSeatSummaries(List<RecommendationDto> list) async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null || token.isEmpty) return;
+    final nextMap = <String, RestaurantSeatSummaryDto>{};
+    for (final r in list.take(5)) {
+      final summary = await _restaurantsApi.getSeatSummary(
+        accessToken: token,
+        restaurantId: r.restaurantId,
+      );
+      if (summary != null && summary.totalSeats > 0) {
+        nextMap[r.restaurantId] = summary;
+      }
+    }
+    if (!mounted || nextMap.isEmpty) return;
+    setState(() => _seatSummaries = nextMap);
+  }
 
   List<RecommendationDto>? _recommendations;
   bool _isLoading = true;
@@ -194,6 +215,7 @@ class _RecommendationListScreenState
       _recommendations = list;
       _isLoading = false;
     });
+    _loadSeatSummaries(list);
   }
 
   // 비교 모드 토글: 켜지면 선택 초기화
@@ -889,6 +911,37 @@ class _RecommendationListScreenState
           // 백엔드 recentVisitHint('RECENT_3D' / 'RECENT_7D') 가 있을 때만 노출.
           // 3일 내 = 더 강조(주황 배경), 7일 내 = 약한 강조(회색 배경)
           // 디자인 토큰 변경 금지 원칙: 기존 AppColors / Theme primary 만 사용.
+          if (_seatSummaries[rec.restaurantId] != null) ...[
+            const SizedBox(height: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppColors.success.withAlpha(18),
+                borderRadius: BorderRadius.circular(AppRadius.chip),
+                border: Border.all(color: AppColors.success.withAlpha(70)),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.event_seat_rounded,
+                    size: 14,
+                    color: AppColors.success,
+                  ),
+                  const SizedBox(width: 6),
+                  Flexible(
+                    child: Text(
+                      '영업 중 · 실시간 빈 좌석 ${_seatSummaries[rec.restaurantId]!.emptySeats}석/${_seatSummaries[rec.restaurantId]!.totalSeats}석 (약 ${_seatSummaries[rec.restaurantId]!.emptySeats * 4}명 즉시 착석)',
+                      style: AppTextStyles.caption.copyWith(
+                        color: AppColors.success,
+                        fontWeight: FontWeight.w700,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
           if (rec.isRecentlyVisited) ...[
             const SizedBox(height: 6),
             _buildRecentVisitBadge(rec.recentVisitHint),

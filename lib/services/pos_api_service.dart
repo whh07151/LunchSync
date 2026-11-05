@@ -37,6 +37,8 @@ class PosOrder {
     this.createdAt,
     this.itemsSummary,
     this.paymentMethod,
+    this.diningType = 'DINE_IN',
+    this.customerNote,
   });
 
   final String id;
@@ -51,7 +53,15 @@ class PosOrder {
   /// OW-10 결제 내역 화면에서 칩으로 표시.
   final String? paymentMethod;
 
+  /// 이용 방식 — DINE_IN (매장 식사) | TAKEOUT (포장 픽업)
+  final String diningType;
+
+  /// 손님 요청사항 (알레르기 제외 요청, 맵기 조절 등)
+  final String? customerNote;
+
   factory PosOrder.fromJson(Map<String, dynamic> json) {
+    final rawDining =
+        (json['diningType'] as String?) ?? (json['dining_type'] as String?);
     return PosOrder(
       id: json['id']?.toString() ?? '',
       status: (json['status'] as String?) ?? 'PENDING',
@@ -68,6 +78,9 @@ class PosOrder {
           json['items_summary'] as String?,
       paymentMethod: json['paymentMethod'] as String? ??
           json['payment_method'] as String?,
+      diningType: rawDining == 'TAKEOUT' ? 'TAKEOUT' : 'DINE_IN',
+      customerNote: json['customerNote'] as String? ??
+          json['customer_note'] as String?,
     );
   }
 }

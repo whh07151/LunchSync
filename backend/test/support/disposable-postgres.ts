@@ -1,6 +1,10 @@
 import { execFile } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
-import { readFile } from 'node:fs/promises';
+import { resolve } from 'node:path';
+const resolveTestPath = (path: string) => resolve(__dirname, '../../..', path);
+import { readFile, mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { createServer } from 'node:net';
 import { promisify } from 'node:util';
 import { Pool } from 'pg';
 
@@ -9,7 +13,7 @@ const POSTGRES_IMAGE = 'postgres:16-alpine';
 const POSTGRES_PASSWORD = 'lunchsync_test_password';
 const POSTGRES_DATABASE = 'lunchsync_test';
 const DOCKER_COMMAND_TIMEOUT_MS = 8_000;
-const POSTGRES_START_TIMEOUT_MS = 60_000;
+const POSTGRES_START_TIMEOUT_MS = 120_000;
 const POSTGRES_READY_TIMEOUT_MS = 30_000;
 const POSTGRES_QUERY_TIMEOUT_MS = 4_000;
 const POSTGRES_POOL_CLOSE_TIMEOUT_MS = 4_000;
@@ -65,6 +69,7 @@ CREATE TABLE public.menu_items (
   name TEXT NOT NULL,
   price INT NOT NULL,
   restaurant_id UUID NOT NULL REFERENCES public.restaurants(id),
+  source TEXT NOT NULL DEFAULT 'MANUAL',
   is_available BOOLEAN NOT NULL DEFAULT TRUE
 );
 
@@ -229,6 +234,7 @@ export class DisposablePostgres {
   private constructor(
     readonly pool: Pool,
     private readonly containerName: string,
+    private readonly native?: { bin: string; dir: string },
   ) {}
 
   static async start(migrationPath: string): Promise<DisposablePostgres> {
@@ -236,31 +242,90 @@ export class DisposablePostgres {
       `lunchsync-order-acceptance-${process.pid}-${randomUUID()}`.toLowerCase();
     const startupDeadline = Date.now() + POSTGRES_START_TIMEOUT_MS;
     let pool: Pool | undefined;
+    let native: { bin: string; dir: string } | undefined;
 
     try {
-      await runDocker(
-        [
-          'run',
-          '--detach',
-          '--rm',
-          '--name',
-          containerName,
-          '--env',
-          `POSTGRES_PASSWORD=${POSTGRES_PASSWORD}`,
-          '--env',
-          `POSTGRES_DB=${POSTGRES_DATABASE}`,
-          '--publish',
-          '127.0.0.1::5432',
-          POSTGRES_IMAGE,
-        ],
-        remainingStartupTime(
-          startupDeadline,
-          30_000,
-          'Docker container creation',
-        ),
-      );
+      let port: number;
+      const nativeBin = process.env.LUNCHSYNC_TEST_PG_BIN;
+      if (nativeBin) {
+        const dir = await mkdtemp(resolve(tmpdir(), 'lunchsync-isolated-pg-'));
+        native = { bin: nativeBin, dir };
+        await writeFile(resolve(dir, 'password'), POSTGRES_PASSWORD);
+        await execFileAsync(
+          resolve(nativeBin, 'initdb.exe'),
+          [
+            '-D',
+            resolve(dir, 'data'),
+            '-U',
+            'postgres',
+            '--encoding=UTF8',
+            '--locale=C',
+            '--auth=scram-sha-256',
+            '--pwfile=' + resolve(dir, 'password'),
+          ],
+          { timeout: 60000, windowsHide: true },
+        );
+        port = await new Promise<number>((accept, reject) => {
+          const server = createServer();
+          server.once('error', reject);
+          server.listen(0, '127.0.0.1', () => {
+            const address = server.address();
+            if (!address || typeof address === 'string')
+              return reject(new Error('No test port'));
+            server.close(() => accept(address.port));
+          });
+        });
+        await execFileAsync(
+          resolve(nativeBin, 'pg_ctl.exe'),
+          [
+            '-D',
+            resolve(dir, 'data'),
+            '-l',
+            resolve(dir, 'server.log'),
+            '-o',
+            `-h 127.0.0.1 -p ${port}`,
+            '-w',
+            'start',
+          ],
+          { timeout: 60000, windowsHide: true },
+        );
+        const admin = new Pool({
+          host: '127.0.0.1',
+          port,
+          user: 'postgres',
+          password: POSTGRES_PASSWORD,
+          database: 'postgres',
+        });
+        try {
+          await admin.query('CREATE DATABASE lunchsync_test');
+        } finally {
+          await admin.end();
+        }
+      } else {
+        await runDocker(
+          [
+            'run',
+            '--detach',
+            '--rm',
+            '--name',
+            containerName,
+            '--env',
+            `POSTGRES_PASSWORD=${POSTGRES_PASSWORD}`,
+            '--env',
+            `POSTGRES_DB=${POSTGRES_DATABASE}`,
+            '--publish',
+            '127.0.0.1::5432',
+            POSTGRES_IMAGE,
+          ],
+          remainingStartupTime(
+            startupDeadline,
+            30_000,
+            'Docker container creation',
+          ),
+        );
 
-      const port = await resolvePublishedPort(containerName, startupDeadline);
+        port = await resolvePublishedPort(containerName, startupDeadline);
+      }
       pool = new Pool({
         host: '127.0.0.1',
         port,
@@ -285,14 +350,43 @@ export class DisposablePostgres {
         'order migration',
       );
       await pool.query(await readFile(migrationPath, 'utf8'));
+      await pool.query(`
+        ALTER ROLE service_role BYPASSRLS;
+        ALTER TABLE public.orders ADD COLUMN updated_at timestamptz NOT NULL DEFAULT now();
+        CREATE TABLE public.pos_reservations (id uuid PRIMARY KEY DEFAULT gen_random_uuid());
+      `);
+      await pool.query(
+        await readFile(
+          resolveTestPath(
+            'supabase/migrations/20261103000001_commercial_inventory_and_shared_cart.sql',
+          ),
+          'utf8',
+        ),
+      );
+      await pool.query(
+        await readFile(
+          resolveTestPath(
+            'supabase/migrations/20261104000001_v2_hardening_rls_inventory_cart_orders.sql',
+          ),
+          'utf8',
+        ),
+      );
 
-      return new DisposablePostgres(pool, containerName);
+      return new DisposablePostgres(pool, containerName, native);
     } catch (error) {
       // Startup is already failing, so cleanup is deliberately best-effort and
       // must not hide the original failure.
       await Promise.allSettled([
         ...(pool ? [closePool(pool)] : []),
-        runDocker(['rm', '--force', containerName]),
+        ...(native
+          ? [
+              execFileAsync(
+                resolve(native.bin, 'pg_ctl.exe'),
+                ['-D', resolve(native.dir, 'data'), '-m', 'immediate', 'stop'],
+                { timeout: 8000, windowsHide: true },
+              ),
+            ]
+          : [runDocker(['rm', '--force', containerName])]),
       ]);
       throw error;
     }
@@ -304,7 +398,15 @@ export class DisposablePostgres {
 
     const results = await Promise.allSettled([
       closePool(this.pool),
-      runDocker(['rm', '--force', this.containerName]),
+      ...(this.native
+        ? [
+            execFileAsync(
+              resolve(this.native.bin, 'pg_ctl.exe'),
+              ['-D', resolve(this.native.dir, 'data'), '-m', 'fast', 'stop'],
+              { timeout: 8000, windowsHide: true },
+            ),
+          ]
+        : [runDocker(['rm', '--force', this.containerName])]),
     ]);
     const errors = results
       .filter(
@@ -351,7 +453,11 @@ export class PostgresSupabaseClient {
     functionName: string,
     parameters: Record<string, unknown>,
   ): Promise<SupabaseResult<unknown>> => {
-    if (functionName !== 'create_order_with_items') {
+    if (
+      !['create_order_with_items', 'create_order_with_options'].includes(
+        functionName,
+      )
+    ) {
       return {
         data: null,
         error: { message: `Unexpected RPC: ${functionName}` },
@@ -359,7 +465,12 @@ export class PostgresSupabaseClient {
     }
 
     const parameterNames = Object.keys(parameters).sort();
-    const expectedParameterNames = [...ORDER_RPC_PARAMETERS].sort();
+    const expectedParameterNames = [
+      ...ORDER_RPC_PARAMETERS,
+      ...(functionName === 'create_order_with_options'
+        ? ['p_dining_type', 'p_customer_note']
+        : []),
+    ].sort();
     if (
       parameterNames.length !== expectedParameterNames.length ||
       !parameterNames.every(
@@ -383,13 +494,13 @@ export class PostgresSupabaseClient {
     try {
       const result = await this.pool.query<{ data: unknown }>(
         `
-          SELECT public.create_order_with_items(
+          SELECT public.${functionName}(
             p_session_id => $1::UUID,
             p_user_id => $2::UUID,
             p_restaurant_id => $3::UUID,
             p_total_price => $4::INT,
             p_payment_method => $5::TEXT,
-            p_items => $6::JSON
+            p_items => $6::JSON${functionName === 'create_order_with_options' ? ', p_dining_type => $7::TEXT, p_customer_note => $8::TEXT' : ''}
           ) AS data
         `,
         [
@@ -399,6 +510,9 @@ export class PostgresSupabaseClient {
           parameters.p_total_price,
           parameters.p_payment_method,
           JSON.stringify(parameters.p_items),
+          ...(functionName === 'create_order_with_options'
+            ? [parameters.p_dining_type, parameters.p_customer_note]
+            : []),
         ],
       );
       return { data: result.rows[0].data, error: null };
@@ -477,7 +591,7 @@ export class PostgresSupabaseClient {
             try {
               const result = await this.pool.query(
                 `
-                  SELECT id, name, price, restaurant_id
+                  SELECT id, name, price, restaurant_id, source, is_available
                   FROM public.menu_items
                   WHERE id = ANY($1::UUID[])
                 `,

@@ -1003,21 +1003,22 @@ class _VoteProgressScreenState extends ConsumerState<VoteProgressScreen>
   }
 
   // ── 호스트 전용 종료 버튼 ────────────────────────────
-  // 전원 투표 시 활성 — 그 전엔 회색(비활성) 으로 잠금.
-  // 백엔드 decide 는 호스트 권한 + VOTING 상태에서만 통과.
+  // 1표 이상 투표 시 호스트가 언제든 결과를 확정할 수 있도록 활성화
   Widget _buildHostDecideButton() {
     final voted = _progress?.votedCount ?? 0;
     final total = _totalMembers;
     final everyoneVoted = total > 0 && voted >= total;
-    // 한 명이라도 투표했다면 호스트 종료 권한은 있으나, "전원 투표" 기준으로
-    // 활성화해 의도치 않은 조기 종료를 방지. (필요시 길게 눌러 강제 종료 같은
-    // 보조 동선을 후속 티켓으로 추가 가능)
-    final canDecide = _status == 'VOTING' && everyoneVoted && !_isDeciding;
+    final hasAtLeastOneVote = voted >= 1;
+    final canDecide = _status == 'VOTING' && hasAtLeastOneVote && !_isDeciding;
 
     return AppPrimaryButton(
       label: _isDeciding
           ? '결과 확정 중...'
-          : (everyoneVoted ? '투표 종료하기' : '전원이 투표하면 종료할 수 있어요'),
+          : everyoneVoted
+              ? '투표 종료 및 식당 확정하기'
+              : hasAtLeastOneVote
+                  ? '현재 1위 식당으로 투표 종료하기 ($voted/$total명 투표)'
+                  : '1명 이상 투표하면 식당을 확정할 수 있어요',
       onPressed: canDecide ? _onDecide : null,
     );
   }

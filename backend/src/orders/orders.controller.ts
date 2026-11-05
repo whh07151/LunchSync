@@ -24,6 +24,7 @@ import {
   MaxLength,
 } from 'class-validator';
 import { Transform, Type } from 'class-transformer';
+import { SkipThrottle } from '@nestjs/throttler';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { OrdersService } from './orders.service';
 
@@ -61,6 +62,21 @@ class CreateOrderDto {
   )
   @IsIn(['TOSS', 'TRANSFER', 'KAKAOPAY', 'BANK', 'CARD', 'CASH', 'SIMULATE'])
   paymentMethod?: string; // CARD | TRANSFER | CASH | SIMULATE
+
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) =>
+    typeof value === 'string' ? value.trim().toUpperCase() : value,
+  )
+  @IsIn(['DINE_IN', 'TAKEOUT'], {
+    message: '이용 방식은 DINE_IN 또는 TAKEOUT 이어야 합니다.',
+  })
+  diningType?: 'DINE_IN' | 'TAKEOUT';
+
+  @IsOptional()
+  @IsString({ message: '요청사항은 문자열이어야 합니다.' })
+  @MaxLength(300, { message: '요청사항은 300자 이내여야 합니다.' })
+  customerNote?: string;
 }
 
 class UpdateOrderStatusDto {
@@ -88,6 +104,8 @@ export class OrdersController {
       sessionId: dto.sessionId,
       items: dto.items,
       paymentMethod: dto.paymentMethod ?? 'TOSS',
+      diningType: dto.diningType,
+      customerNote: dto.customerNote,
     });
     return { success: true, data: result };
   }
@@ -95,6 +113,25 @@ export class OrdersController {
   @Get('today')
   async getTodayOrders(@Req() req: { user: { userId: string } }) {
     const result = await this.ordersService.getTodayOrders(req.user.userId);
+    return { success: true, data: result };
+  }
+
+  @Get('history')
+  async getOrderHistory(@Req() req: { user: { userId: string } }) {
+    const result = await this.ordersService.getOrderHistory(req.user.userId);
+    return { success: true, data: result };
+  }
+
+  @SkipThrottle({ default: true, auth: true, signup: true })
+  @Get('session/:sessionId')
+  async getSessionOrders(
+    @Req() req: { user: { userId: string } },
+    @Param('sessionId') sessionId: string,
+  ) {
+    const result = await this.ordersService.getSessionOrders(
+      sessionId,
+      req.user.userId,
+    );
     return { success: true, data: result };
   }
 

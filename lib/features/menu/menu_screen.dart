@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/theme/theme.dart';
@@ -9,6 +10,9 @@ import '../../providers/user_provider.dart';
 import '../../services/menus_api_service.dart';
 import '../../services/restaurants_api_service.dart';
 import '../../services/sessions_api_service.dart';
+import '../../services/votes_api_service.dart';
+import '../../services/orders_api_service.dart';
+import '../orders/order_tracking_screen.dart';
 import '../payment/order_review_screen.dart';
 import 'menu_swipe_screen.dart';
 
@@ -91,7 +95,7 @@ class MenuScreen extends ConsumerStatefulWidget {
 }
 
 class _MenuScreenState extends ConsumerState<MenuScreen>
-    with SingleTickerProviderStateMixin {
+    with SingleTickerProviderStateMixin, WidgetsBindingObserver {
   // ── 카테고리 탭 컨트롤러 ────────────────────────────────
   // SingleTickerProviderStateMixin: TabController 애니메이션에 필요한 Ticker 제공
   late final TabController _tabController;
@@ -102,6 +106,327 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
 
   // ── 식당/메뉴/세션 API 서비스 ────────────────────────────
   static const _restaurantsApi = RestaurantsApiService();
+  static const _votesApi = VotesApiService();
+  static const _ordersApi = OrdersApiService();
+
+  List<SessionOrderMemberDto> _sessionOrders = const [];
+  List<SharedCartItemDto> _sharedCartItems = const [];
+  Timer? _pollTimer;
+  bool _isPollingInFlight = false;
+  int _consecutivePollFailures = 0;
+  bool _isAppForeground = true;
+  bool _didHydrateMyServerCart = false;
+  Future<void> _cartSyncTail = Future<void>.value();
+  final Map<String, MenuItem> _pendingCartItems = {};
+  DateTime _nextPollAt = DateTime.fromMillisecondsSinceEpoch(0);
+
+  void _startPollingIfNeeded() {
+    _pollTimer?.cancel();
+    final sessionId = _resolvedSessionId;
+    if (sessionId == null || sessionId.isEmpty) return;
+    _pollTimer = Timer.periodic(const Duration(seconds: 8), (_) {
+      if (!mounted || !_isAppForeground) return;
+      final sid = _resolvedSessionId;
+      if (sid == null || sid.isEmpty) return;
+      _loadSessionOrders(sid, silent: true);
+    });
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    _isAppForeground = state == AppLifecycleState.resumed;
+    if (_isAppForeground) {
+      final sid = _resolvedSessionId;
+      if (sid != null && sid.isNotEmpty) {
+        _loadSessionOrders(sid, silent: true);
+      }
+    }
+  }
+
+  void _hydrateMyCartFromServerIfNeeded(List<SharedCartItemDto> serverItems) {
+    if (_didHydrateMyServerCart) return;
+    final menus = _menuItems;
+    if (menus == null || menus.isEmpty) return;
+    final myId = ref.read(userProvider).userId;
+    if (myId == null || myId.isEmpty) return;
+
+    final cartNotifier = ref.read(cartProvider.notifier);
+    final currentRestaurantId = cartNotifier.currentRestaurantId;
+    if (currentRestaurantId != null &&
+        currentRestaurantId != widget.restaurantId) {
+      return;
+    }
+
+    final myServerItems = serverItems.where(
+      (item) => item.userId == myId && item.quantity > 0,
+    );
+    if (myServerItems.isEmpty) {
+      _didHydrateMyServerCart = true;
+      return;
+    }
+
+    final menuById = <String, MenuItem>{for (final m in menus) m.id: m};
+    if (ref.read(cartProvider).isEmpty) {
+      for (final sc in myServerItems) {
+        final matched = menuById[sc.menuItemId];
+        if (matched != null && !matched.isSoldOut) {
+          cartNotifier.setItemQuantity(matched, sc.quantity);
+        }
+      }
+    }
+    _didHydrateMyServerCart = true;
+  }
+
+  Future<bool> _confirmSwitchRestaurantCartIfNeeded() async {
+    final cartNotifier = ref.read(cartProvider.notifier);
+    if (!cartNotifier.hasDifferentRestaurant(widget.restaurantId)) {
+      return true;
+    }
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('장바구니 식당 변경'),
+        content: const Text(
+          '다른 식당의 메뉴가 장바구니에 담겨 있습니다.\n기존 장바구니를 비우고 현재 식당 메뉴를 담을까요?',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: const Text('취소'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('비우고 담기'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed == true) {
+      cartNotifier.clear();
+      return true;
+    }
+    return false;
+  }
+
+  Future<void> _onIncrementMenuItem(MenuItem item) async {
+    final canProceed = await _confirmSwitchRestaurantCartIfNeeded();
+    if (!canProceed || !mounted) return;
+    ref.read(cartProvider.notifier).addItem(item);
+    setState(() {});
+    await _syncCartItemToServer(item);
+  }
+
+  Future<void> _onDecrementMenuItem(MenuItem item) async {
+    ref.read(cartProvider.notifier).decreaseItem(item.id);
+    setState(() {});
+    await _syncCartItemToServer(item);
+  }
+
+  Future<void> _syncCartItemToServer(MenuItem item) async {
+    final sessionId = _resolvedSessionId;
+    final token = ref.read(userProvider).accessToken;
+    if (sessionId == null ||
+        sessionId.isEmpty ||
+        token == null ||
+        token.isEmpty) {
+      return;
+    }
+    final qty = ref.read(cartProvider.notifier).quantityOf(item.id);
+    _pendingCartItems[item.id] = item;
+    final previous = _cartSyncTail;
+    final completion = Completer<void>();
+    _cartSyncTail = completion.future;
+    await previous;
+    try {
+      final list = await _sessionsApi.upsertSharedCartItem(
+        accessToken: token,
+        sessionId: sessionId,
+        menuItemId: item.id,
+        menuName: item.name,
+        price: item.price,
+        quantity: qty,
+      );
+      if (!mounted) return;
+      if (ref.read(cartProvider.notifier).quantityOf(item.id) == qty) {
+        _pendingCartItems.remove(item.id);
+      }
+      setState(() => _sharedCartItems = list);
+    } on SharedCartApiException catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(e.message),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } finally {
+      completion.complete();
+    }
+  }
+
+  Future<bool> _syncAllLocalCartItemsToServer(String sessionId) async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null || token.isEmpty || sessionId.isEmpty) return false;
+    await _cartSyncTail;
+    final toSync = <String, MenuItem>{..._pendingCartItems};
+    for (final ci in ref.read(cartProvider)) {
+      if (ci.item.restaurantId == widget.restaurantId) {
+        toSync[ci.item.id] = ci.item;
+      }
+    }
+    for (final item in toSync.values) {
+      await _syncCartItemToServer(item);
+    }
+    return _pendingCartItems.isEmpty;
+  }
+
+  Future<void> _mergeColleagueCartIntoMine() async {
+    final canProceed = await _confirmSwitchRestaurantCartIfNeeded();
+    if (!canProceed || !mounted) return;
+
+    final myId = ref.read(userProvider).userId;
+    final allMenus = _menuItems ?? const <MenuItem>[];
+    final mergedMenuItems = <String, MenuItem>{};
+    int addedCount = 0;
+    for (final sc in _sharedCartItems) {
+      if (sc.userId == myId || sc.quantity <= 0) continue;
+      MenuItem? matched;
+      for (final m in allMenus) {
+        if (m.id == sc.menuItemId) {
+          matched = m;
+          break;
+        }
+      }
+      if (matched != null && !matched.isSoldOut) {
+        for (int i = 0; i < sc.quantity; i++) {
+          ref.read(cartProvider.notifier).addItem(matched);
+          addedCount++;
+        }
+        mergedMenuItems[matched.id] = matched;
+      }
+    }
+    setState(() {});
+    for (final item in mergedMenuItems.values) {
+      await _syncCartItemToServer(item);
+    }
+    if (addedCount > 0 && mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('동료가 담은 메뉴 $addedCount개를 내 장바구니로 합쳤어요!'),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    }
+  }
+
+  Future<void> _loadSessionOrders(
+    String sessionId, {
+    bool silent = false,
+  }) async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null || token.isEmpty || sessionId.isEmpty) return;
+    if (_isPollingInFlight) return;
+    if (_pendingCartItems.isNotEmpty) return;
+    if (silent && DateTime.now().isBefore(_nextPollAt)) return;
+
+    _isPollingInFlight = true;
+    try {
+      final list = await _ordersApi.getSessionOrders(
+        accessToken: token,
+        sessionId: sessionId,
+      );
+      final sharedCart = await _sessionsApi.getSharedCart(
+        accessToken: token,
+        sessionId: sessionId,
+      );
+      _consecutivePollFailures = 0;
+      _nextPollAt = DateTime.fromMillisecondsSinceEpoch(0);
+      if (!mounted) return;
+      _hydrateMyCartFromServerIfNeeded(sharedCart);
+      setState(() {
+        _sessionOrders = list;
+        _sharedCartItems = sharedCart;
+      });
+    } catch (_) {
+      _consecutivePollFailures++;
+      final exponent = _consecutivePollFailures.clamp(1, 5);
+      _nextPollAt = DateTime.now().add(Duration(seconds: 8 * (1 << exponent)));
+    } finally {
+      _isPollingInFlight = false;
+    }
+  }
+
+  bool _isCreatingQuickSession = false;
+
+  Future<void> _handleProceedToOrder() async {
+    if (_isCreatingQuickSession) return;
+    var activeSessionId = _resolvedSessionId;
+
+    if (activeSessionId == null || activeSessionId.isEmpty) {
+      final token = ref.read(userProvider).accessToken;
+      if (token == null || token.isEmpty) return;
+
+      setState(() => _isCreatingQuickSession = true);
+      try {
+        final created = await _sessionsApi.createSession(
+          accessToken: token,
+          name: '${widget.restaurantName} 바로 주문',
+          radius: 500,
+          budget: 15000,
+          returnMinutes: 30,
+        );
+        if (created != null) {
+          final decided = await _votesApi.decide(
+            accessToken: token,
+            sessionId: created.id,
+            restaurantId: widget.restaurantId,
+          );
+          if (decided != null) {
+            activeSessionId = created.id;
+            if (mounted) {
+              setState(() => _resolvedSessionId = created.id);
+              _startPollingIfNeeded();
+            }
+          }
+        }
+      } finally {
+        if (mounted) {
+          setState(() => _isCreatingQuickSession = false);
+        }
+      }
+    }
+
+    if (!mounted) return;
+    if (activeSessionId == null || activeSessionId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('주문 세션을 준비하지 못했어요. 잠시 후 다시 시도해 주세요.')),
+      );
+      return;
+    }
+
+    final synced = await _syncAllLocalCartItemsToServer(activeSessionId);
+    if (!mounted) return;
+    if (!synced) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('장바구니 저장을 완료하지 못했어요. 연결을 확인하고 다시 주문해 주세요.'),
+        ),
+      );
+      return;
+    }
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => OrderReviewScreen(
+          sessionId: activeSessionId!,
+          restaurantName: widget.restaurantName,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    await _loadSessionOrders(activeSessionId, silent: true);
+  }
+
   static const _sessionsApi = SessionsApiService();
   // CORE-09(2026-05-31): 알레르기 충돌 검증기
   static const _menusApi = MenusApiService();
@@ -141,6 +466,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
 
     // TabController 초기화
     // length: 탭 수 = MenuCategory의 값 수
@@ -187,6 +513,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
         _resolvedSessionId = passed;
         _isResolvingSession = false;
       });
+      _startPollingIfNeeded();
+      _loadSessionOrders(passed);
       return;
     }
 
@@ -201,19 +529,30 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
       return;
     }
 
-    // 3) sessions/today 호출 → 4) 활성 세션 첫 번째 채택
+    // 3) sessions/today 호출 → 현재 식당으로 확정(ORDERED)된 활성 세션만 재사용.
+    // 다른 식당 세션이나 미확정 세션을 끌어다 쓰면 ORDER_RESTAURANT_MISMATCH 가 발생하므로
+    // 조건에 맞는 세션이 없으면 null 로 두어 주문 시 현재 식당 전용 세션을 생성하게 한다.
     final sessions = await _sessionsApi.getTodaySessions(accessToken: token);
     if (!mounted) return;
 
-    // DONE 은 이미 종료된 세션이므로 주문 받을 수 없음.
-    // 그 외 상태(WAITING/VOTING/ORDERED) 는 아직 주문을 추가할 수 있다고
-    // 보고 첫 번째 항목을 채택. 우선순위는 백엔드 정렬을 신뢰.
-    final active = sessions.where((s) => s.status != 'DONE').toList();
+    final matchedActive = sessions
+        .where(
+          (s) =>
+              s.status == 'ORDERED' &&
+              s.winnerRestaurantId == widget.restaurantId,
+        )
+        .toList();
 
     setState(() {
-      _resolvedSessionId = active.isEmpty ? null : active.first.id;
+      _resolvedSessionId = matchedActive.isEmpty
+          ? null
+          : matchedActive.first.id;
       _isResolvingSession = false;
     });
+    if (matchedActive.isNotEmpty) {
+      _startPollingIfNeeded();
+      _loadSessionOrders(matchedActive.first.id);
+    }
   }
 
   // ── 메뉴 목록 로딩 ──────────────────────────────────────
@@ -243,7 +582,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     // - 백엔드 category 문자열을 enum 으로 매핑
     // - description 누락 시 빈 문자열로 폴백
     // 외부 수집·AI 추정 메뉴의 가격은 확인되지 않았으므로 장바구니에 담지 않는다.
-    final mapped = dtoList.where((dto) => dto.source == 'MANUAL')
+    final mapped = dtoList
+        .where((dto) => dto.source == 'MANUAL')
         .map(
           (dto) => MenuItem(
             id: dto.id,
@@ -253,6 +593,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
             price: dto.price,
             category: _mapCategory(dto.category),
             imageUrl: dto.imageUrl,
+            prepTimeMinutes: dto.prepTimeMinutes,
+            ingredients: dto.ingredients,
           ),
         )
         .toList();
@@ -262,6 +604,10 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
       _isLoading = false;
       _loadError = null;
     });
+    if (_sharedCartItems.isNotEmpty) {
+      _hydrateMyCartFromServerIfNeeded(_sharedCartItems);
+      setState(() {});
+    }
 
     // CORE-09(2026-05-31): 메뉴 로딩이 끝났다면 알레르기 충돌도 함께 조회.
     // 별도 호출이지만 사용자 알레르기가 비어있으면 백엔드가 즉시 빈 결과로
@@ -412,9 +758,11 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
     return MenuCategory.other;
   }
 
-  // ── 생명주기: TabController 메모리 해제 ─────────────────
+  // ── 생명주기: 타이머·옵저버·TabController 메모리 해제 ─────
   @override
   void dispose() {
+    _pollTimer?.cancel();
+    WidgetsBinding.instance.removeObserver(this);
     _tabController.dispose();
     super.dispose();
   }
@@ -494,6 +842,114 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
         ),
       );
     }
+    return Column(
+      children: [
+        if (_sessionOrders.isNotEmpty || _sharedCartItems.isNotEmpty)
+          _buildSessionOrdersBanner(),
+        Expanded(child: _buildMenuList(cartItems)),
+      ],
+    );
+  }
+
+  Widget _buildSessionOrdersBanner() {
+    final primary = Theme.of(context).colorScheme.primary;
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(
+        AppSpacing.screenHorizontal,
+        8,
+        AppSpacing.screenHorizontal,
+        0,
+      ),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: primary.withAlpha(14),
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: primary.withAlpha(60)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.groups_rounded, size: 16, color: primary),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  _sessionOrders.isNotEmpty
+                      ? '같은 방 동료 주문 현황 (${_sessionOrders.length}건)'
+                      : '같은 방 공동 장바구니 (${_sharedCartItems.length}건)',
+                  style: AppTextStyles.label.copyWith(
+                    color: primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (_sessionOrders.isNotEmpty)
+                TextButton(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 28),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: () {
+                    if (_sessionOrders.isEmpty) return;
+                    final firstOrderId = _sessionOrders.first.id;
+                    if (firstOrderId.isEmpty) return;
+                    Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            OrderTrackingScreen(orderId: firstOrderId),
+                      ),
+                    );
+                  },
+                  child: const Text('주문 추적 보기 →'),
+                ),
+            ],
+          ),
+          if (_sharedCartItems.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    '🛒 공동 장바구니 (8초 주기 갱신): ${_sharedCartItems.map((c) => "${c.userName}(${c.menuName} x${c.quantity})").join(", ")}',
+                    style: AppTextStyles.caption.copyWith(
+                      color: primary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                TextButton(
+                  style: TextButton.styleFrom(
+                    minimumSize: const Size(0, 26),
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                  ),
+                  onPressed: _mergeColleagueCartIntoMine,
+                  child: const Text('동료 메뉴 합치기'),
+                ),
+              ],
+            ),
+          ],
+          const SizedBox(height: 4),
+          ..._sessionOrders
+              .take(3)
+              .map(
+                (so) => Padding(
+                  padding: const EdgeInsets.only(top: 2),
+                  child: Text(
+                    '• ${so.userName}: ${so.itemsSummary.isEmpty ? "메뉴 주문" : so.itemsSummary} (${_formatPrice(so.totalPrice)})',
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.textPrimary,
+                    ),
+                  ),
+                ),
+              ),
+        ],
+      ),
+    );
+  }
+
+  Widget buildLegacyMenuList(List<CartItem> cartItems) {
     return _buildMenuList(cartItems);
   }
 
@@ -547,8 +1003,8 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
           child: IconButton(
             icon: const Icon(Icons.swipe),
             onPressed: canEnterSwipe
-                ? () {
-                    Navigator.of(context).push(
+                ? () async {
+                    await Navigator.of(context).push(
                       MaterialPageRoute(
                         builder: (_) => MenuSwipeScreen(
                           restaurantId: widget.restaurantId,
@@ -557,6 +1013,11 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                         ),
                       ),
                     );
+                    if (!mounted) return;
+                    final sid = _resolvedSessionId;
+                    if (sid != null && sid.isNotEmpty) {
+                      await _syncAllLocalCartItemsToServer(sid);
+                    }
                   }
                 : null,
           ),
@@ -745,6 +1206,19 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                   maxLines: 2,
                   overflow: TextOverflow.ellipsis, // 2줄 초과 시 ... 처리
                 ),
+                Padding(
+                  padding: const EdgeInsets.only(top: 4),
+                  child: Text(
+                    item.ingredients.isNotEmpty
+                        ? '⏱ 약 ${item.prepTimeMinutes}분 · 재료: ${item.ingredients.join(", ")}'
+                        : '⏱ 예상 조리 약 ${item.prepTimeMinutes}분',
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.textSecondary,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ),
 
                 const SizedBox(height: AppSpacing.sm),
 
@@ -788,10 +1262,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                       // ── "담기" 버튼 (장바구니에 없을 때) ─
                       GestureDetector(
                         onTap: () {
-                          // cartProvider에 이 메뉴를 1개 추가
-                          ref.read(cartProvider.notifier).addItem(item);
-                          // 담기 후 UI 갱신: setState로 이 항목의 cartQty가 반영됨
-                          setState(() {});
+                          _onIncrementMenuItem(item);
                         },
                         child: Container(
                           padding: const EdgeInsets.symmetric(
@@ -817,14 +1288,11 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                       Row(
                         mainAxisSize: MainAxisSize.min,
                         children: [
-                          // 수량 감소 버튼 (0이 되면 항목 자동 제거)
+                          // 수량 감소 버튼 (0이 되면 항목 자동 제거 + 서버 0 동기화)
                           _buildQuantityButton(
                             icon: Icons.remove_rounded,
                             onTap: () {
-                              ref
-                                  .read(cartProvider.notifier)
-                                  .decreaseItem(item.id);
-                              setState(() {}); // UI 즉시 갱신
+                              _onDecrementMenuItem(item);
                             },
                           ),
 
@@ -844,8 +1312,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                           _buildQuantityButton(
                             icon: Icons.add_rounded,
                             onTap: () {
-                              ref.read(cartProvider.notifier).addItem(item);
-                              setState(() {}); // UI 즉시 갱신
+                              _onIncrementMenuItem(item);
                             },
                           ),
                         ],
@@ -945,10 +1412,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
           Builder(
             builder: (_) {
               final resolved = _resolvedSessionId;
-              final canOrder =
-                  !_isResolvingSession &&
-                  resolved != null &&
-                  resolved.isNotEmpty;
+              final canOrder = !_isResolvingSession && !_isCreatingQuickSession;
 
               // 2026-05-15 UX 미세 개선 (배민 패턴):
               //   기존: 비활성 시 라벨이 "먼저 점심 세션을 만들어 봐요"로 바뀜 → 혼란
@@ -957,8 +1421,9 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
               final label = _isResolvingSession
                   ? '세션 확인 중…'
                   : '주문하기 ($formattedTotal)';
-              final disabledHint = !canOrder && !_isResolvingSession
-                  ? '먼저 점심 세션을 만들어야 주문할 수 있어요'
+              final disabledHint =
+                  (resolved == null || resolved.isEmpty) && !_isResolvingSession
+                  ? '활성 점심 세션이 없어도 주문하기를 누르면 바로 주문이 시작돼요'
                   : null;
 
               return Column(
@@ -988,18 +1453,7 @@ class _MenuScreenState extends ConsumerState<MenuScreen>
                     label: label,
                     // canOrder == false 면 onPressed 를 null 로 두어
                     // AppPrimaryButton 의 기본 비활성 스타일을 그대로 활용.
-                    onPressed: canOrder
-                        ? () {
-                            Navigator.of(context).push(
-                              MaterialPageRoute(
-                                builder: (_) => OrderReviewScreen(
-                                  sessionId: resolved,
-                                  restaurantName: widget.restaurantName,
-                                ),
-                              ),
-                            );
-                          }
-                        : null,
+                    onPressed: canOrder ? _handleProceedToOrder : null,
                   ),
                 ],
               );

@@ -11,6 +11,8 @@ import '../../providers/user_provider.dart';
 import '../../services/sessions_api_service.dart';
 import 'recommendation_list_screen.dart';
 import '../menu/menu_screen.dart';
+import '../../services/orders_api_service.dart';
+import '../orders/order_tracking_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 세션 로비 화면 (CU-10)
@@ -230,8 +232,38 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
   // ORDERED 감지 시 호출. 친근 토스트 + MenuScreen push.
   // 식당 이름은 우선 session 모델에 없어 fallback 으로 sessionName 또는
   // "결정된 식당" 사용. (백엔드가 winnerRestaurantName 도 함께 내려주면 더 정확)
-  void _goToMenuForWinner(String winnerRestaurantId) {
+  Future<void> _goToMenuForWinner(String winnerRestaurantId) async {
     _pollingTimer?.cancel();
+    final token = ref.read(userProvider).accessToken;
+    if (token != null && token.isNotEmpty) {
+      final todayOrders = await const OrdersApiService().getTodayOrders(
+        accessToken: token,
+      );
+      OrderSummaryDto? mySessionOrder;
+      for (final o in todayOrders) {
+        if (o.sessionId == widget.sessionId && o.status != 'CANCELLED') {
+          mySessionOrder = o;
+          break;
+        }
+      }
+      if (!mounted) return;
+      if (mySessionOrder != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('이미 주문이 접수된 세션이에요. 실시간 주문 추적으로 이동할게요!'),
+            duration: Duration(seconds: 2),
+          ),
+        );
+        await Navigator.of(context).push(
+          MaterialPageRoute(
+            builder: (_) => OrderTrackingScreen(orderId: mySessionOrder!.id),
+          ),
+        );
+        if (mounted) _startPolling();
+        return;
+      }
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
         content: Text('이 식당으로 결정됐어요! 메뉴 골라봐요'),
@@ -302,7 +334,9 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
 
   // ── 초대코드 클립보드 복사 ─────────────────────────────
   Future<void> _copyInviteCode() async {
-    await Clipboard.setData(ClipboardData(text: widget.inviteCode!));
+    await Clipboard.setData(
+      ClipboardData(text: widget.inviteCode ?? _session?.inviteCode ?? ''),
+    );
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
@@ -316,7 +350,7 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
   // 시연 친화적으로 메시지 미리보기와 두 가지 액션(메시지 복사 / 코드만 복사)을 제공.
   // 카톡 SDK 의 인앱 공유는 추후 통합 가능 (현재는 텍스트 복사로 fallback).
   Future<void> _openShareSheet() async {
-    final inviteCode = widget.inviteCode!;
+    final inviteCode = widget.inviteCode ?? _session?.inviteCode ?? '';
     final sessionName = _session?.name ?? '점심 세션';
     final shareMessage =
         '$sessionName 에 초대합니다!\n'
@@ -752,7 +786,41 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
           ],
 
           // ── 초대코드 섹션 (호스트만 표시) ─────────────
-          if (widget.inviteCode != null) ...[
+          Container(
+                      width: double.infinity,
+                      margin: const EdgeInsets.only(bottom: AppSpacing.sm),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 8,
+                      ),
+                      decoration: BoxDecoration(
+                        color: AppColors.success.withAlpha(18),
+                        borderRadius: BorderRadius.circular(AppRadius.chip),
+                        border: Border.all(
+                          color: AppColors.success.withAlpha(70),
+                        ),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.sync_rounded,
+                            size: 16,
+                            color: AppColors.success,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '실시간 방 싱크 활성 · 참가자 입장 및 투표/확정 시 자동 전환',
+                              style: AppTextStyles.caption.copyWith(
+                                color: AppColors.success,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if ((widget.inviteCode ?? _session?.inviteCode) != null) ...[
             const SizedBox(height: AppSpacing.md),
             _buildInviteCodeCard(),
             const SizedBox(height: AppSpacing.lg),
@@ -867,7 +935,7 @@ class _SessionLobbyScreenState extends ConsumerState<SessionLobbyScreen>
               // 코드 문자 (크게 표시)
               Expanded(
                 child: Text(
-                  widget.inviteCode!,
+                  (widget.inviteCode ?? _session?.inviteCode ?? ''),
                   style: AppTextStyles.heading1.copyWith(
                     letterSpacing: 4,
                     color: Theme.of(context).colorScheme.primary,

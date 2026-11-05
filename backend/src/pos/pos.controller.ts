@@ -13,14 +13,24 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import {
+  ArrayMaxSize,
+  IsArray,
+  IsDefined,
   IsIn,
+  IsInt,
+  IsNotEmpty,
   IsNumber,
   IsOptional,
   IsString,
+  IsISO8601,
+  Matches,
+  Max,
   MaxLength,
   Min,
   ValidateIf,
+  ValidateNested,
 } from 'class-validator';
+import { Transform, Type } from 'class-transformer';
 // 2026-05-13 SkipThrottle: POS 단말이 주문 목록/통계를 폴링하면서 글로벌
 //   throttler(분당 100) 한도를 빠르게 소모해 429 유발. 폴링성 GET 만 제외하고
 //   상태 변경(PATCH)·취소(POST)는 보안 유지 위해 throttle 적용 그대로 둠.
@@ -70,6 +80,104 @@ class UpdatePosOrderStatusDto {
 
 class CancelOrderDto {
   @IsOptional() @IsString() @MaxLength(500) reason?: string;
+}
+
+export class SaveInventoryItemDto {
+  @IsString({ message: '식자재 ID는 문자열이어야 합니다.' })
+  @IsNotEmpty({ message: '식자재 ID는 필수입니다.' })
+  @MaxLength(64, { message: '식자재 ID는 64자 이내여야 합니다.' })
+  id!: string;
+
+  @IsString({ message: '식자재 이름은 문자열이어야 합니다.' })
+  @IsNotEmpty({ message: '식자재 이름은 필수입니다.' })
+  @MaxLength(100, { message: '식자재 이름은 100자 이내여야 합니다.' })
+  name!: string;
+
+  @IsString({ message: '카테고리는 문자열이어야 합니다.' })
+  @IsNotEmpty({ message: '카테고리는 필수입니다.' })
+  @MaxLength(50, { message: '카테고리는 50자 이내여야 합니다.' })
+  category!: string;
+
+  @IsInt({ message: '현재 수량은 정수여야 합니다.' })
+  @Min(0, { message: '현재 수량은 0 이상이어야 합니다.' })
+  @Max(100000, { message: '현재 수량은 100,000 이하여야 합니다.' })
+  currentQty!: number;
+
+  @IsInt({ message: '최소 기준 수량은 정수여야 합니다.' })
+  @Min(0, { message: '최소 기준 수량은 0 이상이어야 합니다.' })
+  @Max(100000, { message: '최소 기준 수량은 100,000 이하여야 합니다.' })
+  minThreshold!: number;
+
+  @IsString({ message: '단위는 문자열이어야 합니다.' })
+  @IsNotEmpty({ message: '단위는 필수입니다.' })
+  @MaxLength(20, { message: '단위는 20자 이내여야 합니다.' })
+  unit!: string;
+
+  @IsOptional()
+  @IsArray({ message: '연결 메뉴 목록은 배열이어야 합니다.' })
+  @ArrayMaxSize(50, { message: '연결 메뉴는 최대 50개까지 지정할 수 있습니다.' })
+  @IsString({ each: true, message: '연결 메뉴 이름은 문자열이어야 합니다.' })
+  @MaxLength(100, { each: true, message: '연결 메뉴 이름은 100자 이내여야 합니다.' })
+  linkedMenuNames?: string[];
+
+  @IsOptional()
+  @ValidateIf((_o, v) => v !== null && v !== '')
+  @IsString({ message: '유통기한은 YYYY-MM-DD 형식 문자열이어야 합니다.' })
+  @Matches(/^\d{4}-\d{2}-\d{2}$/, {
+    message: '유통기한은 YYYY-MM-DD 형식이어야 합니다.',
+  })
+  expiryDate?: string | null;
+
+  @IsOptional()
+  @IsInt({ message: '1인분 소요량은 정수여야 합니다.' })
+  @Min(1, { message: '1인분 소요량은 1 이상이어야 합니다.' })
+  @Max(10000, { message: '1인분 소요량은 10,000 이하여야 합니다.' })
+  recipeUnitPerServing?: number;
+
+  @IsOptional()
+  @IsISO8601()
+  updatedAt?: string;
+}
+
+class InventoryRevisionDto {
+  @IsString() @IsNotEmpty() @MaxLength(64) id!: string;
+  @IsISO8601() updatedAt!: string;
+}
+
+export class SaveInventoryDto {
+  @IsDefined({ message: 'items 필드가 필요합니다.' })
+  @IsArray({ message: 'items는 배열이어야 합니다.' })
+  @ArrayMaxSize(200, { message: '식자재는 최대 200개까지 저장할 수 있습니다.' })
+  @ValidateNested({ each: true })
+  @Type(() => SaveInventoryItemDto)
+  items!: SaveInventoryItemDto[];
+
+  @IsDefined()
+  @IsArray()
+  @ArrayMaxSize(200)
+  @ValidateNested({ each: true })
+  @Type(() => InventoryRevisionDto)
+  expectedItems!: InventoryRevisionDto[];
+}
+
+export class UpdateStoreStatusDto {
+  @IsOptional()
+  @IsString()
+  @Transform(({ value }) => {
+    if (typeof value !== 'string') return value;
+    const v = value.trim().toUpperCase();
+    if (v === 'BREAKTIME') return 'BREAK_TIME';
+    return v;
+  })
+  @IsIn(['OPEN', 'BREAK_TIME', 'CLOSED'], {
+    message: '영업 상태는 OPEN, BREAK_TIME, CLOSED 중 하나여야 합니다.',
+  })
+  businessStatus?: 'OPEN' | 'BREAK_TIME' | 'CLOSED';
+
+  @IsOptional()
+  @IsString({ message: '운영 시간 안내는 문자열이어야 합니다.' })
+  @MaxLength(200, { message: '운영 시간 안내는 200자 이내여야 합니다.' })
+  operatingHoursNote?: string;
 }
 
 // 2026-05-31 WOW#1: 사장님 "오늘의 한 줄" 입력 DTO.
@@ -389,5 +497,50 @@ export class PosController {
       dto.receivedAmount,
     );
     return { success: true, data: result };
+  }
+
+  // ── 상용화 업그레이드: 식자재·레시피(BOM)·유통기한 & 매장 영업상태 DB 영속화 API ──
+  @SkipThrottle({ default: true })
+  @Get('restaurants/:id/inventory')
+  async getInventory(
+    @Req() req: AuthedRequest,
+    @Param('id') restaurantId: string,
+  ) {
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
+    const items = await this.posService.getInventory(restaurantId);
+    return { success: true, data: items };
+  }
+
+  @Patch('restaurants/:id/inventory')
+  async saveInventory(
+    @Req() req: AuthedRequest,
+    @Param('id') restaurantId: string,
+    @Body() body: SaveInventoryDto,
+  ) {
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
+    const items = await this.posService.saveInventory(
+      restaurantId,
+      body?.items,
+      body?.expectedItems,
+    );
+    return { success: true, data: items };
+  }
+
+  @SkipThrottle({ default: true })
+  @Get('restaurants/:id/store-status')
+  async getStoreStatus(@Param('id') restaurantId: string) {
+    const status = await this.posService.getStoreStatus(restaurantId);
+    return { success: true, data: status };
+  }
+
+  @Patch('restaurants/:id/store-status')
+  async updateStoreStatus(
+    @Req() req: AuthedRequest,
+    @Param('id') restaurantId: string,
+    @Body() body: UpdateStoreStatusDto,
+  ) {
+    await this.posAccess.assertAccessTo(req.user, restaurantId);
+    const status = await this.posService.updateStoreStatus(restaurantId, body);
+    return { success: true, data: status };
   }
 }

@@ -29,6 +29,8 @@ class PosMenuItem {
     this.description,
     this.imageUrl,
     this.prepTimeMinutes = 15,
+    this.ingredients = const [],
+    this.allergens = const [],
   });
 
   final String id;
@@ -43,7 +45,19 @@ class PosMenuItem {
   /// 2026-05-16 배민 패턴 — 예상 조리 시간 (분, 1~120, 미설정 시 15)
   final int prepTimeMinutes;
 
+  /// 메뉴 핵심 식자재 및 알레르기 유발 물질 태그 (사장님 재고 연동 및 손님 추천 필터용)
+  final List<String> ingredients;
+  final List<String> allergens;
+
   factory PosMenuItem.fromJson(Map<String, dynamic> json) {
+    List<String> parseStringList(dynamic raw) {
+      if (raw is! List) return const [];
+      return raw
+          .map((e) => e?.toString().trim() ?? '')
+          .where((e) => e.isNotEmpty)
+          .toList(growable: false);
+    }
+
     return PosMenuItem(
       id: json['id'] as String,
       restaurantId: (json['restaurantId'] ?? json['restaurant_id']) as String,
@@ -57,6 +71,8 @@ class PosMenuItem {
           ((json['prepTimeMinutes'] ?? json['prep_time_minutes']) as num?)
                   ?.toInt() ??
               15,
+      ingredients: parseStringList(json['ingredients']),
+      allergens: parseStringList(json['allergens']),
     );
   }
 }
@@ -101,6 +117,8 @@ class PosMenusApiService {
     String? description,
     String? imageUrl,
     int? prepTimeMinutes,
+    List<String>? ingredients,
+    List<String>? allergens,
   }) async {
     try {
       final payload = <String, dynamic>{
@@ -110,6 +128,8 @@ class PosMenusApiService {
         'description': ?description,
         'imageUrl': ?imageUrl,
         'prepTimeMinutes': ?prepTimeMinutes,
+        'ingredients': ?ingredients,
+        'allergens': ?allergens,
       };
       final response = await http
           .post(
@@ -143,6 +163,8 @@ class PosMenusApiService {
     String? imageUrl,
     bool? isAvailable,
     int? prepTimeMinutes,
+    List<String>? ingredients,
+    List<String>? allergens,
   }) async {
     try {
       final body = <String, dynamic>{};
@@ -153,6 +175,8 @@ class PosMenusApiService {
       if (imageUrl != null) body['imageUrl'] = imageUrl;
       if (isAvailable != null) body['isAvailable'] = isAvailable;
       if (prepTimeMinutes != null) body['prepTimeMinutes'] = prepTimeMinutes;
+      if (ingredients != null) body['ingredients'] = ingredients;
+      if (allergens != null) body['allergens'] = allergens;
 
       final response = await http
           .patch(

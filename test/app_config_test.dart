@@ -20,14 +20,24 @@ void main() {
     for (final value in [
       '',
       'http://localhost:3000/api',
+      'http://127.0.0.1:3000/api',
+      'http://example.com/api',
       'https://user:pw@example.com/api',
       'https://example.com/api?x=1',
+      'https://example.com/api#frag',
     ]) {
       expect(
         () => AppConfig.resolveBackendUrl(release: true, urlOverride: value),
         throwsStateError,
       );
     }
+    expect(
+      () => AppConfig.resolveBackendUrl(
+        release: true,
+        hostOverride: 'api.example.com',
+      ),
+      throwsStateError,
+    );
     expect(
       AppConfig.resolveBackendUrl(
         release: true,

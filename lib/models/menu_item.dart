@@ -50,15 +50,9 @@ class MenuItem {
     required this.category,     // 카테고리 분류
     this.imageUrl,              // 메뉴 이미지 URL (없으면 기본 아이콘 표시)
     this.isSoldOut = false,     // 품절 여부 (기본: 판매 중)
-    // CORE-09(2026-05-31): 알레르기 충돌 검증 결과를 카드에 표시하기 위한
-    // 매칭 키워드 배열. 비어있으면 ⚠️ 배지를 그리지 않음.
-    //
-    // 백엔드 GET /api/menus/restaurant/:id/check-allergens 응답으로 채워지며,
-    // 정확 매칭(소문자+trim) 결과만 들어온다.
+    this.prepTimeMinutes = 15,
+    this.ingredients = const <String>[],
     this.allergenConflicts = const <String>[],
-    // TODO: 장다연 씨 DB 컬럼 추가 확정 후 아래 필드 활성화
-    // this.spicy = false,
-    // this.allergyNotes,
   });
 
   final String id;
@@ -69,13 +63,12 @@ class MenuItem {
   final MenuCategory category;
   final String? imageUrl;
   final bool isSoldOut;
+  final int prepTimeMinutes;
+  final List<String> ingredients;
 
   /// 사용자가 등록한 알레르기와 이 메뉴가 정확히 매칭된 키워드들.
   /// 비어있으면 충돌 없음 = ⚠️ 배지/BottomSheet 모두 표시 안 함.
   final List<String> allergenConflicts;
-  // TODO: 장다연 씨 확정 후 추가
-  // final bool spicy;
-  // final String? allergyNotes;
 
   /// 알레르기 매칭 결과만 덮어쓰는 얕은 복사 헬퍼.
   /// 메뉴 로딩 직후 check-allergens 응답이 도착했을 때 setState 내에서 사용.
@@ -89,6 +82,8 @@ class MenuItem {
       category: category,
       imageUrl: imageUrl,
       isSoldOut: isSoldOut,
+      prepTimeMinutes: prepTimeMinutes,
+      ingredients: ingredients,
       allergenConflicts: conflicts,
     );
   }
