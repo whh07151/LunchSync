@@ -102,6 +102,7 @@ class _RestaurantDetailScreenState
   //   누적 픽업 횟수 + 등급 1회 조회. 헤더에 영구 뱃지로 표시
   //   ("단골 #4" / "VIP 단골" 등). null = 미조회/실패 → 뱃지 미표시.
   LoyaltyDto? _loyalty;
+  RestaurantSeatSummaryDto? _seatSummary;
 
   @override
   void initState() {
@@ -115,7 +116,19 @@ class _RestaurantDetailScreenState
       _loadFavoriteStatus();
       _loadReviewSummary();
       _loadLoyalty();
+      _loadSeatSummary();
     });
+  }
+
+  Future<void> _loadSeatSummary() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null || token.isEmpty) return;
+    final result = await _restaurantsApi.getSeatSummary(
+      accessToken: token,
+      restaurantId: widget.restaurantId,
+    );
+    if (!mounted) return;
+    setState(() => _seatSummary = result);
   }
 
   // ── 단골 등급 1회 조회 (2026-05-31 WOW#5) ────────────────
@@ -234,10 +247,15 @@ class _RestaurantDetailScreenState
 
     final active = sessions.where((s) => s.status != 'DONE').toList();
     if (active.isEmpty) return;
+    final matched = active.where(
+      (s) =>
+          s.status == 'ORDERED' && s.winnerRestaurantId == widget.restaurantId,
+    );
+    final chosen = matched.isNotEmpty ? matched.first : active.first;
     setState(() {
-      _activeSessionId = active.first.id;
-      _activeSessionStatus = active.first.status;
-      _activeWinnerRestaurantId = active.first.winnerRestaurantId;
+      _activeSessionId = chosen.id;
+      _activeSessionStatus = chosen.status;
+      _activeWinnerRestaurantId = chosen.winnerRestaurantId;
     });
   }
 
@@ -296,7 +314,7 @@ class _RestaurantDetailScreenState
   }
 
   // ── 길찾기 바텀시트 ────────────────────────────────────
-  // 카카오맵 / 네이버 지도 선택 시 해당 앱 실행 (없으면 웹)
+  // 도보 예상 거리·소요시간·점심시간 여유도 요약 + 주소 복사 + 카카오맵/네이버 지도 연결
   Future<void> _showRouteSheet() async {
     final r = _restaurant;
     if (r == null || r.lat == null || r.lng == null) {
@@ -306,22 +324,83 @@ class _RestaurantDetailScreenState
       return;
     }
 
+    // 사용자 위치(또는 기본 한성대입구 기준점 37.5885, 127.0062) 대비 도보 거리/소요시간 계산
+    final baseLat = _userLat ?? 37.5885;
+    final baseLng = _userLng ?? 127.0062;
+    final distMeters = haversineMeters(
+      lat1: baseLat,
+      lng1: baseLng,
+      lat2: r.lat!,
+      lng2: r.lng!,
+    ).round();
+    final walkMeters = (distMeters * 1.25).round().clamp(80, 15000);
+    final walkMinutes = (walkMeters / 67).ceil().clamp(2, 120);
+    final roundTripMinutes = walkMinutes * 2;
+
     showModalBottomSheet<void>(
       context: context,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
       ),
       builder: (ctx) {
+        final primary = Theme.of(ctx).colorScheme.primary;
         return SafeArea(
           child: Padding(
-            padding: const EdgeInsets.symmetric(vertical: AppSpacing.md),
+            padding: const EdgeInsets.all(AppSpacing.md),
             child: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Text('길찾기 앱 선택', style: AppTextStyles.heading3),
+                Text(
+                  '${r.name} 길찾기 안내',
+                  style: AppTextStyles.heading3,
+                  textAlign: TextAlign.center,
+                ),
+                const SizedBox(height: 10),
+                Container(
+                  padding: const EdgeInsets.all(12),
+                  decoration: BoxDecoration(
+                    color: primary.withAlpha(15),
+                    borderRadius: BorderRadius.circular(AppRadius.card),
+                    border: Border.all(color: primary.withAlpha(60)),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            Icons.directions_walk_rounded,
+                            size: 18,
+                            color: primary,
+                          ),
+                          const SizedBox(width: 6),
+                          Expanded(
+                            child: Text(
+                              '예상 도보 약 ${walkMeters}m · 편도 약 $walkMinutes분 (왕복 약 $roundTripMinutes분)',
+                              style: AppTextStyles.bodySmall.copyWith(
+                                color: primary,
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (r.address != null && r.address!.isNotEmpty) ...[
+                        const SizedBox(height: 6),
+                        Text(
+                          '주소: ${r.address}',
+                          style: AppTextStyles.caption.copyWith(
+                            color: AppColors.textSecondary,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
                 const SizedBox(height: AppSpacing.md),
                 _RouteOption(
-                  label: '카카오맵으로 길찾기',
+                  label: '카카오맵 도보 길찾기 열기',
                   icon: Icons.map_rounded,
                   color: const Color(0xFFFFE812),
                   onTap: () async {
@@ -330,11 +409,12 @@ class _RestaurantDetailScreenState
                       destLat: r.lat!,
                       destLng: r.lng!,
                       destName: r.name,
+                      mode: 'FOOT',
                     );
                   },
                 ),
                 _RouteOption(
-                  label: '네이버 지도로 길찾기',
+                  label: '네이버 지도 길찾기 열기',
                   icon: Icons.map_outlined,
                   color: const Color(0xFF03C75A),
                   onTap: () async {
@@ -355,53 +435,20 @@ class _RestaurantDetailScreenState
   }
 
   // ── 메뉴 전체 화면 진입 ────────────────────────────────
-  // ⚠️ 반드시 widget.restaurantId 를 함께 넘겨야 한다.
-  //   - 미전달 시 MenuScreen 이 어느 식당을 조회해야 할지 모르고
-  //     예전엔 시드 식당(11111111-...) 의 mock 메뉴만 보이는 버그가 있었음.
-  //
-  // [C1 수정] sessionId 도 함께 전달.
-  //   - 활성 세션 ID 를 미리 조회해 둔 _activeSessionId 를 그대로 넘기면
-  //     메뉴 화면 진입 직후 "주문하기" 버튼이 바로 활성화된다.
-  //   - 아직 조회가 끝나지 않았거나 활성 세션이 없으면 null 로 두고,
-  //     MenuScreen 이 자체 가드로 처리(시드 UUID 사용 금지).
+  // 현재 식당으로 확정된 ORDERED 세션이 있을 때만 그 세션을 재사용하고,
+  // 그렇지 않으면 null 을 전달해 MenuScreen 에서 동일 식당 세션을 조회하거나 새로 생성하게 한다.
   void _goToFullMenu() {
-    // 2026-05-15 사장님 비즈니스 흐름 게이팅:
-    //   투표가 끝난 후(ORDERED) + 이 식당이 선택된 winner 일 때만 메뉴 주문 가능.
-    //   투표 전인데 메뉴 담을 수 있는 회귀 차단.
-    //
-    // 예외: 활성 세션이 없는 케이스(개별 식당 탐색)에는 게이팅 안 함 — 메뉴 미리보기는 자유.
-    if (_activeSessionId != null) {
-      // 활성 세션 있음 — 게이팅 적용
-      if (_activeSessionStatus != 'ORDERED') {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('투표가 끝난 후에 메뉴를 주문할 수 있어요. 친구들과 함께 결정해봐요'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-        return;
-      }
-      if (_activeWinnerRestaurantId != null &&
-          _activeWinnerRestaurantId!.isNotEmpty &&
-          _activeWinnerRestaurantId != widget.restaurantId) {
-        // 다른 식당이 winner 로 결정됨 — 이 식당 주문 차단
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('이번 점심 세션은 다른 식당이 선택됐어요. 그 식당으로 이동해봐요'),
-            duration: Duration(seconds: 3),
-          ),
-        );
-        return;
-      }
-    }
-    // 통과 — MenuScreen 으로 진입
+    final canReuseActiveSession =
+        _activeSessionId != null &&
+        _activeSessionStatus == 'ORDERED' &&
+        _activeWinnerRestaurantId == widget.restaurantId;
     final name = _restaurant?.name ?? widget.initialName ?? '식당';
     Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => MenuScreen(
           restaurantId: widget.restaurantId,
           restaurantName: name,
-          sessionId: _activeSessionId,
+          sessionId: canReuseActiveSession ? _activeSessionId : null,
         ),
       ),
     );
@@ -715,7 +762,151 @@ class _RestaurantDetailScreenState
             const SizedBox(height: 8),
             _buildLoyaltyBadge(_loyalty!),
           ],
+          if (_seatSummary != null && _seatSummary!.totalSeats > 0) ...[
+            const SizedBox(height: 8),
+            _buildSeatAvailabilityBanner(_seatSummary!),
+          ],
         ],
+      ),
+    );
+  }
+
+  Widget _buildSeatAvailabilityBanner(RestaurantSeatSummaryDto summary) {
+    final hasEmpty = summary.emptySeats > 0;
+    final color = hasEmpty ? AppColors.success : AppColors.warning;
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      decoration: BoxDecoration(
+        color: color.withAlpha(18),
+        borderRadius: BorderRadius.circular(AppRadius.small),
+        border: Border.all(color: color.withAlpha(90)),
+      ),
+      child: Row(
+        children: [
+          Icon(
+            hasEmpty ? Icons.event_seat_rounded : Icons.access_time_rounded,
+            size: 16,
+            color: color,
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              hasEmpty
+                  ? 'POS 조회 기준: 빈 테이블 ${summary.emptySeats}개 / 총 ${summary.totalSeats}개 · 좌석 배정은 매장 확인 필요'
+                  : 'POS 조회 기준: 빈 테이블 없음 (${summary.totalSeats}개 사용 중 · 매장 확인 필요)',
+              style: AppTextStyles.caption.copyWith(
+                color: color,
+                fontWeight: FontWeight.w700,
+              ),
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: _openCustomerReservationDialog,
+            style: TextButton.styleFrom(
+              visualDensity: VisualDensity.compact,
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+            ),
+            child: Text(hasEmpty ? '사전예약 신청' : '웨이팅 신청'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openCustomerReservationDialog() async {
+    final user = ref.read(userProvider);
+    final token = user.accessToken;
+    if (token == null || token.isEmpty) return;
+
+    final nameCtrl = TextEditingController(text: user.name ?? '점심싱크 고객');
+    final sizeCtrl = TextEditingController(text: '4');
+    final noteCtrl = TextEditingController(text: '12:10 방문 예정');
+    String kind = (_seatSummary != null && _seatSummary!.emptySeats > 0)
+        ? 'RESERVATION'
+        : 'WAITING';
+
+    final submitted = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setState) => AlertDialog(
+          title: const Text('방문 예약 · 웨이팅 신청'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                SegmentedButton<String>(
+                  segments: const [
+                    ButtonSegment(value: 'RESERVATION', label: Text('사전 예약')),
+                    ButtonSegment(value: 'WAITING', label: Text('현장 웨이팅')),
+                  ],
+                  selected: {kind},
+                  onSelectionChanged: (s) => setState(() => kind = s.first),
+                ),
+                const SizedBox(height: 10),
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '예약자명 / 팀명',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: sizeCtrl,
+                  keyboardType: TextInputType.number,
+                  decoration: const InputDecoration(
+                    labelText: '방문 인원 수 (명)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: noteCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '요청 메모 (도착 예정 시각 등)',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(ctx).pop(false),
+              child: const Text('취소'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, 40),
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+              ),
+              onPressed: () => Navigator.of(ctx).pop(true),
+              child: const Text('신청하기'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (submitted != true || !mounted) return;
+    final ok = await _restaurantsApi.createReservation(
+      accessToken: token,
+      restaurantId: widget.restaurantId,
+      kind: kind,
+      customerName: nameCtrl.text.trim().isEmpty
+          ? '점심싱크 고객'
+          : nameCtrl.text.trim(),
+      partySize: (int.tryParse(sizeCtrl.text.trim()) ?? 2).clamp(1, 30),
+      note: noteCtrl.text.trim(),
+    );
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          ok ? '사장님 앱으로 예약·웨이팅 신청이 접수됐어요!' : '예약 신청에 실패했어요. 잠시 후 다시 시도해 주세요.',
+        ),
       ),
     );
   }
@@ -929,6 +1120,20 @@ class _RestaurantDetailScreenState
                     child: Text(
                       m.description!,
                       style: AppTextStyles.bodySmall.copyWith(
+                        color: AppColors.textSecondary,
+                      ),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                if (m.source == 'MANUAL')
+                  Padding(
+                    padding: const EdgeInsets.only(top: 2),
+                    child: Text(
+                      m.ingredients.isNotEmpty
+                          ? '조리 약 ${m.prepTimeMinutes}분 · 재료: ${m.ingredients.join(", ")}'
+                          : '조리 약 ${m.prepTimeMinutes}분',
+                      style: AppTextStyles.caption.copyWith(
                         color: AppColors.textSecondary,
                       ),
                       maxLines: 1,

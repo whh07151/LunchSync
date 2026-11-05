@@ -1,5 +1,7 @@
 import {
+  Body,
   Controller,
+  Post,
   ForbiddenException,
   Get,
   Param,
@@ -7,7 +9,17 @@ import {
   Req,
   UseGuards,
 } from '@nestjs/common';
-import { IsOptional, IsString, IsNumberString } from 'class-validator';
+import {
+  IsIn,
+  IsInt,
+  IsNotEmpty,
+  IsNumberString,
+  IsOptional,
+  IsString,
+  Max,
+  MaxLength,
+  Min,
+} from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
 import { RestaurantsService } from './restaurants.service';
 import { OrdersService } from '../orders/orders.service';
@@ -35,6 +47,26 @@ class GetRestaurantsQueryDto {
   @IsOptional() @IsNumberString() lat?: string;
   @IsOptional() @IsNumberString() lng?: string;
   @IsOptional() @IsNumberString() radius?: string; // m 단위, 기본 1000m
+}
+
+class CreateCustomerReservationDto {
+  @IsIn(['RESERVATION', 'WAITING'])
+  kind!: 'RESERVATION' | 'WAITING';
+
+  @IsString()
+  @IsNotEmpty()
+  @MaxLength(60)
+  customerName!: string;
+
+  @IsInt()
+  @Min(1)
+  @Max(30)
+  partySize!: number;
+
+  @IsOptional()
+  @IsString()
+  @MaxLength(200)
+  note?: string;
 }
 
 @Controller('restaurants')
@@ -73,6 +105,27 @@ export class RestaurantsController {
   @Get(':id/menus')
   async getMenus(@Param('id') id: string) {
     const result = await this.restaurantsService.getMenusByRestaurant(id);
+    return { success: true, data: result };
+  }
+
+  // ── GET /api/restaurants/:id/seat-summary ─────────────
+  @Get(':id/seat-summary')
+  async getSeatSummary(@Param('id') id: string) {
+    const result = await this.restaurantsService.getSeatSummary(id);
+    return { success: true, data: result };
+  }
+
+  // ── POST /api/restaurants/:id/reservations ────────────
+  // 고객앱 식당 상세에서 전화 없이 바로 사전 예약 / 현장 웨이팅 신청
+  @Post(':id/reservations')
+  async createCustomerReservation(
+    @Param('id') id: string,
+    @Body() dto: CreateCustomerReservationDto,
+  ) {
+    const result = await this.restaurantsService.createCustomerReservation(
+      id,
+      dto,
+    );
     return { success: true, data: result };
   }
 

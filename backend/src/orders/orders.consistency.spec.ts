@@ -48,6 +48,9 @@ class OrderTestDatabase {
   readonly client = {
     from: (table: string) => this.from(table),
     rpc: async (functionName: string, parameters: Record<string, unknown>) => {
+      if (functionName === 'consume_ordered_session_cart_items') {
+        return { data: { consumed: true }, error: null };
+      }
       this.lastRpcFunctionName = functionName;
       this.lastRpcParameters = parameters;
       if (this.rpcShouldFail) {
@@ -57,9 +60,11 @@ class OrderTestDatabase {
         };
       }
       if (
-        functionName !== 'create_order_with_items' ||
+        functionName !== 'create_order_with_options' ||
         Object.keys(parameters).sort().join(',') !==
           [
+            'p_dining_type',
+            'p_customer_note',
             'p_items',
             'p_payment_method',
             'p_restaurant_id',
@@ -396,8 +401,10 @@ describe('Order creation consistency (HTTP acceptance)', () => {
       createStatus: 201,
       status: 'PENDING',
       paymentMethod: 'CASH',
-      rpcFunctionName: 'create_order_with_items',
+      rpcFunctionName: 'create_order_with_options',
       rpcParameters: {
+        p_dining_type: 'DINE_IN',
+        p_customer_note: null,
         p_session_id: SESSION_ID,
         p_user_id: USER_ID,
         p_restaurant_id: RESTAURANT_ID,
@@ -550,7 +557,7 @@ describe('Order creation consistency (HTTP acceptance)', () => {
       }).toEqual({
         status,
         code,
-        rpcFunctionName: 'create_order_with_items',
+        rpcFunctionName: 'create_order_with_options',
         storedOrders: [],
       });
     },

@@ -44,14 +44,19 @@ class OrderSummaryDto {
     required this.status,
     required this.totalPrice,
     required this.createdAt,
+    this.restaurantName,
+    this.itemsSummary,
+    this.reviewScore,
   });
 
   final String id;
   final String sessionId;
-  final String
-  status; // PENDING | PAID | PREPARING | READY | COMPLETED | CANCELLED
+  final String status;
   final int totalPrice;
-  final String createdAt; // ISO 8601 문자열
+  final String createdAt;
+  final String? restaurantName;
+  final String? itemsSummary;
+  final int? reviewScore;
 
   factory OrderSummaryDto.fromJson(Map<String, dynamic> json) {
     return OrderSummaryDto(
@@ -60,6 +65,42 @@ class OrderSummaryDto {
       status: json['status'] as String,
       totalPrice: (json['totalPrice'] as num).toInt(),
       createdAt: json['createdAt'] as String? ?? '',
+      restaurantName: json['restaurantName'] as String?,
+      itemsSummary: json['itemsSummary'] as String?,
+      reviewScore: (json['reviewScore'] as num?)?.toInt(),
+    );
+  }
+}
+
+/// 같은 세션(방) 멤버가 주문한 내역 요약 DTO
+class SessionOrderMemberDto {
+  const SessionOrderMemberDto({
+    required this.id,
+    required this.sessionId,
+    required this.userId,
+    required this.userName,
+    required this.status,
+    required this.totalPrice,
+    required this.itemsSummary,
+  });
+
+  final String id;
+  final String sessionId;
+  final String userId;
+  final String userName;
+  final String status;
+  final int totalPrice;
+  final String itemsSummary;
+
+  factory SessionOrderMemberDto.fromJson(Map<String, dynamic> json) {
+    return SessionOrderMemberDto(
+      id: (json['id'] as String?) ?? '',
+      sessionId: (json['sessionId'] as String?) ?? '',
+      userId: (json['userId'] as String?) ?? '',
+      userName: (json['userName'] as String?) ?? '동료',
+      status: (json['status'] as String?) ?? 'PAID',
+      totalPrice: (json['totalPrice'] as num?)?.toInt() ?? 0,
+      itemsSummary: (json['itemsSummary'] as String?) ?? '',
     );
   }
 }
@@ -181,6 +222,9 @@ class CreateOrderResult {
     required this.totalPrice,
     required this.paymentMethod,
     this.paymentKey,
+    this.diningType = 'DINE_IN',
+    this.customerNote,
+    this.reservationSynced = false,
   });
 
   final String id; // 생성된 주문 UUID — 토스 orderId 로 사용
@@ -189,6 +233,9 @@ class CreateOrderResult {
   final int totalPrice; // 총 금액 (KRW)
   final String paymentMethod;
   final String? paymentKey; // SIMULATE 모드에서만 값이 있음
+  final String diningType; // DINE_IN | TAKEOUT
+  final String? customerNote;
+  final bool reservationSynced;
 
   factory CreateOrderResult.fromJson(Map<String, dynamic> json) {
     return CreateOrderResult(
@@ -198,6 +245,9 @@ class CreateOrderResult {
       totalPrice: (json['totalPrice'] as num).toInt(),
       paymentMethod: json['paymentMethod'] as String,
       paymentKey: json['paymentKey'] as String?,
+      diningType: (json['diningType'] as String?) ?? 'DINE_IN',
+      customerNote: json['customerNote'] as String?,
+      reservationSynced: (json['reservationSynced'] as bool?) ?? false,
     );
   }
 }
@@ -246,13 +296,20 @@ class OrdersApiService {
     required String sessionId,
     required List<CreateOrderItem> items,
     String paymentMethod = 'TOSS',
+    String diningType = 'DINE_IN',
+    String? customerNote,
   }) async {
     try {
-      final body = jsonEncode({
+      final payload = <String, dynamic>{
         'sessionId': sessionId,
         'items': items.map((e) => e.toJson()).toList(),
         'paymentMethod': paymentMethod,
-      });
+        'diningType': diningType,
+      };
+      if (customerNote != null && customerNote.trim().isNotEmpty) {
+        payload['customerNote'] = customerNote.trim();
+      }
+      final body = jsonEncode(payload);
 
       final response = await http
           .post(
@@ -316,6 +373,57 @@ class OrdersApiService {
     } catch (e) {
       debugPrint('[OrdersApiService] GET_TODAY_ORDERS_FAILED');
       return [];
+    }
+  }
+
+  // ── GET /api/orders/history — 과거 포함 전체 주문 기록 조회 ──
+  Future<List<OrderSummaryDto>> getOrderHistory({
+    required String accessToken,
+  }) async {
+    try {
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/orders/history'),
+        headers: apiHeaders(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
+      ApiAuthHooks.check(response.statusCode);
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final list = json['data'] as List<dynamic>? ?? const [];
+        return list
+            .whereType<Map<String, dynamic>>()
+            .map(OrderSummaryDto.fromJson)
+            .toList(growable: false);
+      }
+      return const [];
+    } catch (_) {
+      return const [];
+    }
+  }
+
+  // ── GET /api/orders/session/:sessionId — 같은 방 동료들의 주문 현황 공유 ──
+  Future<List<SessionOrderMemberDto>> getSessionOrders({
+    required String accessToken,
+    required String sessionId,
+  }) async {
+    try {
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/orders/session/$sessionId'),
+        headers: apiHeaders(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
+      ApiAuthHooks.check(response.statusCode);
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final list = json['data'] as List<dynamic>? ?? const [];
+        return list
+            .whereType<Map<String, dynamic>>()
+            .map(SessionOrderMemberDto.fromJson)
+            .toList(growable: false);
+      }
+      return const [];
+    } catch (_) {
+      return const [];
     }
   }
 

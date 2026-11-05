@@ -38,6 +38,7 @@ class _MenuManagementScreenState
   List<PosMenuItem> _menus = const [];
   bool _isLoading = false;
   String? _busyMenuId;
+  String _availabilityFilter = 'ALL'; // ALL | AVAILABLE | SOLDOUT
 
   @override
   void initState() {
@@ -106,6 +107,8 @@ class _MenuManagementScreenState
       category: result.category,
       description: result.description,
       prepTimeMinutes: result.prepTimeMinutes,
+      ingredients: result.ingredients,
+      allergens: result.allergens,
     );
     if (!mounted) return;
 
@@ -137,6 +140,8 @@ class _MenuManagementScreenState
       category: result.category,
       description: result.description,
       prepTimeMinutes: result.prepTimeMinutes,
+      ingredients: result.ingredients,
+      allergens: result.allergens,
     );
     if (!mounted) return;
     setState(() {
@@ -220,6 +225,9 @@ class _MenuManagementScreenState
       ),
       floatingActionButton: hasRestaurant
           ? FloatingActionButton.extended(
+              heroTag: 'owner_menu_fab',
+              backgroundColor: Theme.of(context).colorScheme.primary,
+              foregroundColor: Colors.white,
               onPressed: _openAddDialog,
               icon: const Icon(Icons.add_rounded),
               label: const Text('메뉴 추가'),
@@ -277,10 +285,49 @@ class _MenuManagementScreenState
     );
   }
 
+  Future<void> _restoreAllSoldOut() async {
+    final token = ref.read(userProvider).accessToken;
+    if (token == null) return;
+    final soldOutMenus = _menus.where((m) => !m.isAvailable).toList();
+    if (soldOutMenus.isEmpty) return;
+
+    setState(() => _isLoading = true);
+    final updatedById = <String, PosMenuItem>{};
+    for (final item in soldOutMenus) {
+      final res = await _api.update(
+        accessToken: token,
+        menuId: item.id,
+        isAvailable: true,
+      );
+      if (res != null) updatedById[item.id] = res;
+    }
+    if (!mounted) return;
+    setState(() {
+      _isLoading = false;
+      _menus = _menus
+          .map((m) => updatedById[m.id] ?? m)
+          .toList(growable: false);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text('품절 메뉴 ${updatedById.length}건을 판매 중으로 전환했어요.'),
+      ),
+    );
+  }
+
   Widget _buildList() {
+    final soldOutCount = _menus.where((m) => !m.isAvailable).length;
+    final availableCount = _menus.length - soldOutCount;
+
+    final filteredMenus = _menus.where((m) {
+      if (_availabilityFilter == 'AVAILABLE') return m.isAvailable;
+      if (_availabilityFilter == 'SOLDOUT') return !m.isAvailable;
+      return true;
+    }).toList(growable: false);
+
     // 카테고리별 그룹화
     final byCategory = <String, List<PosMenuItem>>{};
-    for (final m in _menus) {
+    for (final m in filteredMenus) {
       final cat = (m.category?.isNotEmpty ?? false) ? m.category! : '기타';
       byCategory.putIfAbsent(cat, () => []).add(m);
     }
@@ -289,19 +336,32 @@ class _MenuManagementScreenState
 
     return RefreshIndicator(
       onRefresh: _load,
-      child: ListView.builder(
+      child: ListView(
         physics: const AlwaysScrollableScrollPhysics(
           parent: BouncingScrollPhysics(),
         ),
         padding: const EdgeInsets.fromLTRB(
             AppSpacing.md, AppSpacing.md, AppSpacing.md, 100),
-        itemCount: categories.length,
-        itemBuilder: (_, i) {
-          final cat = categories[i];
-          final items = byCategory[cat]!;
-          return Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
+        children: [
+          _buildFilterHeader(
+            totalCount: _menus.length,
+            availableCount: availableCount,
+            soldOutCount: soldOutCount,
+          ),
+          const SizedBox(height: 12),
+          if (filteredMenus.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 40),
+              child: Center(
+                child: Text(
+                  '선택한 조건의 메뉴가 없어요.',
+                  style: AppTextStyles.bodyMedium
+                      .copyWith(color: AppColors.textSecondary),
+                ),
+              ),
+            )
+          else
+            for (final cat in categories) ...[
               Padding(
                 padding: const EdgeInsets.symmetric(
                     horizontal: 4, vertical: 8),
@@ -309,11 +369,66 @@ class _MenuManagementScreenState
                     style: AppTextStyles.heading3
                         .copyWith(color: AppColors.textPrimary)),
               ),
-              ...items.map(_buildMenuCard),
+              ...byCategory[cat]!.map(_buildMenuCard),
               const SizedBox(height: 12),
             ],
-          );
-        },
+        ],
+      ),
+    );
+  }
+
+  Widget _buildFilterHeader({
+    required int totalCount,
+    required int availableCount,
+    required int soldOutCount,
+  }) {
+    Widget chip(String key, String label) {
+      final selected = _availabilityFilter == key;
+      return ChoiceChip(
+        label: Text(
+          label,
+          style: TextStyle(
+            color: selected ? Colors.white : AppColors.textPrimary,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+        selected: selected,
+        onSelected: (_) => setState(() => _availabilityFilter = key),
+      );
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(
+                child: Wrap(
+                  spacing: 8,
+                  runSpacing: 6,
+                  children: [
+                    chip('ALL', '전체 $totalCount'),
+                    chip('AVAILABLE', '판매 중 $availableCount'),
+                    chip('SOLDOUT', '품절 $soldOutCount'),
+                  ],
+                ),
+              ),
+              if (soldOutCount > 0)
+                TextButton.icon(
+                  onPressed: _isLoading ? null : _restoreAllSoldOut,
+                  icon: const Icon(Icons.restore_rounded, size: 16),
+                  label: const Text('품절 일괄 해제'),
+                ),
+            ],
+          ),
+        ],
       ),
     );
   }
@@ -373,7 +488,7 @@ class _MenuManagementScreenState
                 ),
                 const SizedBox(height: 2),
                 Text(
-                  '${_formatWon(menu.price)}원',
+                  '${_formatWon(menu.price)}원 · 조리 약 ${menu.prepTimeMinutes}분',
                   style: AppTextStyles.bodySmall.copyWith(
                     color: AppColors.textSecondary,
                   ),
@@ -388,6 +503,51 @@ class _MenuManagementScreenState
                       ),
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                if (menu.ingredients.isNotEmpty || menu.allergens.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Wrap(
+                      spacing: 4,
+                      runSpacing: 4,
+                      children: [
+                        for (final ing in menu.ingredients)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: Theme.of(context)
+                                  .colorScheme
+                                  .primary
+                                  .withAlpha(18),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '재료: $ing',
+                              style: AppTextStyles.caption.copyWith(
+                                color: Theme.of(context).colorScheme.primary,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                        for (final al in menu.allergens)
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                                horizontal: 6, vertical: 2),
+                            decoration: BoxDecoration(
+                              color: AppColors.warning.withAlpha(24),
+                              borderRadius: BorderRadius.circular(4),
+                            ),
+                            child: Text(
+                              '알레르기: $al',
+                              style: AppTextStyles.caption.copyWith(
+                                color: AppColors.warning,
+                                fontWeight: FontWeight.w600,
+                              ),
+                            ),
+                          ),
+                      ],
                     ),
                   ),
               ],
@@ -437,6 +597,8 @@ class _MenuFormResult {
     this.category,
     this.description,
     this.prepTimeMinutes,
+    this.ingredients = const [],
+    this.allergens = const [],
   });
   final String name;
   final int price;
@@ -444,7 +606,24 @@ class _MenuFormResult {
   final String? description;
   // 2026-05-16 배민 패턴 — 예상 조리 시간 (분, 1~120, null 이면 백엔드 DEFAULT 15)
   final int? prepTimeMinutes;
+  final List<String> ingredients;
+  final List<String> allergens;
 }
+
+const List<String> _kCommonAllergenOptions = [
+  '계란',
+  '우유',
+  '대두',
+  '밀',
+  '돼지고기',
+  '소고기',
+  '닭고기',
+  '새우',
+  '게',
+  '땅콩',
+  '호두',
+  '조개류',
+];
 
 Future<_MenuFormResult?> _showMenuFormDialog(
   BuildContext context, {
@@ -460,6 +639,10 @@ Future<_MenuFormResult?> _showMenuFormDialog(
   final prepCtrl = TextEditingController(
     text: (initial?.prepTimeMinutes ?? 15).toString(),
   );
+  final ingredientsCtrl = TextEditingController(
+    text: initial?.ingredients.join(', ') ?? '',
+  );
+  final selectedAllergens = <String>{...?initial?.allergens};
   String? errorText;
 
   return showDialog<_MenuFormResult>(
@@ -524,6 +707,48 @@ Future<_MenuFormResult?> _showMenuFormDialog(
                     helperText: '손님 주문 추적 화면에 "약 N분 후 픽업" 으로 표시돼요',
                   ),
                 ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: ingredientsCtrl,
+                  decoration: const InputDecoration(
+                    labelText: '핵심 식자재 (쉼표로 구분)',
+                    hintText: '예: 한돈 앞다리살, 숙성 배추김치, 국산 손두부',
+                    border: OutlineInputBorder(),
+                    helperText: '재고 관리 화면과 자동 연동되어 부족 시 품절 전환을 도와줘요',
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text(
+                    '알레르기 유발 물질 (선택)',
+                    style: AppTextStyles.caption.copyWith(
+                      color: AppColors.textSecondary,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 4,
+                  children: _kCommonAllergenOptions.map((al) {
+                    final isSelected = selectedAllergens.contains(al);
+                    return FilterChip(
+                      label: Text(al, style: const TextStyle(fontSize: 12)),
+                      selected: isSelected,
+                      onSelected: (v) {
+                        setState(() {
+                          if (v) {
+                            selectedAllergens.add(al);
+                          } else {
+                            selectedAllergens.remove(al);
+                          }
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
                 if (errorText != null) ...[
                   const SizedBox(height: 6),
                   Text(errorText!,
@@ -538,6 +763,10 @@ Future<_MenuFormResult?> _showMenuFormDialog(
               child: const Text('취소'),
             ),
             FilledButton(
+              style: FilledButton.styleFrom(
+                minimumSize: const Size(0, 40),
+                padding: const EdgeInsets.symmetric(horizontal: 18),
+              ),
               onPressed: () {
                 final name = nameCtrl.text.trim();
                 final priceStr = priceCtrl.text.trim();
@@ -564,12 +793,20 @@ Future<_MenuFormResult?> _showMenuFormDialog(
                   }
                   prepTime = p;
                 }
+                final ingredients = ingredientsCtrl.text
+                    .split(',')
+                    .map((s) => s.trim())
+                    .where((s) => s.isNotEmpty)
+                    .toSet()
+                    .toList(growable: false);
                 Navigator.of(ctx).pop(_MenuFormResult(
                   name: name,
                   price: price,
                   category: cat.isEmpty ? null : cat,
                   description: desc.isEmpty ? null : desc,
                   prepTimeMinutes: prepTime,
+                  ingredients: ingredients,
+                  allergens: selectedAllergens.toList(growable: false),
                 ));
               },
               child: Text(initial == null ? '추가' : '수정'),

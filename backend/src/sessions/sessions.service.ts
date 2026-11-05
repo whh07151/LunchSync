@@ -6,6 +6,7 @@ import {
   ForbiddenException,
   BadRequestException,
   UnauthorizedException,
+  ServiceUnavailableException,
   Logger,
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
@@ -182,7 +183,7 @@ export class SessionsService {
     //   _buildConditionChips가 칩을 0개 그림.
     const { data: sessions } = await this.supabase.client
       .from('sessions')
-      .select('id, name, status, created_by, scheduled_at, created_at, radius, budget, return_minutes, memo')
+      .select('id, name, status, created_by, scheduled_at, created_at, radius, budget, return_minutes, memo, winner_restaurant_id')
       .in('id', sessionIds)
       .gte('created_at', todayISO)
       .order('created_at', { ascending: false });
@@ -215,6 +216,7 @@ export class SessionsService {
       name: s.name,
       status: s.status,
       statusLabel: this.statusLabel(s.status),
+      winnerRestaurantId: s.winner_restaurant_id,
       scheduledAt: s.scheduled_at,
       memberCount: memberCountMap[s.id] ?? 0,
       createdBy: { id: s.created_by, name: creatorMap[s.created_by] ?? null },
@@ -246,6 +248,22 @@ export class SessionsService {
       .eq('id', data.created_by)
       .single();
 
+    // 유효한 최신 초대 코드 함께 조회 (로비 재진입 시에도 초대코드가 유지되도록)
+    let inviteCode: string | null = null;
+    try {
+      const { data: inv } = await this.supabase.client
+        .from('invitations')
+        .select('invite_code, expires_at')
+        .eq('session_id', sessionId)
+        .gt('expires_at', new Date().toISOString())
+        .order('created_at', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      inviteCode = (inv as { invite_code?: string } | null)?.invite_code ?? null;
+    } catch {
+      inviteCode = null;
+    }
+
     return {
       id: data.id,
       name: data.name,
@@ -259,6 +277,7 @@ export class SessionsService {
       lat: data.lat,
       lng: data.lng,
       createdAt: data.created_at,
+      inviteCode,
       createdBy: creator
         ? { id: creator.id, name: creator.name }
         : { id: data.created_by, name: null },
@@ -597,5 +616,277 @@ export class SessionsService {
       shortLink: `${normalizedBase}${inviteCode}`,
       expiresAt,
     };
+  }
+
+  // ── 상용화 업그레이드: 실시간 공동 장바구니 (Shared Group Cart) DB 서비스 ──
+  async getSharedCart(sessionId: string) {
+    const { data, error } = await this.supabase.client
+      .from('session_cart_items')
+      .select('*')
+      .eq('session_id', sessionId)
+      .gt('quantity', 0)
+      .order('updated_at', { ascending: true });
+
+    if (error) {
+      this.logger.error('SESSION_CART_LOOKUP_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'SESSION_CART_LOOKUP_FAILED',
+        message: '공동 장바구니를 불러오지 못했어요. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    if (!data) return [];
+    return (data as any[]).map((r) => ({
+      id: r.id,
+      sessionId: r.session_id,
+      userId: r.user_id,
+      userName: r.user_name ?? '동료',
+      menuItemId: r.menu_item_id,
+      menuName: r.menu_name,
+      price: Number(r.price ?? 0),
+      quantity: Number(r.quantity ?? 1),
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  async upsertSharedCartItem(
+    sessionId: string,
+    userId: string,
+    dto: {
+      menuItemId: string;
+      quantity: number;
+    },
+  ) {
+    if (!userId || !userId.trim()) {
+      throw new UnauthorizedException(
+        '사용자 인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+    }
+    const menuItemId =
+      typeof dto?.menuItemId === 'string' ? dto.menuItemId.trim() : '';
+    if (!menuItemId) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'SESSION_CART_MENU_ID_REQUIRED',
+        message: '유효한 메뉴 ID가 필요합니다.',
+      });
+    }
+
+    const qty = dto?.quantity;
+    if (
+      typeof qty !== 'number' ||
+      !Number.isInteger(qty) ||
+      qty < 0 ||
+      qty > 99
+    ) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'SESSION_CART_QUANTITY_INVALID',
+        message: '장바구니 수량은 0~99 사이의 정수여야 합니다.',
+      });
+    }
+
+    const { data: membership, error: memberErr } = await this.supabase.client
+      .from('session_members')
+      .select('user_id')
+      .eq('session_id', sessionId)
+      .eq('user_id', userId)
+      .maybeSingle();
+
+    if (memberErr) {
+      this.logger.error('SESSION_CART_MEMBERSHIP_LOOKUP_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'SESSION_CART_MEMBERSHIP_LOOKUP_FAILED',
+        message: '세션 멤버십을 확인하지 못했어요. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    if (!membership) {
+      throw new ForbiddenException(
+        '세션 멤버만 공동 장바구니를 사용할 수 있어요.',
+      );
+    }
+
+    const { data: session, error: sessionErr } = await this.supabase.client
+      .from('sessions')
+      .select('id, status, winner_restaurant_id')
+      .eq('id', sessionId)
+      .maybeSingle();
+
+    if (sessionErr) {
+      this.logger.error('SESSION_CART_SESSION_LOOKUP_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'SESSION_CART_SESSION_LOOKUP_FAILED',
+        message: '세션 정보를 확인하지 못했어요. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    if (!session) {
+      throw new NotFoundException('세션을 찾을 수 없어요.');
+    }
+    if (session.status === 'DONE') {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'SESSION_CART_CLOSED',
+        message: '종료된 세션의 공동 장바구니는 변경할 수 없어요.',
+      });
+    }
+
+    if (qty === 0) {
+      const { error: deleteErr } = await this.supabase.client
+        .from('session_cart_items')
+        .delete()
+        .eq('session_id', sessionId)
+        .eq('user_id', userId)
+        .eq('menu_item_id', menuItemId);
+
+      if (deleteErr) {
+        this.logger.error('SESSION_CART_DELETE_ITEM_FAILED');
+        throw new ServiceUnavailableException({
+          statusCode: 503,
+          code: 'SESSION_CART_DELETE_ITEM_FAILED',
+          message: '장바구니 항목을 삭제하지 못했어요. 잠시 후 다시 시도해주세요.',
+          retryable: true,
+        });
+      }
+      return this.getSharedCart(sessionId);
+    }
+
+    const { data: menu, error: menuErr } = await this.supabase.client
+      .from('menu_items')
+      .select('id, name, price, restaurant_id, source, is_available')
+      .eq('id', menuItemId)
+      .maybeSingle();
+
+    if (menuErr) {
+      this.logger.error('SESSION_CART_MENU_LOOKUP_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'SESSION_CART_MENU_LOOKUP_FAILED',
+        message: '메뉴 정보를 확인하지 못했어요. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    if (!menu) {
+      throw new NotFoundException('메뉴 아이템을 찾을 수 없습니다.');
+    }
+    if (menu.source !== 'MANUAL' || menu.is_available !== true) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'SESSION_CART_MENU_UNAVAILABLE',
+        message: '등록된 판매 중 메뉴만 장바구니에 담을 수 있어요.',
+      });
+    }
+    if (
+      session.winner_restaurant_id &&
+      menu.restaurant_id !== session.winner_restaurant_id
+    ) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'SESSION_CART_RESTAURANT_MISMATCH',
+        message: '세션에서 선택한 식당의 메뉴만 장바구니에 담을 수 있어요.',
+      });
+    }
+
+    const { data: userRow, error: userErr } = await this.supabase.client
+      .from('users')
+      .select('name')
+      .eq('id', userId)
+      .maybeSingle();
+
+    if (userErr) {
+      this.logger.error('SESSION_CART_USER_LOOKUP_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'SESSION_CART_USER_LOOKUP_FAILED',
+        message: '사용자 정보를 확인하지 못했어요. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    const rawUserName =
+      typeof (userRow as { name?: string } | null)?.name === 'string'
+        ? (userRow as { name: string }).name.trim()
+        : '';
+    const userName = rawUserName.length > 0 ? rawUserName.slice(0, 80) : '동료';
+
+    const { error: upsertErr } = await this.supabase.client
+      .from('session_cart_items')
+      .upsert(
+        {
+          session_id: sessionId,
+          user_id: userId,
+          user_name: userName,
+          menu_item_id: menu.id,
+          menu_name: String(menu.name).trim().slice(0, 120),
+          price: Math.max(0, Number(menu.price ?? 0)),
+          quantity: qty,
+        },
+        { onConflict: 'session_id,user_id,menu_item_id' },
+      );
+
+    if (upsertErr) {
+      this.logger.error('SESSION_CART_UPSERT_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'SESSION_CART_UPSERT_FAILED',
+        message: '공동 장바구니에 저장하지 못했어요. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+
+    return this.getSharedCart(sessionId);
+  }
+
+  async clearMySharedCart(sessionId: string, userId: string) {
+    if (!userId || !userId.trim()) {
+      throw new UnauthorizedException(
+        '사용자 인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+    }
+
+    const { error } = await this.supabase.client
+      .from('session_cart_items')
+      .delete()
+      .eq('session_id', sessionId)
+      .eq('user_id', userId);
+
+    if (error) {
+      this.logger.error('SESSION_CART_CLEAR_MINE_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'SESSION_CART_CLEAR_MINE_FAILED',
+        message: '내 장바구니 항목을 비우지 못했어요. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    return this.getSharedCart(sessionId);
+  }
+
+  async clearAllSharedCartByHost(sessionId: string, requesterId: string) {
+    if (!requesterId || !requesterId.trim()) {
+      throw new UnauthorizedException(
+        '사용자 인증 정보가 없습니다. 다시 로그인해주세요.',
+      );
+    }
+    await this.assertHost(sessionId, requesterId);
+
+    const { error } = await this.supabase.client
+      .from('session_cart_items')
+      .delete()
+      .eq('session_id', sessionId);
+
+    if (error) {
+      this.logger.error('SESSION_CART_CLEAR_ALL_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'SESSION_CART_CLEAR_ALL_FAILED',
+        message: '공동 장바구니를 초기화하지 못했어요. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    return [];
   }
 }

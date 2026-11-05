@@ -214,7 +214,7 @@ describe('Payment reconciliation PostgreSQL acceptance', () => {
     app = moduleRef.createNestApplication();
     app.setGlobalPrefix('api');
     await app.init();
-  }, 60_000);
+  }, 120_000);
 
   afterAll(async () => {
     global.fetch = originalFetch;

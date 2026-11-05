@@ -1,4 +1,4 @@
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kReleaseMode;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/config/app_config.dart';
@@ -8,8 +8,10 @@ import '../../core/debug/debug_toast.dart';
 import '../../providers/cart_provider.dart';
 import '../../providers/user_provider.dart';
 import '../../services/orders_api_service.dart';
+import 'payment_success_screen.dart';
 import 'payment_web_bridge.dart';
 import 'payment_webview_screen.dart';
+import 'order_cart_snapshot.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: CU-17 그룹 주문 검토 / 결제 시작 화면
@@ -64,6 +66,19 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
   // 에러 메시지 (주문 생성 실패 등)
   String? _errorMessage;
 
+  // ── 주문 옵션 상태 ─────────────────────────────────
+  // 기본값은 실제 결제 흐름인 TOSS. 모의결제(SIMULATE)는 비릴리스 개발·테스트 환경에서만 선택 가능.
+  String _selectedPaymentMethod = 'TOSS';
+  String _diningType = 'DINE_IN'; // DINE_IN(매장 식사) | TAKEOUT(포장 픽업)
+  int _splitCount = 1; // 참고용 1/N 예상 분담금 계산 인원 수
+  final TextEditingController _noteCtrl = TextEditingController();
+
+  @override
+  void dispose() {
+    _noteCtrl.dispose();
+    super.dispose();
+  }
+
   @override
   void initState() {
     super.initState();
@@ -107,19 +122,28 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
 
     try {
       // ── 3. 주문 생성 API 호출 ────────────────────────
-      // cartProvider 의 CartItem 들을 CreateOrderItem 으로 변환
+      // cartProvider 의 CartItem 들을 CreateOrderItem 스냅샷으로 변환
       final orderItems = cart
           .map(
             (ci) =>
                 CreateOrderItem(menuItemId: ci.item.id, quantity: ci.quantity),
           )
-          .toList();
+          .toList(growable: false);
+      final orderedSnapshot = cart
+          .map((ci) => (menuItemId: ci.item.id, quantity: ci.quantity))
+          .toList(growable: false);
+      final effectivePaymentMethod = kReleaseMode
+          ? 'TOSS'
+          : _selectedPaymentMethod;
+      final trimmedNote = _noteCtrl.text.trim();
 
       final result = await widget.ordersApi.createOrder(
         accessToken: accessToken,
         sessionId: widget.sessionId,
         items: orderItems,
-        paymentMethod: 'TOSS',
+        paymentMethod: effectivePaymentMethod,
+        diningType: _diningType,
+        customerNote: trimmedNote.isEmpty ? null : trimmedNote,
       );
 
       if (!mounted) return;
@@ -142,6 +166,25 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
       // Flutter 웹은 토스 결제 페이지로 전체 리다이렉트될 때
       // 앱이 새로 로드돼 Riverpod(userProvider) 상태가 초기화됩니다.
       // 복원 가능하도록 JWT 뿐 아니라 유저 기본정보도 함께 저장.
+      if (effectivePaymentMethod == 'SIMULATE') {
+        if (!mounted) return;
+        setState(() => _isProcessing = false);
+        await Navigator.of(context).pushReplacement(
+          MaterialPageRoute(
+            builder: (_) => PaymentSuccessScreen(
+              paymentKey: result.paymentKey ?? 'sim_${result.id}',
+              orderId: result.id,
+              amount: result.totalPrice,
+              cartSnapshot: OrderCartSnapshot(
+                orderId: result.id,
+                items: orderedSnapshot,
+              ),
+            ),
+          ),
+        );
+        return;
+      }
+
       PaymentWebBridge.setSessionItem('ls_jwt', accessToken);
       if (user.userId != null) {
         PaymentWebBridge.setSessionItem('ls_user_id', user.userId!);
@@ -156,6 +199,10 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
       PaymentWebBridge.setSessionItem(
         'ls_order_amount',
         result.totalPrice.toString(),
+      );
+      PaymentWebBridge.setSessionItem(
+        OrderCartSnapshot.storageKey(result.id),
+        OrderCartSnapshot(orderId: result.id, items: orderedSnapshot).encode(),
       );
       PaymentWebBridge.setSessionItem(
         'ls_order_name',
@@ -222,6 +269,10 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
               checkoutUrl: checkoutUrl,
               successUrlPrefix: successUrlPrefix,
               failUrlPrefix: failUrlPrefix,
+              cartSnapshot: OrderCartSnapshot(
+                orderId: result.id,
+                items: orderedSnapshot,
+              ),
             ),
           ),
         );
@@ -299,7 +350,7 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
 
           const SizedBox(height: 8),
 
-          // ── 장바구니 목록 ─────────────────────────────
+          // ── 장바구니 목록 및 주문 옵션 (단일 스크롤 영역으로 작은 화면·큰 글자에서도 overflow 방지) ──
           Expanded(
             child: cart.isEmpty
                 ? Center(
@@ -310,50 +361,53 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
                       ),
                     ),
                   )
-                : ListView.separated(
+                : ListView(
                     padding: const EdgeInsets.symmetric(
                       horizontal: AppSpacing.screenHorizontal,
                       vertical: AppSpacing.md,
                     ),
-                    itemCount: cart.length,
-                    separatorBuilder: (context, index) =>
-                        const Divider(height: 1, color: AppColors.divider),
-                    itemBuilder: (context, index) {
-                      final ci = cart[index];
-                      return Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 12),
-                        child: Row(
-                          children: [
-                            Expanded(
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    ci.item.name,
-                                    style: AppTextStyles.bodyMedium.copyWith(
-                                      fontWeight: FontWeight.w600,
+                    children: [
+                      for (int index = 0; index < cart.length; index++) ...[
+                        if (index > 0)
+                          const Divider(height: 1, color: AppColors.divider),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 12),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      cart[index].item.name,
+                                      style: AppTextStyles.bodyMedium.copyWith(
+                                        fontWeight: FontWeight.w600,
+                                      ),
                                     ),
-                                  ),
-                                  const SizedBox(height: 2),
-                                  Text(
-                                    '수량 ${ci.quantity}개',
-                                    style: AppTextStyles.caption.copyWith(
-                                      color: AppColors.textSecondary,
+                                    const SizedBox(height: 2),
+                                    Text(
+                                      '수량 ${cart[index].quantity}개',
+                                      style: AppTextStyles.caption.copyWith(
+                                        color: AppColors.textSecondary,
+                                      ),
                                     ),
-                                  ),
-                                ],
+                                  ],
+                                ),
                               ),
-                            ),
-                            Text(
-                              '${_formatPrice(ci.subtotal)}원',
-                              style: AppTextStyles.bodyMedium.copyWith(
-                                fontWeight: FontWeight.w700,
+                              const SizedBox(width: 8),
+                              Text(
+                                '${_formatPrice(cart[index].subtotal)}원',
+                                style: AppTextStyles.bodyMedium.copyWith(
+                                  fontWeight: FontWeight.w700,
+                                ),
                               ),
-                            ),
-                          ],
+                            ],
+                          ),
                         ),
-                      );
-                    },
+                      ],
+                      const SizedBox(height: 12),
+                      _buildOrderOptionsCard(totalPrice),
+                    ],
                   ),
           ),
 
@@ -429,6 +483,146 @@ class _OrderReviewScreenState extends ConsumerState<OrderReviewScreen> {
   }
 
   // ── 가격 포맷 헬퍼 (천 단위 콤마) ─────────────────────
+  Widget _buildOrderOptionsCard(int totalPrice) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            crossAxisAlignment: WrapCrossAlignment.center,
+            children: [
+              ChoiceChip(
+                label: const Text('매장 식사'),
+                selected: _diningType == 'DINE_IN',
+                onSelected: (_) => setState(() => _diningType = 'DINE_IN'),
+              ),
+              ChoiceChip(
+                label: const Text('포장 픽업'),
+                selected: _diningType == 'TAKEOUT',
+                onSelected: (_) => setState(() => _diningType = 'TAKEOUT'),
+              ),
+              TextButton.icon(
+                style: TextButton.styleFrom(
+                  minimumSize: const Size(0, 32),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                ),
+                onPressed: () {
+                  setState(() {
+                    _splitCount = (_splitCount % 6) + 1;
+                  });
+                },
+                icon: const Icon(Icons.calculate_outlined, size: 16),
+                label: Text(
+                  _splitCount == 1
+                      ? '인당 예상 금액 계산기 (참고용)'
+                      : '$_splitCount명 기준 1인 약 ${_formatPrice((totalPrice / _splitCount).ceil())}원 (참고용)',
+                ),
+              ),
+            ],
+          ),
+          if (_splitCount > 1) ...[
+            const SizedBox(height: 4),
+            Text(
+              '※ 참고용 예상 분담금이며, 실제 결제는 총 ${_formatPrice(totalPrice)}원 전액으로 진행됩니다.',
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+          const SizedBox(height: 6),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Icon(
+                _diningType == 'DINE_IN'
+                    ? Icons.event_seat_rounded
+                    : Icons.takeout_dining_rounded,
+                size: 14,
+                color: _diningType == 'DINE_IN'
+                    ? AppColors.success
+                    : AppColors.textSecondary,
+              ),
+              const SizedBox(width: 4),
+              Expanded(
+                child: Text(
+                  _diningType == 'DINE_IN'
+                      ? '매장 식사 선결제 시 사장님 POS로 방문 예약 요청이 전달됩니다 (좌석 배정은 매장 확인 필요).'
+                      : '포장 픽업 주문은 매장 좌석 방문 예약 요청이 생성되지 않습니다.',
+                  style: AppTextStyles.caption.copyWith(
+                    color: _diningType == 'DINE_IN'
+                        ? AppColors.success
+                        : AppColors.textSecondary,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          TextField(
+            controller: _noteCtrl,
+            maxLength: 300,
+            decoration: const InputDecoration(
+              isDense: true,
+              counterText: '',
+              labelText: '사장님께 요청사항 (예: 덜 맵게 해주세요, 알레르기 재료 제외)',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          const SizedBox(height: 8),
+          Text(
+            '결제 수단 선택',
+            style: AppTextStyles.caption.copyWith(
+              fontWeight: FontWeight.w700,
+              color: AppColors.textSecondary,
+            ),
+          ),
+          const SizedBox(height: 6),
+          Wrap(
+            spacing: 8,
+            runSpacing: 6,
+            children: [
+              ChoiceChip(
+                label: const Text('💳 토스페이먼츠 결제'),
+                selected: _selectedPaymentMethod == 'TOSS',
+                onSelected: (_) =>
+                    setState(() => _selectedPaymentMethod = 'TOSS'),
+              ),
+              if (!kReleaseMode)
+                ChoiceChip(
+                  label: const Text('🧪 개발·테스트용 모의결제 (실결제 미발생)'),
+                  selected: _selectedPaymentMethod == 'SIMULATE',
+                  onSelected: (_) =>
+                      setState(() => _selectedPaymentMethod = 'SIMULATE'),
+                ),
+            ],
+          ),
+          if (!kReleaseMode && _selectedPaymentMethod == 'SIMULATE') ...[
+            const SizedBox(height: 4),
+            Text(
+              '※ 개발·테스트 전용 모의결제입니다. 실제 청구·승인이 발생하지 않으며 서버가 허용한 비운영 환경에서만 동작합니다.',
+              style: AppTextStyles.caption.copyWith(
+                color: AppColors.textSecondary,
+              ),
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
   String _formatPrice(int price) {
     final parts = <String>[];
     var n = price;

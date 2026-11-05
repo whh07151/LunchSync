@@ -4,14 +4,19 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../core/components/components.dart';
 import '../../core/theme/theme.dart';
 import '../../providers/user_provider.dart';
+import '../../services/owner_inventory_service.dart';
 import '../../services/pos_api_service.dart';
+import '../../services/pos_operations_api_service.dart';
 import '../../services/reviews_api_service.dart';
 import '../auth/login_screen.dart';
+import '../home/home_screen.dart';
 import '../restaurant/restaurant_reviews_screen.dart';
+import 'inventory_management_screen.dart';
 import 'menu_management_screen.dart';
 import 'owner_payments_screen.dart';
 import 'owner_profile_edit_screen.dart';
 import 'sales_screen.dart';
+import 'store_operations_screen.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 사장님 홈 화면 (OWNER_HOME)
@@ -65,6 +70,10 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
   // 홈 탭 진입 시 1회 조회 → 평점 카드 표시.
   // null = 미조회 / 빈 결과 = "아직 리뷰가 없어요"로 카드 노출.
   RestaurantReviewsResult? _reviews;
+  StoreBusinessStatus _businessStatus = StoreBusinessStatus.open;
+  int _inventoryAlertCount = 0;
+  int _emptySeatsCount = 0;
+  int _openReservationsCount = 0;
 
   Timer? _pollTimer;
 
@@ -137,6 +146,8 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
       // 실패해도 stats/orders 흐름은 그대로 (try 안에서 별도 catch 없이 묶음 처리,
       // ReviewsApiService 가 자체 catch 후 empty 반환하므로 throw 위험 X).
       const reviewsApi = ReviewsApiService();
+      const inventoryService = OwnerInventoryService();
+      const opsApi = PosOperationsApiService();
       final results = await Future.wait([
         api.getStats(accessToken: token, restaurantId: restaurantId),
         api.getOrders(accessToken: token, restaurantId: restaurantId),
@@ -144,13 +155,27 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
           accessToken: token,
           restaurantId: restaurantId,
         ),
+        inventoryService.loadBusinessStatus(restaurantId, accessToken: token),
+        inventoryService.loadInventory(restaurantId, accessToken: token),
+        opsApi.listSeats(accessToken: token, restaurantId: restaurantId),
+        opsApi.listReservations(accessToken: token, restaurantId: restaurantId),
       ]);
 
       if (!mounted) return;
+      final invItems = results[4] as List<InventoryItem>;
+      final seats = results[5] as List<PosSeat>;
+      final reservations = results[6] as List<PosReservation>;
+
       setState(() {
         _stats = results[0] as PosStats;
         _orders = results[1] as List<PosOrder>;
         _reviews = results[2] as RestaurantReviewsResult;
+        _businessStatus = results[3] as StoreBusinessStatus;
+        _inventoryAlertCount = invItems
+            .where((item) => item.needsAttention || item.isExpiryAlert())
+            .length;
+        _emptySeatsCount = seats.where((s) => !s.isOccupied).length;
+        _openReservationsCount = reservations.where((r) => r.isOpen).length;
         _loadError = null;
         _isLoading = false;
       });
@@ -174,8 +199,13 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
       MaterialPageRoute(
         builder: (ctx) => LoginScreen(
           onLoginSuccess: ({required String nextStep}) {
-            // 재로그인 후의 라우팅은 main.dart의 _handleLoginSuccess가 담당
-            Navigator.of(ctx).pop();
+            Navigator.of(ctx).pushReplacement(
+              MaterialPageRoute(
+                builder: (_) => nextStep == 'OWNER_HOME'
+                    ? const OwnerHomeScreen()
+                    : const HomeScreen(),
+              ),
+            );
           },
         ),
       ),
@@ -235,6 +265,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
         _buildHomeTab(),
         _buildOrdersTab(),
         const MenuManagementScreen(),
+        const InventoryManagementScreen(embedded: true),
         _buildOwnerInfoTab(),
       ],
     );
@@ -350,6 +381,18 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
             icon: Icons.menu_book_rounded,
             label: '메뉴 관리',
             onTap: () => setState(() => _currentTabIndex = 2),
+          ),
+          _ownerInfoRow(
+            icon: Icons.inventory_2_rounded,
+            label: '식자재 · 재고 관리',
+            onTap: () => setState(() => _currentTabIndex = 3),
+          ),
+          _ownerInfoRow(
+            icon: Icons.chair_alt_rounded,
+            label: '가게 운영 · 좌석/예약 (POS)',
+            onTap: () => Navigator.of(context).push(
+              MaterialPageRoute(builder: (_) => const StoreOperationsScreen()),
+            ),
           ),
           _ownerInfoRow(
             icon: Icons.refresh_rounded,
@@ -589,6 +632,13 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
                 padding: const EdgeInsets.symmetric(
                   horizontal: AppSpacing.screenHorizontal,
                 ),
+                child: _buildStoreOperationSummaryCard(user.restaurantId!),
+              ),
+              const SizedBox(height: AppSpacing.md),
+              Padding(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: AppSpacing.screenHorizontal,
+                ),
                 child: _buildRatingCard(user.restaurantId!),
               ),
             ],
@@ -708,6 +758,147 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
     );
   }
 
+  Widget _buildStoreOperationSummaryCard(String restaurantId) {
+    final primary = Theme.of(context).colorScheme.primary;
+    Color statusColor;
+    switch (_businessStatus) {
+      case StoreBusinessStatus.open:
+        statusColor = AppColors.success;
+        break;
+      case StoreBusinessStatus.breakTime:
+        statusColor = AppColors.warning;
+        break;
+      case StoreBusinessStatus.closed:
+        statusColor = AppColors.textSecondary;
+        break;
+    }
+
+    return Container(
+      padding: const EdgeInsets.all(AppSpacing.md),
+      decoration: BoxDecoration(
+        color: AppColors.surface,
+        borderRadius: BorderRadius.circular(AppRadius.card),
+        border: Border.all(color: AppColors.border),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                decoration: BoxDecoration(
+                  color: statusColor.withAlpha(22),
+                  borderRadius: BorderRadius.circular(6),
+                ),
+                child: Text(
+                  _businessStatus.label,
+                  style: AppTextStyles.caption.copyWith(
+                    color: statusColor,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  '매장 운영 · 재고 · 좌석 현황',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    color: AppColors.textPrimary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () async {
+                  final next = _businessStatus == StoreBusinessStatus.open
+                      ? StoreBusinessStatus.breakTime
+                      : (_businessStatus == StoreBusinessStatus.breakTime
+                            ? StoreBusinessStatus.closed
+                            : StoreBusinessStatus.open);
+                  final token = ref.read(userProvider).accessToken;
+                  if (token == null) return;
+                  try {
+                    await const OwnerInventoryService().saveBusinessStatus(
+                      restaurantId,
+                      next,
+                      accessToken: token,
+                    );
+                    if (mounted) setState(() => _businessStatus = next);
+                  } on OwnerInventoryException catch (error) {
+                    if (mounted) {
+                      ScaffoldMessenger.of(
+                        context,
+                      ).showSnackBar(SnackBar(content: Text(error.message)));
+                    }
+                  }
+                },
+                style: TextButton.styleFrom(
+                  visualDensity: VisualDensity.compact,
+                  foregroundColor: primary,
+                ),
+                child: const Text('상태 변경'),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: InkWell(
+                  onTap: () => setState(() => _currentTabIndex = 3),
+                  child: _summaryItem(
+                    '재고·유통기한',
+                    '$_inventoryAlertCount건 주의',
+                    Icons.inventory_2_rounded,
+                  ),
+                ),
+              ),
+              Container(width: 1, height: 40, color: AppColors.divider),
+              Expanded(
+                child: InkWell(
+                  onTap: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            const StoreOperationsScreen(initialTabIndex: 0),
+                      ),
+                    );
+                    _fetchAll();
+                  },
+                  child: _summaryItem(
+                    '빈 좌석',
+                    '$_emptySeatsCount석',
+                    Icons.chair_alt_rounded,
+                  ),
+                ),
+              ),
+              Container(width: 1, height: 40, color: AppColors.divider),
+              Expanded(
+                child: InkWell(
+                  onTap: () async {
+                    await Navigator.of(context).push(
+                      MaterialPageRoute(
+                        builder: (_) =>
+                            const StoreOperationsScreen(initialTabIndex: 1),
+                      ),
+                    );
+                    _fetchAll();
+                  },
+                  child: _summaryItem(
+                    '대기 예약',
+                    '$_openReservationsCount팀',
+                    Icons.event_available_rounded,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _summaryItem(String label, String value, IconData icon) {
     final primary = Theme.of(context).colorScheme.primary;
     return Column(
@@ -739,10 +930,6 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
   }
 
   Widget _buildQuickActions() {
-    // OW-10 (2026-05-31): "결제 내역" 카드 신규 추가.
-    // 5개 카드로 늘어남에 따라 crossAxisCount 를 4→5 로 조정해
-    // 한 줄에 가지런히 표시. childAspectRatio 0.9 유지 시 카드가 조밀해 보여
-    // 0.78 로 살짝 키워 아이콘+라벨 균형 잡음.
     final actions = <_OwnerAction>[
       _OwnerAction(
         icon: Icons.receipt_long_rounded,
@@ -755,13 +942,24 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
         onTap: () => setState(() => _currentTabIndex = 2),
       ),
       _OwnerAction(
+        icon: Icons.inventory_2_rounded,
+        label: '재고 관리',
+        onTap: () => setState(() => _currentTabIndex = 3),
+      ),
+      _OwnerAction(
+        icon: Icons.point_of_sale_rounded,
+        label: '좌석·예약(POS)',
+        onTap: () => Navigator.of(context).push(
+          MaterialPageRoute(builder: (_) => const StoreOperationsScreen()),
+        ),
+      ),
+      _OwnerAction(
         icon: Icons.bar_chart_rounded,
-        label: '매출',
+        label: '매출 통계',
         onTap: () => Navigator.of(
           context,
         ).push(MaterialPageRoute(builder: (_) => const SalesScreen())),
       ),
-      // OW-10: 결제 내역 — 오늘/어제/주간/월간 칩 + 환불 시뮬.
       _OwnerAction(
         icon: Icons.account_balance_wallet_rounded,
         label: '결제 내역',
@@ -769,18 +967,15 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
           context,
         ).push(MaterialPageRoute(builder: (_) => const OwnerPaymentsScreen())),
       ),
-      _OwnerAction(
-        icon: Icons.point_of_sale_rounded,
-        label: 'POS 연동',
-        onTap: () => _showComingSoon('POS 연동'),
-      ),
     ];
 
     return GridView.count(
-      crossAxisCount: 5,
+      crossAxisCount: 3,
       shrinkWrap: true,
       physics: const NeverScrollableScrollPhysics(),
-      childAspectRatio: 0.78,
+      mainAxisSpacing: 8,
+      crossAxisSpacing: 8,
+      childAspectRatio: 1.25,
       children: actions.map(_buildQuickActionItem).toList(),
     );
   }
@@ -811,15 +1006,6 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
             textAlign: TextAlign.center,
           ),
         ],
-      ),
-    );
-  }
-
-  void _showComingSoon(String feature) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text('$feature 기능은 준비 중이에요.'),
-        duration: const Duration(seconds: 2),
       ),
     );
   }
@@ -1043,10 +1229,11 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
     setState(() => _processingOrderId = null);
 
     if (ok) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('${_statusLabel(next)} 처리됐어요'),
-          duration: const Duration(seconds: 1),
+          duration: const Duration(seconds: 2),
         ),
       );
       await _fetchAll();
@@ -1284,6 +1471,7 @@ class _OwnerHomeScreenState extends ConsumerState<OwnerHomeScreen>
       _NavTab(icon: Icons.home_rounded, label: '홈'),
       _NavTab(icon: Icons.receipt_long_rounded, label: '주문'),
       _NavTab(icon: Icons.menu_book_rounded, label: '메뉴'),
+      _NavTab(icon: Icons.inventory_2_rounded, label: '재고'),
       _NavTab(icon: Icons.person_rounded, label: '내정보'),
     ];
 

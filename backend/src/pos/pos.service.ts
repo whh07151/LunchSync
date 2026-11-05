@@ -1,4 +1,5 @@
 import {
+  BadRequestException,
   ConflictException,
   ForbiddenException,
   Injectable,
@@ -9,6 +10,7 @@ import {
 } from '@nestjs/common';
 import { SupabaseService } from '../supabase/supabase.service';
 import { PaymentsService } from '../payments/payments.service';
+import { syncPaidOrderPostActions } from '../orders/paid-order-post-actions';
 import { NotificationsService } from '../notifications/notifications.service';
 // 2026-05-31 WOW#5 단골 랭킹: COMPLETED 분기에서 누적 픽업 횟수 → 등급
 // 결정 후 매 5회마다 ORDER_VIP 알림 발송. RestaurantsModule 을 통째로
@@ -58,6 +60,8 @@ export interface PosOrderResponse {
   customerName: string | null;
   items: { name: string; quantity: number; price: number }[];
   itemsSummary: string | null;
+  diningType?: 'DINE_IN' | 'TAKEOUT';
+  customerNote?: string | null;
   // 2026-05-31 WOW#2: 사장 라이브 카메라 사진 URL (null = 미첨부).
   //   POS 카드가 "전송 완료" 배지로 활용.
   completionPhotoUrl: string | null;
@@ -92,7 +96,7 @@ export class PosService {
       `;
     const selectWithPhoto = baseSelect.replace(
       'created_at, updated_at,',
-      'created_at, updated_at, completion_photo_url,',
+      'created_at, updated_at, completion_photo_url, dining_type, customer_note,',
     );
 
     const buildQb = (selectStr: string) => {
@@ -111,10 +115,12 @@ export class PosService {
     if (
       error &&
       typeof error.message === 'string' &&
-      error.message.includes('completion_photo_url')
+      (error.message.includes('completion_photo_url') ||
+        error.message.includes('dining_type') ||
+        error.message.includes('customer_note'))
     ) {
       this.logger.warn(
-        '[getOrdersByRestaurant] completion_photo_url 컬럼 미적용 환경 — fallback select',
+        '[getOrdersByRestaurant] 확장 컬럼 미적용 환경 — fallback select',
       );
       ({ data, error } = await buildQb(baseSelect));
     }
@@ -152,6 +158,9 @@ export class PosService {
         customerName,
         items,
         itemsSummary: this.buildItemsSummary(items),
+        diningType:
+          (o.dining_type as string) === 'TAKEOUT' ? 'TAKEOUT' : 'DINE_IN',
+        customerNote: (o.customer_note as string | null) ?? null,
         completionPhotoUrl: (o.completion_photo_url as string | null) ?? null,
       };
     });
@@ -278,7 +287,7 @@ export class PosService {
       `;
     const selectWithPhoto = baseSelect.replace(
       'created_at, updated_at,',
-      'created_at, updated_at, completion_photo_url,',
+      'created_at, updated_at, completion_photo_url, dining_type, customer_note,',
     );
 
     const buildQb = (selectStr: string) => {
@@ -298,10 +307,12 @@ export class PosService {
     if (
       error &&
       typeof error.message === 'string' &&
-      error.message.includes('completion_photo_url')
+      (error.message.includes('completion_photo_url') ||
+        error.message.includes('dining_type') ||
+        error.message.includes('customer_note'))
     ) {
       this.logger.warn(
-        '[getPaymentHistory] completion_photo_url 컬럼 미적용 환경 — fallback select',
+        '[getPaymentHistory] 확장 컬럼 미적용 환경 — fallback select',
       );
       ({ data, error } = await buildQb(baseSelect));
     }
@@ -339,6 +350,9 @@ export class PosService {
         customerName,
         items,
         itemsSummary: this.buildItemsSummary(items),
+        diningType:
+          (o.dining_type as string) === 'TAKEOUT' ? 'TAKEOUT' : 'DINE_IN',
+        customerNote: (o.customer_note as string | null) ?? null,
         completionPhotoUrl: (o.completion_photo_url as string | null) ?? null,
       };
     });
@@ -523,6 +537,34 @@ export class PosService {
         orderId,
       });
     }
+
+    if (status === 'PREPARING') {
+      const rpcResult = await this.transitionOrderToPreparingWithBom(
+        orderId,
+        prevOrder.restaurant_id,
+      );
+      if (
+        prevOrder?.user_id &&
+        prevOrder.status !== status &&
+        !rpcResult.alreadyApplied
+      ) {
+        try {
+          await this.notificationsService.createNotification({
+            userId: prevOrder.user_id,
+            type: 'ORDER_PREPARING',
+            title: '조리가 시작됐어요',
+            message: '사장님이 메뉴를 만들고 있어요',
+            pushData: { orderId, status: 'PREPARING' },
+          });
+        } catch {
+          this.logger.warn(
+            `POS_ORDER_STATUS_NOTIFICATION_FAILED status=${status}`,
+          );
+        }
+      }
+      return rpcResult;
+    }
+
 
     const { data, error } = await this.supabase.client
       .from('orders')
@@ -965,6 +1007,419 @@ export class PosService {
     };
   }
 
+  // ── 상용화 업그레이드: 식자재·레시피(BOM)·유통기한 DB 조회/원자적 저장 ──
+  async getInventory(restaurantId: string) {
+    const { data, error } = await this.supabase.client
+      .from('pos_inventory_items')
+      .select('*')
+      .eq('restaurant_id', restaurantId)
+      .order('id', { ascending: true });
+
+    if (error) {
+      this.logger.error('POS_INVENTORY_LOOKUP_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'POS_INVENTORY_LOOKUP_FAILED',
+        message: '식자재 재고 목록을 불러오지 못했습니다. 잠시 후 다시 시도해주세요.',
+        retryable: true,
+      });
+    }
+    if (!data) return [];
+    return (data as any[]).map((r) => ({
+      id: r.id,
+      name: r.name,
+      category: r.category,
+      currentQty: Number(r.current_qty ?? 0),
+      minThreshold: Number(r.min_threshold ?? 5),
+      unit: r.unit ?? '인분',
+      linkedMenuNames: Array.isArray(r.linked_menu_names)
+        ? r.linked_menu_names
+        : [],
+      expiryDate: r.expiry_date ?? null,
+      recipeUnitPerServing: Number(r.recipe_unit_per_serving ?? 1),
+      updatedAt: r.updated_at,
+    }));
+  }
+
+  private isValidIsoCalendarDate(value: string): boolean {
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
+    const [yStr, mStr, dStr] = value.split('-');
+    const year = Number(yStr);
+    const month = Number(mStr);
+    const day = Number(dStr);
+    if (year < 2000 || year > 2100 || month < 1 || month > 12 || day < 1 || day > 31) {
+      return false;
+    }
+    const dt = new Date(Date.UTC(year, month - 1, day));
+    return (
+      dt.getUTCFullYear() === year &&
+      dt.getUTCMonth() === month - 1 &&
+      dt.getUTCDate() === day
+    );
+  }
+
+  private validateAndNormalizeInventoryItems(items: unknown) {
+    if (!Array.isArray(items)) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'POS_INVENTORY_ITEMS_REQUIRED',
+        message: 'items 배열이 필요합니다.',
+      });
+    }
+    if (items.length > 200) {
+      throw new BadRequestException({
+        statusCode: 400,
+        code: 'POS_INVENTORY_TOO_MANY_ITEMS',
+        message: '식자재는 최대 200개까지 저장할 수 있습니다.',
+      });
+    }
+
+    const seenIds = new Set<string>();
+    const normalized: Array<Record<string, unknown>> = [];
+
+    for (let idx = 0; idx < items.length; idx++) {
+      const raw = items[idx];
+      if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'POS_INVENTORY_ITEM_INVALID',
+          message: `재고 항목(#${idx + 1}) 형식이 올바르지 않습니다.`,
+        });
+      }
+      const it = raw as Record<string, unknown>;
+      const id = typeof it.id === 'string' ? it.id.trim() : '';
+      const name = typeof it.name === 'string' ? it.name.trim() : '';
+      const category = typeof it.category === 'string' ? it.category.trim() : '';
+      const unit = typeof it.unit === 'string' ? it.unit.trim() : '';
+
+      if (!id || id.length > 64) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'POS_INVENTORY_ID_INVALID',
+          message: `재고 항목(#${idx + 1})의 ID는 1~64자 문자열이어야 합니다.`,
+        });
+      }
+      if (seenIds.has(id)) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'POS_INVENTORY_DUPLICATE_ID',
+          message: `중복된 식자재 ID(${id})가 포함되어 있습니다.`,
+        });
+      }
+      seenIds.add(id);
+
+      if (!name || name.length > 100 || !category || category.length > 50 || !unit || unit.length > 20) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'POS_INVENTORY_FIELD_INVALID',
+          message: `식자재(${id}) 이름/카테고리/단위 길이가 허용 범위를 벗어났습니다.`,
+        });
+      }
+
+      const currentQty = it.currentQty;
+      const minThreshold = it.minThreshold;
+      const recipeUnit =
+        it.recipeUnitPerServing === undefined ? 1 : it.recipeUnitPerServing;
+      if (
+        typeof currentQty !== 'number' ||
+        !Number.isInteger(currentQty) ||
+        currentQty < 0 ||
+        currentQty > 100000 ||
+        typeof minThreshold !== 'number' ||
+        !Number.isInteger(minThreshold) ||
+        minThreshold < 0 ||
+        minThreshold > 100000 ||
+        typeof recipeUnit !== 'number' ||
+        !Number.isInteger(recipeUnit) ||
+        recipeUnit < 1 ||
+        recipeUnit > 10000
+      ) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'POS_INVENTORY_NUMBER_INVALID',
+          message: `식자재(${id}) 수량/기준값/1인분 소요량은 허용 범위 내 정수여야 합니다.`,
+        });
+      }
+
+      const linkedMenuNames: string[] = [];
+      if (it.linkedMenuNames !== undefined && it.linkedMenuNames !== null) {
+        if (!Array.isArray(it.linkedMenuNames) || it.linkedMenuNames.length > 50) {
+          throw new BadRequestException({
+            statusCode: 400,
+            code: 'POS_INVENTORY_LINKED_MENUS_INVALID',
+            message: `식자재(${id}) 연결 메뉴는 최대 50개의 문자열 배열이어야 합니다.`,
+          });
+        }
+        for (const m of it.linkedMenuNames) {
+          if (typeof m !== 'string' || m.trim().length === 0 || m.trim().length > 100) {
+            throw new BadRequestException({
+              statusCode: 400,
+              code: 'POS_INVENTORY_LINKED_MENUS_INVALID',
+              message: `식자재(${id}) 연결 메뉴 이름은 1~100자 문자열이어야 합니다.`,
+            });
+          }
+          linkedMenuNames.push(m.trim());
+        }
+      }
+
+      let expiryDate: string | null = null;
+      if (it.expiryDate !== undefined && it.expiryDate !== null && it.expiryDate !== '') {
+        if (
+          typeof it.expiryDate !== 'string' ||
+          !this.isValidIsoCalendarDate(it.expiryDate.trim())
+        ) {
+          throw new BadRequestException({
+            statusCode: 400,
+            code: 'POS_INVENTORY_EXPIRY_INVALID',
+            message: `식자재(${id}) 유통기한은 유효한 YYYY-MM-DD 날짜여야 합니다.`,
+          });
+        }
+        expiryDate = it.expiryDate.trim();
+      }
+
+      normalized.push({
+        id,
+        name,
+        category,
+        currentQty,
+        minThreshold,
+        unit,
+        linkedMenuNames,
+        expiryDate,
+        recipeUnitPerServing: recipeUnit,
+        expectedUpdatedAt: typeof it.updatedAt === 'string' ? it.updatedAt : null,
+      });
+    }
+
+    return normalized;
+  }
+
+  async saveInventory(restaurantId: string, items: unknown, expectedItems: unknown) {
+    const normalized = this.validateAndNormalizeInventoryItems(items);
+    if (!Array.isArray(expectedItems) || expectedItems.length > 200 ||
+        expectedItems.some((row) => !row || typeof row.id !== 'string' ||
+          typeof row.updatedAt !== 'string' || !Number.isFinite(Date.parse(row.updatedAt)))) {
+      throw new BadRequestException('최신 재고 조회 결과가 필요합니다. 다시 불러와주세요.');
+    }
+
+    const { data, error } = await this.supabase.client.rpc(
+      'replace_pos_inventory_items',
+      {
+        p_restaurant_id: restaurantId,
+        p_items: normalized,
+        p_expected_items: expectedItems,
+      },
+    );
+
+    if (error) {
+      const msg = typeof error.message === 'string' ? error.message : '';
+      if (msg.includes('POS_INVENTORY_CHANGED')) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'POS_INVENTORY_CHANGED',
+          message: '주문 처리 또는 다른 기기에서 재고가 변경됐습니다. 최신 재고를 다시 불러와주세요.',
+          retryable: true,
+        });
+      }
+      if (msg.includes('POS_RESTAURANT_NOT_FOUND')) {
+        throw new NotFoundException('식당을 찾을 수 없습니다.');
+      }
+      if (msg.includes('POS_INVENTORY_')) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'POS_INVENTORY_VALIDATION_FAILED',
+          message: '재고 데이터 형식이 올바르지 않습니다.',
+        });
+      }
+      this.logger.error('POS_INVENTORY_REPLACE_PERSIST_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'POS_INVENTORY_PERSIST_FAILED',
+        message: '재고를 저장하지 못했습니다. 이전 재고는 그대로 유지됩니다.',
+        retryable: true,
+      });
+    }
+
+    return Array.isArray(data) ? data : [];
+  }
+
+  private async transitionOrderToPreparingWithBom(
+    orderId: string,
+    restaurantId: string | null | undefined,
+  ): Promise<{
+    id: string;
+    status: string;
+    updatedAt: string;
+    alreadyApplied?: boolean;
+    deductedItems?: unknown[];
+  }> {
+    if (!restaurantId) {
+      throw new ConflictException({
+        statusCode: 409,
+        code: 'POS_ORDER_RESTAURANT_REQUIRED',
+        message: '주문에 연결된 매장 정보를 확인할 수 없습니다.',
+        retryable: false,
+        orderId,
+      });
+    }
+
+    const { data, error } = await this.supabase.client.rpc(
+      'transition_order_to_preparing_with_bom',
+      {
+        p_order_id: orderId,
+        p_restaurant_id: restaurantId,
+      },
+    );
+
+    if (error) {
+      const msg = typeof error.message === 'string' ? error.message : '';
+      if (msg.includes('POS_ORDER_NOT_FOUND')) {
+        throw new NotFoundException('주문을 찾을 수 없습니다.');
+      }
+      if (msg.includes('POS_ORDER_RESTAURANT_MISMATCH')) {
+        throw new ForbiddenException('해당 매장의 주문만 변경할 수 있습니다.');
+      }
+      if (msg.includes('INVALID_ORDER_STATUS_TRANSITION')) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'INVALID_ORDER_STATUS_TRANSITION',
+          message: '현재 주문 상태에서는 조리 시작으로 변경할 수 없습니다.',
+          retryable: false,
+          orderId,
+        });
+      }
+      if (msg.includes('ORDER_STATUS_CHANGED')) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'ORDER_STATUS_CHANGED',
+          message: '주문 상태가 동시에 변경되어 요청을 적용하지 않았습니다.',
+          retryable: true,
+          orderId,
+        });
+      }
+      if (msg.includes('POS_INVENTORY_INSUFFICIENT')) {
+        throw new ConflictException({
+          statusCode: 409,
+          code: 'POS_INVENTORY_INSUFFICIENT',
+          message:
+            '조리에 필요한 식자재 재고가 부족하여 조리를 시작할 수 없습니다. 재고를 먼저 확인해주세요.',
+          retryable: false,
+          orderId,
+        });
+      }
+      this.logger.error('POS_ORDER_PREPARING_BOM_SYNC_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'ORDER_STATUS_DB_SYNC_FAILED',
+        message: '주문 상태와 식자재 차감을 저장하지 못했습니다. 다시 시도해주세요.',
+        retryable: true,
+        orderId,
+      });
+    }
+
+    const payload = data as Record<string, any> | null;
+    if (!payload || payload.id !== orderId || payload.status !== 'PREPARING') {
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'ORDER_STATUS_DB_SYNC_FAILED',
+        message: '주문 상태와 식자재 차감 결과를 확인하지 못했습니다. 다시 시도해주세요.',
+        retryable: true,
+        orderId,
+      });
+    }
+    return {
+      id: (payload.id as string) ?? orderId,
+      status: (payload.status as string) ?? 'PREPARING',
+      updatedAt:
+        (payload.updatedAt as string) ??
+        (payload.updated_at as string) ??
+        new Date().toISOString(),
+      ...(payload.alreadyApplied ? { alreadyApplied: true } : {}),
+      ...(Array.isArray(payload.deductedItems)
+        ? { deductedItems: payload.deductedItems }
+        : {}),
+    };
+  }
+
+  async getStoreStatus(restaurantId: string) {
+    const { data, error } = await this.supabase.client
+      .from('restaurants')
+      .select('id, business_status, operating_hours_note')
+      .eq('id', restaurantId)
+      .maybeSingle();
+    if (error) {
+      this.logger.error('POS_STORE_STATUS_LOOKUP_FAILED');
+      throw new ServiceUnavailableException({
+        statusCode: 503,
+        code: 'POS_STORE_STATUS_LOOKUP_FAILED',
+        message: '매장 영업 상태를 조회하지 못했습니다.',
+        retryable: true,
+      });
+    }
+    if (!data) {
+      throw new NotFoundException('식당을 찾을 수 없습니다.');
+    }
+    return {
+      restaurantId,
+      businessStatus: (data as any)?.business_status ?? 'OPEN',
+      operatingHoursNote:
+        (data as any)?.operating_hours_note ??
+        '영업 11:00~21:00 · 브레이크타임 15:00~17:00',
+    };
+  }
+
+  async updateStoreStatus(
+    restaurantId: string,
+    body: { businessStatus?: string; operatingHoursNote?: string },
+  ) {
+    const patch: Record<string, any> = {};
+    if (body.businessStatus !== undefined) {
+      const normalizedStatus = String(body.businessStatus).trim().toUpperCase();
+      const mapped =
+        normalizedStatus === 'BREAKTIME' ? 'BREAK_TIME' : normalizedStatus;
+      if (!['OPEN', 'BREAK_TIME', 'CLOSED'].includes(mapped)) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'POS_STORE_STATUS_INVALID',
+          message: '영업 상태는 OPEN, BREAK_TIME, CLOSED 중 하나여야 합니다.',
+        });
+      }
+      patch.business_status = mapped;
+    }
+    if (body.operatingHoursNote !== undefined) {
+      const note = String(body.operatingHoursNote).trim();
+      if (note.length > 200) {
+        throw new BadRequestException({
+          statusCode: 400,
+          code: 'POS_OPERATING_HOURS_NOTE_TOO_LONG',
+          message: '운영 시간 안내는 200자 이내여야 합니다.',
+        });
+      }
+      patch.operating_hours_note = note;
+    }
+    if (Object.keys(patch).length > 0) {
+      const { data, error } = await this.supabase.client
+        .from('restaurants')
+        .update(patch)
+        .eq('id', restaurantId)
+        .select('id')
+        .maybeSingle();
+      if (error) {
+        this.logger.error('POS_STORE_STATUS_PERSIST_FAILED');
+        throw new ServiceUnavailableException({
+          statusCode: 503,
+          code: 'POS_STORE_STATUS_PERSIST_FAILED',
+          message: '매장 영업 상태를 저장하지 못했습니다.',
+          retryable: true,
+        });
+      }
+      if (!data) {
+        throw new NotFoundException('식당을 찾을 수 없습니다.');
+      }
+    }
+    return this.getStoreStatus(restaurantId);
+  }
+
   // ══════════════════════════════════════════════════════════
   // WOW 포인트 2순위 — 사장 라이브 카메라 한 장 (2026-05-31)
   //
@@ -1145,6 +1600,8 @@ export class PosService {
     status: string;
     paymentMethod: string;
     approvedAt: string;
+    cartSynced?: boolean;
+    reservationSynced?: boolean;
   }> {
     if (
       method === 'CARD' &&
@@ -1190,6 +1647,7 @@ export class PosService {
         status: existing.status,
         paymentMethod: (existing.payment_method as string | null) ?? 'POS_TOSS',
         approvedAt: existing.updated_at,
+        ...await syncPaidOrderPostActions(this.supabase.client, this.logger, orderId),
       };
     }
 
@@ -1259,6 +1717,7 @@ export class PosService {
           status: reconciled.status,
           paymentMethod: reconciled.payment_method,
           approvedAt: reconciled.updated_at,
+          ...await syncPaidOrderPostActions(this.supabase.client, this.logger, orderId),
         };
       }
 
@@ -1280,6 +1739,7 @@ export class PosService {
       paymentMethod:
         (updated.payment_method as string | null) ?? paymentMethod,
       approvedAt: updated.updated_at,
+      ...await syncPaidOrderPostActions(this.supabase.client, this.logger, orderId),
     };
   }
 

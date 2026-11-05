@@ -21,6 +21,9 @@ export interface CreateMenuDto {
   imageUrl?: string;
   // 2026-05-16 배민 패턴 — 예상 조리 시간 (분, 1~120, 미지정 시 DB DEFAULT 15)
   prepTimeMinutes?: number;
+  // 식자재 및 알레르기 유발 물질 태그 (menu_items.ingredients, allergens)
+  ingredients?: string[];
+  allergens?: string[];
 }
 
 export interface UpdateMenuDto {
@@ -31,7 +34,12 @@ export interface UpdateMenuDto {
   imageUrl?: string;
   isAvailable?: boolean;
   prepTimeMinutes?: number;
+  ingredients?: string[];
+  allergens?: string[];
 }
+
+const MENU_SELECT_COLUMNS =
+  'id, name, price, category, description, image_url, is_available, restaurant_id, prep_time_minutes, ingredients, allergens';
 
 @Injectable()
 export class PosMenusService {
@@ -56,9 +64,7 @@ export class PosMenusService {
   async list(restaurantId: string) {
     const { data, error } = await this.supabase.client
       .from('menu_items')
-      .select(
-        'id, name, price, category, description, image_url, is_available, restaurant_id, prep_time_minutes',
-      )
+      .select(MENU_SELECT_COLUMNS)
       .eq('restaurant_id', restaurantId)
       .order('category')
       .order('price');
@@ -67,17 +73,7 @@ export class PosMenusService {
       throw new Error('POS_MENU_LOOKUP_FAILED');
     }
 
-    return (data ?? []).map((m) => ({
-      id: m.id,
-      restaurantId: m.restaurant_id,
-      name: m.name,
-      price: m.price,
-      category: m.category,
-      description: m.description,
-      imageUrl: m.image_url,
-      isAvailable: m.is_available ?? true,
-      prepTimeMinutes: m.prep_time_minutes ?? 15,
-    }));
+    return (data ?? []).map((m) => this.toResponse(m));
   }
 
   /// 메뉴 신규 추가 — restaurant_id, name, price 필수. category 미지정 시 '기타'.
@@ -98,13 +94,17 @@ export class PosMenusService {
     if (dto.prepTimeMinutes !== undefined) {
       insert.prep_time_minutes = dto.prepTimeMinutes;
     }
+    if (dto.ingredients !== undefined) {
+      insert.ingredients = this.normalizeStringList(dto.ingredients);
+    }
+    if (dto.allergens !== undefined) {
+      insert.allergens = this.normalizeStringList(dto.allergens);
+    }
 
     const { data, error } = await this.supabase.client
       .from('menu_items')
       .insert(insert)
-      .select(
-        'id, name, price, category, description, image_url, is_available, restaurant_id, prep_time_minutes',
-      )
+      .select(MENU_SELECT_COLUMNS)
       .single();
 
     if (error || !data) {
@@ -128,6 +128,12 @@ export class PosMenusService {
       this.validatePrepTime(dto.prepTimeMinutes);
       patch.prep_time_minutes = dto.prepTimeMinutes;
     }
+    if (dto.ingredients !== undefined) {
+      patch.ingredients = this.normalizeStringList(dto.ingredients);
+    }
+    if (dto.allergens !== undefined) {
+      patch.allergens = this.normalizeStringList(dto.allergens);
+    }
 
     if (Object.keys(patch).length === 0) {
       throw new Error('수정할 항목이 없습니다.');
@@ -137,9 +143,7 @@ export class PosMenusService {
       .from('menu_items')
       .update(patch)
       .eq('id', menuId)
-      .select(
-        'id, name, price, category, description, image_url, is_available, restaurant_id, prep_time_minutes',
-      )
+      .select(MENU_SELECT_COLUMNS)
       .single();
 
     if (error || !data) {
@@ -178,7 +182,26 @@ export class PosMenusService {
       imageUrl: data.image_url,
       isAvailable: data.is_available ?? true,
       prepTimeMinutes: data.prep_time_minutes ?? 15,
+      ingredients: Array.isArray(data.ingredients)
+        ? data.ingredients.filter((v: unknown): v is string => typeof v === 'string')
+        : [],
+      allergens: Array.isArray(data.allergens)
+        ? data.allergens.filter((v: unknown): v is string => typeof v === 'string')
+        : [],
     };
+  }
+
+  private normalizeStringList(items: string[]): string[] {
+    const seen = new Set<string>();
+    const result: string[] = [];
+    for (const raw of items) {
+      if (typeof raw !== 'string') continue;
+      const trimmed = raw.trim();
+      if (!trimmed || seen.has(trimmed)) continue;
+      seen.add(trimmed);
+      result.push(trimmed);
+    }
+    return result;
   }
 
   // 2026-05-16: prep_time_minutes 범위 검증 (DB CHECK 와 동일)

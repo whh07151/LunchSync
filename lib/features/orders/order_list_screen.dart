@@ -57,7 +57,9 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen> {
       return;
     }
 
-    final list = await _api.getTodayOrders(accessToken: token);
+    final list = widget.historyMode
+        ? await _api.getOrderHistory(accessToken: token)
+        : await _api.getTodayOrders(accessToken: token);
     if (!mounted) return;
     setState(() {
       _orders = list;
@@ -151,8 +153,38 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen> {
             ],
           ),
           const SizedBox(height: 8),
+          Row(
+            children: [
+              Expanded(
+                child: Text(
+                  order.restaurantName ?? '한성대 점심싱크 본점',
+                  style: AppTextStyles.bodyMedium.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              if (order.reviewScore != null)
+                Text(
+                  '⭐ ${order.reviewScore}.0',
+                  style: AppTextStyles.caption.copyWith(
+                    color: Theme.of(context).colorScheme.primary,
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+            ],
+          ),
+          const SizedBox(height: 3),
           Text(
-            '주문번호 ${order.id.substring(0, 8)}',
+            (order.itemsSummary != null && order.itemsSummary!.isNotEmpty)
+                ? '${order.itemsSummary} · 주문 #${order.id.substring(0, 6)}'
+                : '주문번호 ${order.id.substring(0, 8)}',
+            style: AppTextStyles.bodySmall.copyWith(
+              color: AppColors.textSecondary,
+            ),
+          ),
+          if (order.id.isEmpty)
+            Text(
+              '주문번호 ${order.id.substring(0, 8)}',
             style: AppTextStyles.bodyMedium.copyWith(
               fontWeight: FontWeight.w600,
             ),
@@ -194,9 +226,11 @@ class _OrderListScreenState extends ConsumerState<OrderListScreen> {
     final dt = DateTime.tryParse(iso);
     if (dt == null) return '';
     final local = dt.toLocal();
+    final mo = local.month.toString().padLeft(2, '0');
+    final d = local.day.toString().padLeft(2, '0');
     final h = local.hour.toString().padLeft(2, '0');
     final m = local.minute.toString().padLeft(2, '0');
-    return '$h:$m';
+    return widget.historyMode ? '$mo/$d $h:$m' : '$h:$m';
   }
 
   String _formatComma(int value) {

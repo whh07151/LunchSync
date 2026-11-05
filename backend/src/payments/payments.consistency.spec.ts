@@ -492,6 +492,21 @@ describe('Payment confirmation consistency (HTTP acceptance)', () => {
     });
   });
 
+  it.each(['PREPARING', 'READY', 'COMPLETED'])(
+    'reconciles a paid order in %s without charging again or changing fulfillment',
+    async (status) => {
+      database.order.status = status;
+      database.order.payment_key = PAYMENT_KEY;
+      const response = await request(app.getHttpServer())
+        .post('/api/payments/confirm')
+        .send({ paymentKey: PAYMENT_KEY, orderId: ORDER_ID, amount: AMOUNT });
+      expect(response.status).toBe(201);
+      expect(response.body.data).toMatchObject({ alreadyPaid: true, status });
+      expect(database.order.status).toBe(status);
+      expect(global.fetch).not.toHaveBeenCalled();
+    },
+  );
+
   it('rejects a different payment key for an order that is already paid', async () => {
     database.order.status = 'PAID';
     database.order.payment_key = 'test_payment_key_already_stored';

@@ -15,6 +15,7 @@ import {
   IsNotEmpty,
   IsInt,
   IsNumber,
+  IsUUID,
   Min,
   Max,
   MaxLength,
@@ -112,6 +113,28 @@ class AddMemberDto {
   @IsString()
   @IsNotEmpty()
   userId: string;
+}
+
+export class UpsertSharedCartItemDto {
+  @IsUUID('all', { message: '유효한 메뉴 ID가 필요합니다.' })
+  @IsNotEmpty({ message: '메뉴 ID는 필수입니다.' })
+  menuItemId!: string;
+
+  @IsInt({ message: '수량은 정수여야 합니다.' })
+  @Min(0, { message: '수량은 0 이상이어야 합니다.' })
+  @Max(99, { message: '수량은 최대 99개까지 담을 수 있습니다.' })
+  quantity!: number;
+
+  // 레거시 클라이언트 호환용 optional 필드 (서버에서는 무시하고 DB 메뉴 정보를 사용)
+  @IsOptional()
+  @IsString()
+  @MaxLength(120)
+  menuName?: string;
+
+  @IsOptional()
+  @IsInt()
+  @Min(0)
+  price?: number;
 }
 
 @Controller('sessions')
@@ -282,6 +305,57 @@ export class SessionsController {
       id,
       req.user.userId,
       userId,
+    );
+    return { success: true, data: result };
+  }
+
+  // ── 상용화 업그레이드: 실시간 공동 장바구니 (Shared Group Cart) DB API ──
+  @SkipThrottle({ default: true, auth: true, signup: true })
+  @Get(':id/cart')
+  async getSharedCart(@Req() req: AuthedRequest, @Param('id') id: string) {
+    await this.sessionAccess.assertMember(id, req.user.userId);
+    const result = await this.sessionsService.getSharedCart(id);
+    return { success: true, data: result };
+  }
+
+  @Post(':id/cart')
+  async upsertSharedCartItem(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+    @Body() dto: UpsertSharedCartItemDto,
+  ) {
+    await this.sessionAccess.assertMember(id, req.user.userId);
+    const result = await this.sessionsService.upsertSharedCartItem(
+      id,
+      req.user.userId ?? '',
+      {
+        menuItemId: dto?.menuItemId,
+        quantity: dto?.quantity,
+      },
+    );
+    return { success: true, data: result };
+  }
+
+  // 일반 멤버는 본인이 담은 공동 장바구니 항목만 정리한다.
+  @Delete(':id/cart')
+  async clearMySharedCart(@Req() req: AuthedRequest, @Param('id') id: string) {
+    await this.sessionAccess.assertMember(id, req.user.userId);
+    const result = await this.sessionsService.clearMySharedCart(
+      id,
+      req.user.userId ?? '',
+    );
+    return { success: true, data: result };
+  }
+
+  // 세션 전체 공동 장바구니 초기화는 호스트 전용 권한으로 분리한다.
+  @Delete(':id/cart/all')
+  async clearAllSharedCartByHost(
+    @Req() req: AuthedRequest,
+    @Param('id') id: string,
+  ) {
+    const result = await this.sessionsService.clearAllSharedCartByHost(
+      id,
+      req.user.userId ?? '',
     );
     return { success: true, data: result };
   }

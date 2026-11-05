@@ -10,11 +10,13 @@ import {
   UseGuards,
 } from '@nestjs/common';
 import {
+  IsArray,
   IsBoolean,
   IsInt,
   IsOptional,
   IsString,
   Max,
+  MaxLength,
   Min,
 } from 'class-validator';
 import { JwtAuthGuard } from '../auth/jwt-auth.guard';
@@ -50,6 +52,18 @@ class CreateMenuRequestDto implements CreateMenuDto {
   @IsOptional() @IsString() imageUrl?: string;
   // 2026-05-16 배민 패턴 — 예상 조리 시간 (분, 1~120)
   @IsOptional() @IsInt() @Min(1) @Max(120) prepTimeMinutes?: number;
+  // 사장님 앱 식자재/알레르기 관리 연동
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  ingredients?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  allergens?: string[];
 }
 
 class UpdateMenuRequestDto implements UpdateMenuDto {
@@ -60,6 +74,17 @@ class UpdateMenuRequestDto implements UpdateMenuDto {
   @IsOptional() @IsString() imageUrl?: string;
   @IsOptional() @IsBoolean() isAvailable?: boolean;
   @IsOptional() @IsInt() @Min(1) @Max(120) prepTimeMinutes?: number;
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  ingredients?: string[];
+
+  @IsOptional()
+  @IsArray()
+  @IsString({ each: true })
+  @MaxLength(40, { each: true })
+  allergens?: string[];
 }
 
 @Controller('pos/menus')

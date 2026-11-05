@@ -182,7 +182,7 @@ export class RestaurantsService {
   async getMenusByRestaurant(restaurantId: string) {
     const { data, error } = await this.supabase.client
       .from('menu_items')
-      .select('id, name, price, category, description, image_url, source, is_available')
+      .select('id, name, price, category, description, image_url, source, is_available, prep_time_minutes, ingredients, allergens')
       .eq('restaurant_id', restaurantId)
       .eq('is_available', true)
       .order('category')
@@ -202,6 +202,9 @@ export class RestaurantsService {
       imageUrl: m.source === 'MANUAL' ? displayableImageUrl(m.image_url) : null,
       source: m.source ?? 'UNKNOWN',
       priceVerifiedAt: null,
+      prepTimeMinutes: typeof (m as any).prep_time_minutes === 'number' ? (m as any).prep_time_minutes : 15,
+      ingredients: Array.isArray((m as any).ingredients) ? (m as any).ingredients : [],
+      allergens: Array.isArray((m as any).allergens) ? (m as any).allergens : [],
     }));
 
     // DTO 기준: { categories[], menus[] } 구조로 반환
@@ -210,6 +213,70 @@ export class RestaurantsService {
     const categories = ['전체', ...uniqueCategories];
 
     return { categories, menus };
+  }
+
+  async getSeatSummary(restaurantId: string) {
+    const { data: seats, error: seatError } = await this.supabase.client
+      .from('pos_seats')
+      .select('id, status')
+      .eq('restaurant_id', restaurantId);
+
+    if (seatError) {
+      throw new ServiceUnavailableException('좌석 현황을 조회하지 못했습니다.');
+    }
+
+    const list = seats ?? [];
+    const totalSeats = list.length;
+    const occupiedSeats = list.filter((s: any) => s.status === 'occupied').length;
+    const emptySeats = Math.max(0, totalSeats - occupiedSeats);
+
+    return {
+      totalSeats,
+      emptySeats,
+      occupiedSeats,
+      estimatedAvailableGuests: emptySeats * 4,
+    };
+  }
+
+  async createCustomerReservation(
+    restaurantId: string,
+    dto: {
+      kind: 'RESERVATION' | 'WAITING';
+      customerName: string;
+      partySize: number;
+      note?: string;
+    },
+  ) {
+    const scheduledAt =
+      dto.kind === 'RESERVATION'
+        ? new Date(Date.now() + 30 * 60_000).toISOString()
+        : null;
+    const { data, error } = await this.supabase.client
+      .from('pos_reservations')
+      .insert({
+        restaurant_id: restaurantId,
+        kind: dto.kind,
+        customer_name: dto.customerName.trim(),
+        party_size: dto.partySize,
+        scheduled_at: scheduledAt,
+        note: dto.note?.trim() || null,
+        status: 'OPEN',
+      })
+      .select('id, restaurant_id, kind, customer_name, party_size, status, created_at')
+      .single();
+
+    if (error || !data) {
+      throw new BadRequestException('예약·웨이팅 접수에 실패했습니다.');
+    }
+    return {
+      id: data.id,
+      restaurantId: data.restaurant_id,
+      kind: data.kind,
+      customerName: data.customer_name,
+      partySize: data.party_size,
+      status: data.status,
+      createdAt: data.created_at,
+    };
   }
 
   // ══════════════════════════════════════════════════════════

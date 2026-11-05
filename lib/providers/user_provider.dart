@@ -5,6 +5,7 @@ import '../services/auth_api_service.dart';
 import '../services/fcm_service.dart';
 import '../services/kakao_auth_service.dart';
 import '../services/users_api_service.dart';
+import 'cart_provider.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 로그인한 유저 정보 + JWT를 앱 전역에서 관리 (Riverpod)
@@ -175,6 +176,14 @@ class UserNotifier extends Notifier<UserState> {
     await prefs.setString(_PrefKeys.userRole, response.role);
     await prefs.setString(_PrefKeys.userStatus, response.status);
 
+    // 로그인 직후에도 restaurantId, businessName, 취향/알레르기 정보를 즉시 동기화
+    try {
+      final profile = await const UsersApiService().getMe(response.accessToken);
+      if (profile != null) {
+        await setFromProfile(profile);
+      }
+    } catch (_) {}
+
     // FCM 단말 토큰 발급 + 백엔드 저장 (best-effort).
     // 실패해도 throw 안 함 — Firebase 미초기화/권한 거부 환경에서도 흐름 유지.
     unawaited(const FcmService().registerToken(accessToken: response.accessToken));
@@ -287,6 +296,7 @@ class UserNotifier extends Notifier<UserState> {
     // 카카오 SDK 측 토큰 만료 — 다음 카카오 로그인 시 계정 선택 화면 노출되도록
     await const KakaoAuthService().logout();
 
+    ref.read(cartProvider.notifier).clear();
     state = const UserState();
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_PrefKeys.jwt);

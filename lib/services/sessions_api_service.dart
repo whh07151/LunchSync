@@ -37,23 +37,23 @@ class SessionsApiService {
     required String accessToken,
     required String name,
     String? scheduledAt,
-    int? radius,        // 식당 검색 반경 (미터)
-    int? budget,        // 1인당 예산 상한 (원)
+    int? radius, // 식당 검색 반경 (미터)
+    int? budget, // 1인당 예산 상한 (원)
     int? returnMinutes, // 복귀 여유 시간 (분)
-    String? memo,       // 자유 메모
-    double? lat,        // 세션 기준 위도 (추천 반경 필터용)
-    double? lng,        // 세션 기준 경도 (추천 반경 필터용)
+    String? memo, // 자유 메모
+    double? lat, // 세션 기준 위도 (추천 반경 필터용)
+    double? lng, // 세션 기준 경도 (추천 반경 필터용)
   }) async {
     try {
       final body = <String, dynamic>{'name': name};
-      if (scheduledAt != null)    body['scheduledAt']    = scheduledAt;
-      if (radius != null)         body['radius']         = radius;
-      if (budget != null)         body['budget']         = budget;
-      if (returnMinutes != null)  body['returnMinutes']  = returnMinutes;
+      if (scheduledAt != null) body['scheduledAt'] = scheduledAt;
+      if (radius != null) body['radius'] = radius;
+      if (budget != null) body['budget'] = budget;
+      if (returnMinutes != null) body['returnMinutes'] = returnMinutes;
       if (memo != null && memo.isNotEmpty) body['memo'] = memo;
       // 위치 좌표 — 둘 다 있어야 의미 있음 (한쪽만 들어와도 백엔드는 무시)
-      if (lat != null)            body['lat']            = lat;
-      if (lng != null)            body['lng']            = lng;
+      if (lat != null) body['lat'] = lat;
+      if (lng != null) body['lng'] = lng;
 
       final response = await http
           .post(
@@ -347,7 +347,8 @@ class SessionsApiService {
         final json = jsonDecode(response.body) as Map<String, dynamic>;
         // data가 { totalCount, joinedCount, members[] } 구조
         return SessionMembersResponse.fromJson(
-            json['data'] as Map<String, dynamic>);
+          json['data'] as Map<String, dynamic>,
+        );
       }
       return null;
     } catch (e) {
@@ -365,7 +366,9 @@ class SessionsApiService {
     try {
       final response = await http
           .post(
-            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/members'),
+            Uri.parse(
+              '${AppConfig.backendBaseUrl}/sessions/$sessionId/members',
+            ),
             headers: apiHeaders(accessToken),
             body: jsonEncode({'userId': userId}),
           )
@@ -393,8 +396,7 @@ class SessionsApiService {
   }) async {
     try {
       final response = await ApiRetry.get(
-        Uri.parse(
-            '${AppConfig.backendBaseUrl}/sessions/$sessionId/chemistry'),
+        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/chemistry'),
         headers: apiHeaders(accessToken),
         timeout: AppConfig.apiTimeout,
       );
@@ -426,7 +428,8 @@ class SessionsApiService {
       final response = await http
           .delete(
             Uri.parse(
-                '${AppConfig.backendBaseUrl}/sessions/$sessionId/members/$userId'),
+              '${AppConfig.backendBaseUrl}/sessions/$sessionId/members/$userId',
+            ),
             headers: apiHeaders(accessToken),
           )
           .timeout(AppConfig.apiTimeout);
@@ -472,6 +475,115 @@ class SessionsApiService {
       return null;
     }
   }
+
+  // ── 상용화 업그레이드: 실시간 공동 장바구니 (Shared Group Cart) DB API ──
+  // 실패를 정상 빈 장바구니로 숨기지 않고 SharedCartApiException 을 던진다.
+  Future<List<SharedCartItemDto>> getSharedCart({
+    required String accessToken,
+    required String sessionId,
+  }) async {
+    try {
+      final response = await ApiRetry.get(
+        Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/cart'),
+        headers: apiHeaders(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
+      ApiAuthHooks.check(response.statusCode);
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final list = json['data'] as List<dynamic>? ?? const [];
+        return list
+            .whereType<Map<String, dynamic>>()
+            .map(SharedCartItemDto.fromJson)
+            .toList(growable: false);
+      }
+      throw SharedCartApiException(
+        statusCode: response.statusCode,
+        message: extractApiErrorMessage(response.body) ?? '공동 장바구니를 불러오지 못했어요.',
+      );
+    } on SharedCartApiException {
+      rethrow;
+    } catch (_) {
+      throw const SharedCartApiException(
+        statusCode: 0,
+        message: '네트워크 오류로 공동 장바구니를 불러오지 못했어요.',
+      );
+    }
+  }
+
+  Future<List<SharedCartItemDto>> upsertSharedCartItem({
+    required String accessToken,
+    required String sessionId,
+    required String menuItemId,
+    required int quantity,
+    String? menuName,
+    int? price,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/cart'),
+            headers: apiHeaders(accessToken),
+            body: jsonEncode({'menuItemId': menuItemId, 'quantity': quantity}),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+      if (response.statusCode == 200 || response.statusCode == 201) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final list = json['data'] as List<dynamic>? ?? const [];
+        return list
+            .whereType<Map<String, dynamic>>()
+            .map(SharedCartItemDto.fromJson)
+            .toList(growable: false);
+      }
+      throw SharedCartApiException(
+        statusCode: response.statusCode,
+        message: extractApiErrorMessage(response.body) ?? '공동 장바구니에 저장하지 못했어요.',
+      );
+    } on SharedCartApiException {
+      rethrow;
+    } catch (_) {
+      throw const SharedCartApiException(
+        statusCode: 0,
+        message: '네트워크 오류로 공동 장바구니에 저장하지 못했어요.',
+      );
+    }
+  }
+
+  Future<List<SharedCartItemDto>> clearMySharedCart({
+    required String accessToken,
+    required String sessionId,
+  }) async {
+    try {
+      final response = await http
+          .delete(
+            Uri.parse('${AppConfig.backendBaseUrl}/sessions/$sessionId/cart'),
+            headers: apiHeaders(accessToken),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final list = json['data'] as List<dynamic>? ?? const [];
+        return list
+            .whereType<Map<String, dynamic>>()
+            .map(SharedCartItemDto.fromJson)
+            .toList(growable: false);
+      }
+      throw SharedCartApiException(
+        statusCode: response.statusCode,
+        message:
+            extractApiErrorMessage(response.body) ?? '내 공동 장바구니 항목을 비우지 못했어요.',
+      );
+    } on SharedCartApiException {
+      rethrow;
+    } catch (_) {
+      throw const SharedCartApiException(
+        statusCode: 0,
+        message: '네트워크 오류로 장바구니를 비우지 못했어요.',
+      );
+    }
+  }
 }
 
 // ══════════════════════════════════════════════════════════
@@ -486,6 +598,19 @@ class SessionsApiService {
 //
 // 방어적 파싱: 한 필드가 비더라도 객체 생성에 실패하지 않도록 ?? 폴백 사용.
 // ══════════════════════════════════════════════════════════
+class SharedCartApiException implements Exception {
+  const SharedCartApiException({
+    required this.statusCode,
+    required this.message,
+  });
+
+  final int statusCode;
+  final String message;
+
+  @override
+  String toString() => 'SharedCartApiException($statusCode): $message';
+}
+
 class InviteInfo {
   const InviteInfo({
     required this.inviteCode,
@@ -505,6 +630,41 @@ class InviteInfo {
       deepLink: (json['deepLink'] as String?) ?? '',
       shortLink: (json['shortLink'] as String?) ?? '',
       expiresAt: json['expiresAt'] as String?,
+    );
+  }
+}
+
+class SharedCartItemDto {
+  const SharedCartItemDto({
+    required this.id,
+    required this.sessionId,
+    required this.userId,
+    required this.userName,
+    required this.menuItemId,
+    required this.menuName,
+    required this.price,
+    required this.quantity,
+  });
+
+  final String id;
+  final String sessionId;
+  final String userId;
+  final String userName;
+  final String menuItemId;
+  final String menuName;
+  final int price;
+  final int quantity;
+
+  factory SharedCartItemDto.fromJson(Map<String, dynamic> json) {
+    return SharedCartItemDto(
+      id: (json['id'] as String?) ?? '',
+      sessionId: (json['sessionId'] as String?) ?? '',
+      userId: (json['userId'] as String?) ?? '',
+      userName: (json['userName'] as String?) ?? '동료',
+      menuItemId: (json['menuItemId'] as String?) ?? '',
+      menuName: (json['menuName'] as String?) ?? '메뉴',
+      price: (json['price'] as num?)?.toInt() ?? 0,
+      quantity: (json['quantity'] as num?)?.toInt() ?? 1,
     );
   }
 }
@@ -562,9 +722,9 @@ class TodaySessionsFetchException implements Exception {
 // ══════════════════════════════════════════════════════════
 class SessionStatusUpdateResult {
   const SessionStatusUpdateResult.success()
-      : isSuccess = true,
-        statusCode = 200,
-        message = null;
+    : isSuccess = true,
+      statusCode = 200,
+      message = null;
 
   const SessionStatusUpdateResult.failure({
     required this.statusCode,
@@ -576,7 +736,6 @@ class SessionStatusUpdateResult {
   final String? message; // UI 토스트에 그대로 표시할 한국어 메시지
 }
 
-
 // ══════════════════════════════════════════════════════════
 // SessionDeleteResult — deleteSession() 응답 래퍼
 //
@@ -585,9 +744,9 @@ class SessionStatusUpdateResult {
 // ══════════════════════════════════════════════════════════
 class SessionDeleteResult {
   const SessionDeleteResult.success()
-      : isSuccess = true,
-        statusCode = 200,
-        message = null;
+    : isSuccess = true,
+      statusCode = 200,
+      message = null;
 
   const SessionDeleteResult.failure({
     required this.statusCode,
@@ -598,7 +757,6 @@ class SessionDeleteResult {
   final int statusCode; // 0 = 네트워크/예외, 그 외 = HTTP 상태코드
   final String? message; // UI 토스트에 그대로 표시할 한국어 메시지
 }
-
 
 // ══════════════════════════════════════════════════════════
 // ChemistryResult — WOW 포인트 #3 점심 케미 매트릭스 응답
@@ -618,9 +776,9 @@ class ChemistryResult {
     required this.topCategories,
   });
 
-  final int score;              // 0~100
-  final String label;           // "매콤+가성비형" 같은 한 줄 라벨
-  final String tone;            // warm | cool | neutral
+  final int score; // 0~100
+  final String label; // "매콤+가성비형" 같은 한 줄 라벨
+  final String tone; // warm | cool | neutral
   final List<String> topCategories; // 상위 3개 카테고리
 
   factory ChemistryResult.fromJson(Map<String, dynamic> json) {
@@ -630,11 +788,11 @@ class ChemistryResult {
     final rawCats = json['topCategories'];
     final cats = (rawCats is List)
         ? rawCats
-            .whereType<String>()
-            .map((s) => s.trim())
-            .where((s) => s.isNotEmpty)
-            .take(3)
-            .toList(growable: false)
+              .whereType<String>()
+              .map((s) => s.trim())
+              .where((s) => s.isNotEmpty)
+              .take(3)
+              .toList(growable: false)
         : const <String>[];
     return ChemistryResult(
       score: score,

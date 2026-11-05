@@ -106,7 +106,7 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
   // ── 다음 버튼 활성 여부 ────────────────────────────────
   // 2026-05-14: 친구 목록 없어도 호스트 혼자 세션 가능 → 항상 true.
   // 친구가 있어도 선택 안 해도 OK (초대 코드 흐름으로 모집).
-  bool get _canProceed => true;
+  // ── 0명 선택 시에도 초대 코드 흐름으로 모집 가능 ─────────────
 
   // ── 생명주기: 화면이 처음 만들어질 때 ──────────────────
   @override
@@ -687,39 +687,27 @@ class _MemberSelectScreenState extends ConsumerState<MemberSelectScreen> {
           const SizedBox(height: 8),
 
           // ── "조건 설정하기" 버튼 ────────────────────────
-          // onPressed가 null이면 버튼 비활성화(회색)됨
-          // 1명 이상 선택해야 활성화
+          // 친구를 선택하지 않아도(0명) 초대코드로 방을 만들거나 혼자 시작할 수 있도록 항상 활성화
           AppPrimaryButton(
-            label: '조건 설정하기',
-            onPressed: _canProceed
-                ? () {
-                    // ── 선택된 Member 객체 목록 구성 ──────────────
-                    // _selectedIds(ID 집합)에 해당하는 친구를 골라
-                    // FriendDto → Member 로 변환(organization 자리에 email).
-                    // CU-09 는 Member 의 id/name 만 사용하므로 호환 OK.
-                    final selectedMembers = _friends
-                        .where((f) => _selectedIds.contains(f.id))
-                        .map((f) => Member(
-                              id: f.id,
-                              name: f.name,
-                              organization: f.email ?? '친구',
-                            ))
-                        .toList();
+            label: _selectedIds.isNotEmpty
+                ? '${_selectedIds.length}명과 조건 설정하기'
+                : '조건 설정하기 (초대코드로 부르기)',
+            onPressed: () {
+              final selectedMembers = _friends
+                  .where((f) => _selectedIds.contains(f.id))
+                  .map((f) => Member(
+                        id: f.id,
+                        name: f.name,
+                        organization: f.email ?? '친구',
+                      ))
+                  .toList();
 
-                    // ── Riverpod: sessionProvider에 선택 멤버 저장 ─
-                    // CU-09(우현호 담당)에서
-                    //   ref.watch(sessionProvider).selectedMembers 로 읽을 수 있게 됨
-                    // ref.read: 상태 변경(쓰기)은 read를 사용 (watch는 UI 감시용)
-                    ref
-                        .read(sessionProvider.notifier)
-                        .setSelectedMembers(selectedMembers);
+              ref
+                  .read(sessionProvider.notifier)
+                  .setSelectedMembers(selectedMembers);
 
-                    // ── 화면 이동 콜백 실행 ───────────────────────
-                    // 데이터는 이미 Provider에 저장됐으므로
-                    // 콜백은 순수하게 "다음 화면으로 이동"만 담당
-                    widget.onNext(selectedMembers);
-                  }
-                : null,
+              widget.onNext(selectedMembers);
+            },
           ),
         ],
       ),

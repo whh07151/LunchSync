@@ -21,6 +21,22 @@ class PosStateDatabase {
   constructor(private readonly concurrentStatus?: string) {}
 
   readonly client = {
+    rpc: async (name: string, parameters: Record<string, unknown>) => {
+      if (name !== 'transition_order_to_preparing_with_bom' ||
+          parameters.p_order_id !== this.state.id ||
+          parameters.p_restaurant_id !== this.state.restaurant_id) {
+        throw new Error('Unexpected preparation RPC');
+      }
+      this.updateCalls++;
+      this.updateFilters.push({ id: ORDER_ID, status: 'PAID' });
+      if (this.concurrentStatus) {
+        this.state.status = this.concurrentStatus;
+        return { data: null, error: { message: 'ORDER_STATUS_CHANGED' } };
+      }
+      this.state.status = 'PREPARING';
+      return { data: { id: this.state.id, status: this.state.status,
+        updatedAt: this.state.updated_at }, error: null };
+    },
     from: (table: string) => {
       if (table !== 'orders') throw new Error(`Unexpected table: ${table}`);
       return {

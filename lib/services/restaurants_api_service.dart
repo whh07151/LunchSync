@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart' show debugPrint;
+import 'package:http/http.dart' as http;
 import '../core/config/app_config.dart';
 import '../core/api/api_auth_hooks.dart';
 import '../core/api/api_retry.dart';
@@ -158,6 +159,9 @@ class MenuItemDto {
     this.description,
     this.imageUrl,
     this.source,
+    this.prepTimeMinutes = 15,
+    this.ingredients = const [],
+    this.allergens = const [],
   });
 
   final String id;
@@ -168,6 +172,9 @@ class MenuItemDto {
   final String? imageUrl;
   /// MANUAL, CRAWL_NAVER, AI_GEMINI 또는 UNKNOWN. 확인 시각은 아직 없음.
   final String? source;
+  final int prepTimeMinutes;
+  final List<String> ingredients;
+  final List<String> allergens;
 
   factory MenuItemDto.fromJson(Map<String, dynamic> json) {
     return MenuItemDto(
@@ -178,6 +185,44 @@ class MenuItemDto {
       description: json['description'] as String?,
       imageUrl: json['imageUrl'] as String?,
       source: json['source'] as String?,
+      prepTimeMinutes:
+          ((json['prepTimeMinutes'] ?? json['prep_time_minutes']) as num?)
+                  ?.toInt() ??
+              15,
+      ingredients: (json['ingredients'] as List<dynamic>?)
+              ?.map((e) => e?.toString().trim() ?? '')
+              .where((s) => s.isNotEmpty)
+              .toList(growable: false) ??
+          const [],
+      allergens: (json['allergens'] as List<dynamic>?)
+              ?.map((e) => e?.toString().trim() ?? '')
+              .where((s) => s.isNotEmpty)
+              .toList(growable: false) ??
+          const [],
+    );
+  }
+}
+
+class RestaurantSeatSummaryDto {
+  const RestaurantSeatSummaryDto({
+    required this.totalSeats,
+    required this.emptySeats,
+    required this.occupiedSeats,
+    required this.estimatedAvailableGuests,
+  });
+
+  final int totalSeats;
+  final int emptySeats;
+  final int occupiedSeats;
+  final int estimatedAvailableGuests;
+
+  factory RestaurantSeatSummaryDto.fromJson(Map<String, dynamic> json) {
+    return RestaurantSeatSummaryDto(
+      totalSeats: (json['totalSeats'] as num?)?.toInt() ?? 0,
+      emptySeats: (json['emptySeats'] as num?)?.toInt() ?? 0,
+      occupiedSeats: (json['occupiedSeats'] as num?)?.toInt() ?? 0,
+      estimatedAvailableGuests:
+          (json['estimatedAvailableGuests'] as num?)?.toInt() ?? 0,
     );
   }
 }
@@ -341,6 +386,64 @@ class RestaurantsApiService {
       // 네트워크 오류를 호출 측에 알려야 하는 경우(메뉴 토너먼트 등)는 재던짐.
       if (throwOnError && e is ApiNetworkException) rethrow;
       return [];
+    }
+  }
+
+  Future<RestaurantSeatSummaryDto?> getSeatSummary({
+    required String accessToken,
+    required String restaurantId,
+  }) async {
+    try {
+      final response = await ApiRetry.get(
+        Uri.parse(
+          '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/seat-summary',
+        ),
+        headers: _headers(accessToken),
+        timeout: AppConfig.apiTimeout,
+      );
+      ApiAuthHooks.check(response.statusCode);
+      if (response.statusCode == 200) {
+        final json = jsonDecode(response.body) as Map<String, dynamic>;
+        final data = json['data'] as Map<String, dynamic>?;
+        if (data == null) return null;
+        return RestaurantSeatSummaryDto.fromJson(data);
+      }
+      return null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  Future<bool> createReservation({
+    required String accessToken,
+    required String restaurantId,
+    required String kind,
+    required String customerName,
+    required int partySize,
+    String? note,
+  }) async {
+    try {
+      final response = await http
+          .post(
+            Uri.parse(
+              '${AppConfig.backendBaseUrl}/restaurants/$restaurantId/reservations',
+            ),
+            headers: {
+              ..._headers(accessToken),
+              'Content-Type': 'application/json',
+            },
+            body: jsonEncode({
+              'kind': kind,
+              'customerName': customerName,
+              'partySize': partySize,
+              'note': ?note,
+            }),
+          )
+          .timeout(AppConfig.apiTimeout);
+      ApiAuthHooks.check(response.statusCode);
+      return response.statusCode == 200 || response.statusCode == 201;
+    } catch (_) {
+      return false;
     }
   }
 }

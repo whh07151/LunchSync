@@ -18,11 +18,10 @@ import '../models/menu_item.dart';
 //   한 메뉴 항목(MenuItem)과 선택된 수량(quantity)을 함께 묶은 단위입니다.
 // ══════════════════════════════════════════════════════════
 
-
 // ── 장바구니 항목 하나의 데이터 ────────────────────────────
 class CartItem {
   const CartItem({
-    required this.item,     // 메뉴 정보 (이름, 가격 등)
+    required this.item, // 메뉴 정보 (이름, 가격 등)
     required this.quantity, // 선택 수량 (최소 1)
   });
 
@@ -40,32 +39,106 @@ class CartItem {
   }
 }
 
-
 // ── CartNotifier: 장바구니 상태를 조작하는 비즈니스 로직 ───
 class CartNotifier extends Notifier<List<CartItem>> {
+  final Set<String> _consumedOrderIds = {};
+
+  /// A repeated payment callback must not subtract a new cart for the same order.
+  void consumeOrderSnapshot(
+    String orderId,
+    List<({String menuItemId, int quantity})> items,
+  ) {
+    if (orderId.isEmpty ||
+        items.isEmpty ||
+        _consumedOrderIds.contains(orderId)) {
+      return;
+    }
+    consumeOrderedItems(items);
+    _consumedOrderIds.add(orderId);
+  }
 
   /// Provider 초기 상태: 빈 장바구니
   @override
   List<CartItem> build() => const [];
 
+  String? get currentRestaurantId =>
+      state.isEmpty ? null : state.first.item.restaurantId;
+
+  bool hasDifferentRestaurant(String restaurantId) =>
+      state.any((item) => item.item.restaurantId != restaurantId);
+
+  void setItemQuantity(MenuItem item, int quantity) =>
+      setQuantity(item, quantity);
+
   // ── 메뉴 담기 (수량 1 추가) ─────────────────────────────
-  // 이미 담긴 메뉴면 수량 +1, 처음 담는 메뉴면 새 항목으로 추가
+  // 이미 담긴 메뉴면 수량 +1, 처음 담는 메뉴면 새 항목으로 추가.
+  // 서로 다른 식당의 메뉴가 섞이지 않도록 식당 전환 시 기존 다른 식당 항목을 정리한다.
   void addItem(MenuItem item) {
-    // 같은 id의 항목이 이미 있는지 확인
-    final index = state.indexWhere((e) => e.item.id == item.id);
+    final baseList = state
+        .where((e) => e.item.restaurantId == item.restaurantId)
+        .toList();
+    final index = baseList.indexWhere((e) => e.item.id == item.id);
 
     if (index >= 0) {
-      // 이미 있는 메뉴: 수량만 1 증가
-      // Riverpod 상태는 불변이므로 기존 리스트를 직접 수정하지 않고 새 리스트 생성
-      final updated = [...state];
-      updated[index] = updated[index].copyWith(
-        quantity: updated[index].quantity + 1,
-      );
-      state = List.unmodifiable(updated);
+      final nextQty = (baseList[index].quantity + 1).clamp(1, 99);
+      baseList[index] = baseList[index].copyWith(quantity: nextQty);
+      state = List.unmodifiable(baseList);
     } else {
-      // 처음 담는 메뉴: 수량 1로 새 항목 추가
-      state = List.unmodifiable([...state, CartItem(item: item, quantity: 1)]);
+      state = List.unmodifiable([
+        ...baseList,
+        CartItem(item: item, quantity: 1),
+      ]);
     }
+  }
+
+  /// 특정 메뉴의 수량을 지정 값으로 설정 (0 이하면 제거, 서버 동기화 실패 롤백 등에 사용)
+  void setQuantity(MenuItem item, int quantity) {
+    final baseList = state
+        .where((e) => e.item.restaurantId == item.restaurantId)
+        .toList();
+    final index = baseList.indexWhere((e) => e.item.id == item.id);
+    if (quantity <= 0) {
+      if (index >= 0) {
+        baseList.removeAt(index);
+        state = List.unmodifiable(baseList);
+      }
+      return;
+    }
+    final clamped = quantity.clamp(1, 99);
+    if (index >= 0) {
+      baseList[index] = baseList[index].copyWith(quantity: clamped);
+    } else {
+      baseList.add(CartItem(item: item, quantity: clamped));
+    }
+    state = List.unmodifiable(baseList);
+  }
+
+  /// 주문 완료 시 주문에 포함된 스냅샷 품목·수량만 차감하고,
+  /// 결제 도중 새로 추가된 항목이나 추가 수량은 보존한다.
+  void consumeOrderedItems(
+    List<({String menuItemId, int quantity})> orderedSnapshot,
+  ) {
+    if (orderedSnapshot.isEmpty) return;
+    final remainingByMenu = <String, int>{};
+    for (final ord in orderedSnapshot) {
+      if (ord.quantity > 0) {
+        remainingByMenu[ord.menuItemId] =
+            (remainingByMenu[ord.menuItemId] ?? 0) + ord.quantity;
+      }
+    }
+    final next = <CartItem>[];
+    for (final ci in state) {
+      final toConsume = remainingByMenu[ci.item.id] ?? 0;
+      if (toConsume <= 0) {
+        next.add(ci);
+      } else if (ci.quantity > toConsume) {
+        next.add(ci.copyWith(quantity: ci.quantity - toConsume));
+        remainingByMenu.remove(ci.item.id);
+      } else {
+        remainingByMenu[ci.item.id] = toConsume - ci.quantity;
+      }
+    }
+    state = List.unmodifiable(next);
   }
 
   // ── 수량 1 감소 (0이 되면 자동으로 항목 제거) ─────────────
@@ -91,9 +164,7 @@ class CartNotifier extends Notifier<List<CartItem>> {
   // ── 항목 직접 제거 ───────────────────────────────────────
   // 메뉴 항목의 삭제(X) 버튼에 연결
   void removeItem(String menuId) {
-    state = List.unmodifiable(
-      state.where((e) => e.item.id != menuId).toList(),
-    );
+    state = List.unmodifiable(state.where((e) => e.item.id != menuId).toList());
   }
 
   // ── 장바구니 전체 비우기 ────────────────────────────────
@@ -124,7 +195,6 @@ class CartNotifier extends Notifier<List<CartItem>> {
       state.fold(0, (sum, cartItem) => sum + cartItem.quantity);
 }
 
-
 // ── cartProvider: 앱 전역에서 접근하는 Provider 인스턴스 ────
 //
 // 사용 방법:
@@ -138,5 +208,6 @@ class CartNotifier extends Notifier<List<CartItem>> {
 //   - CU-16 menu_screen.dart → 담기/수량 변경/제거 조작 + UI 반영
 //   - CU-20 group_order_screen.dart (안태환 담당) → 장바구니 내용 읽기
 //   - CU-21 payment_screen.dart (우현호 담당) → 총 금액, 완료 후 clear() 호출
-final cartProvider =
-    NotifierProvider<CartNotifier, List<CartItem>>(CartNotifier.new);
+final cartProvider = NotifierProvider<CartNotifier, List<CartItem>>(
+  CartNotifier.new,
+);

@@ -7,6 +7,7 @@ import 'package:webview_flutter_android/webview_flutter_android.dart';
 import '../../core/theme/theme.dart';
 import 'payment_success_screen.dart';
 import 'payment_fail_screen.dart';
+import 'order_cart_snapshot.dart';
 
 // ══════════════════════════════════════════════════════════
 // 파일 역할: 모바일 전용 Toss 결제 WebView 화면
@@ -28,6 +29,7 @@ class PaymentWebViewScreen extends StatefulWidget {
     required this.checkoutUrl,
     required this.successUrlPrefix,
     required this.failUrlPrefix,
+    this.cartSnapshot,
   });
 
   /// toss-checkout.html 의 전체 URL (쿼리 파라미터 포함)
@@ -38,6 +40,7 @@ class PaymentWebViewScreen extends StatefulWidget {
 
   /// 결제 실패 시 리다이렉트되는 URL 의 prefix (가로채기용)
   final String failUrlPrefix;
+  final OrderCartSnapshot? cartSnapshot;
 
   @override
   State<PaymentWebViewScreen> createState() => _PaymentWebViewScreenState();
@@ -131,6 +134,7 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
           paymentKey: paymentKey,
           orderId: orderId,
           amount: amount,
+          cartSnapshot: widget.cartSnapshot,
         ),
       ),
     );
@@ -145,11 +149,8 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
 
     Navigator.of(context).pushReplacement(
       MaterialPageRoute(
-        builder: (_) => PaymentFailScreen(
-          code: code,
-          message: message,
-          orderId: orderId,
-        ),
+        builder: (_) =>
+            PaymentFailScreen(code: code, message: message, orderId: orderId),
       ),
     );
   }
@@ -157,9 +158,7 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
   @override
   Widget build(BuildContext context) {
     if (kIsWeb) {
-      return const Scaffold(
-        body: Center(child: Text('웹에서는 지원되지 않는 화면입니다.')),
-      );
+      return const Scaffold(body: Center(child: Text('웹에서는 지원되지 않는 화면입니다.')));
     }
 
     return Scaffold(
@@ -173,8 +172,7 @@ class _PaymentWebViewScreenState extends State<PaymentWebViewScreen> {
       body: Stack(
         children: [
           WebViewWidget(controller: _controller),
-          if (_isLoading)
-            const Center(child: CircularProgressIndicator()),
+          if (_isLoading) const Center(child: CircularProgressIndicator()),
         ],
       ),
     );
